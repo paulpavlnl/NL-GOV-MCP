@@ -268,13 +268,65 @@ export class RechtspraakSource {
     };
   }
 
+    async getByEcli(args: { ecli: string; returnType?: "DOC" | "META" }) {
+    const ecli = args.ecli.trim().toUpperCase();
+    const url = new URL(RECHTSPRAAK_CONTENT);
+    url.searchParams.set("id", ecli);
+    url.searchParams.set("return", args.returnType ?? "DOC");
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20_000);
+
+    try {
+      const response = await fetch(url, {
+        headers: {
+          Accept: "application/xml, text/xml, application/rdf+xml",
+          "User-Agent":
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+        },
+        signal: controller.signal,
+      });
+
+      const xml = await response.text();
+
+      if (!response.ok) {
+        return {
+          items: [] as RechtspraakItem[],
+          total: 0,
+          endpoint: url.toString(),
+          params: { ecli, return: args.returnType ?? "DOC" },
+          access_note: `Geen uitspraak gevonden voor ${ecli} (HTTP ${response.status}). Zoek handmatig verder op ${searchPageUrl(ecli)}.`,
+        };
+      }
+
+      return {
+        items: [
+          {
+            id: ecli,
+            title: ecli,
+            summary: undefined,
+            updated: undefined,
+            link: `${RECHTSPRAAK_SEARCH_PAGE}?zoekterm=${encodeURIComponent(ecli)}`,
+            ecli,
+            xml,
+          } as RechtspraakItem,
+        ],
+        total: 1,
+        endpoint: url.toString(),
+        params: { ecli, return: args.returnType ?? "DOC" },
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   /**
    * The search service was unreachable.
    *
    * Returns nothing rather than a synthesised "fallback uitspraak" record: an
    * invented ruling is the last thing a legal question should get back, and the
    * note carries a working search link instead.
-   */
+   */  
   fallback(args: { query: string; rows: number }) {
     return {
       items: [] as RechtspraakItem[],
