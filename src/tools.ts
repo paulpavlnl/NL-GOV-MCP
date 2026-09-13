@@ -1214,6 +1214,30 @@ export function registerTools(server: McpServer): void {
     }
   });
 
+    server.registerTool("rechtspraak_get_by_ecli", {
+    description: "Fetch a Dutch ruling directly by a known ECLI, without searching first. Returns the official ruling XML (Rechtspraak Open Data content service).",
+    inputSchema: {
+      ecli: z.string().regex(/^ECLI:/i).describe("Full ECLI, e.g. ECLI:NL:HR:2019:1734."),
+      returnType: z.enum(["DOC", "META"]).default("DOC"),
+    },
+    annotations: TOOL_ANNOTATIONS,
+  }, async ({ ecli, returnType }) => {
+    try {
+      const out = await rechtspraak.getByEcli({ ecli, returnType });
+      const records = out.items.map((x) =>
+        record("rechtspraak", String(x.title ?? x.ecli ?? "Rechtspraak uitspraak"), String(x.link ?? "https://data.rechtspraak.nl"), x, String(x.summary ?? ""), String(x.updated ?? "")),
+      );
+      return toMcpToolPayload(successResponse({
+        summary: records.length ? `Uitspraak ${ecli} opgehaald` : `Geen uitspraak gevonden voor ${ecli}`,
+        records,
+        provenance: prov("rechtspraak_get_by_ecli", out.endpoint, out.params, records.length, out.total),
+        access_note: out.access_note,
+      }));
+    } catch (e) {
+      return toMcpToolPayload(mapSourceError(e, "Rechtspraak", "https://data.rechtspraak.nl"));
+    }
+  });
+
   server.registerTool("rivm_discovery_search", { inputSchema: { query: z.string().describe("Public health topic keywords. Examples: 'vaccinatie', 'luchtkwaliteit gezondheid', 'PFAS', 'infectieziekten'. Do NOT pass full questions."), rows: z.number().int().min(1).max(config.limits.maxRows).default(20) }, description: "Search/discover RIVM (Dutch public health institute) datasets and API references. Use health/environment topic keywords.", annotations: TOOL_ANNOTATIONS }, async ({ query, rows }) => {
     const rw = rewriteQuery(query, "moderate");
     try {
