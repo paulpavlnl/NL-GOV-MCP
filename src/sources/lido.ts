@@ -312,7 +312,7 @@ const MAX_LIDO_RELATIONS = 5000;
 const MAX_LIDO_RELATION_PAGES = 50;
 const MAX_LIDO_COMPONENTS = 20;
 const MAX_CONCURRENCY = 3;
-const LIDO_TOOL_BUDGET_MS = 30_000;
+const LIDO_TOOL_BUDGET_MS = 15_000;
 
 async function inventoryLido(seedPage: { url: string; rawHtml: string }) {
   const execution = lidoExecution.getStore();
