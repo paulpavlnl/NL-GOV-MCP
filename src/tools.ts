@@ -15,6 +15,7 @@ import { OriSource } from "./sources/ori.js";
 import { NdwSource } from "./sources/ndw.js";
 import { LuchtmeetnetSource } from "./sources/luchtmeetnet.js";
 import { RechtspraakSource } from "./sources/rechtspraak.js";
+import { LidoSource } from "./sources/lido.js";
 import { RdwSource } from "./sources/rdw.js";
 import { RijkswaterstaatWaterdataSource } from "./sources/rijkswaterstaat-waterdata.js";
 import { NgrSource } from "./sources/ngr.js";
@@ -68,6 +69,7 @@ const ori = new OriSource(config);
 const ndw = new NdwSource(config);
 const luchtmeetnet = new LuchtmeetnetSource(config);
 const rechtspraak = new RechtspraakSource(config);
+const lido = new LidoSource(config);
 const rdw = new RdwSource(config);
 const rwsWaterdata = new RijkswaterstaatWaterdataSource(config);
 const ngr = new NgrSource(config);
@@ -1235,6 +1237,34 @@ export function registerTools(server: McpServer): void {
       }));
     } catch (e) {
       return toMcpToolPayload(mapSourceError(e, "Rechtspraak", "https://data.rechtspraak.nl"));
+    }
+  });
+
+    server.registerTool("lido_relations_by_identifier", {
+    description: "Fetch the LiDO (Linked Data Overheid) document page for a known ECLI/BWBR/CVDR identifier and detect related identifiers referenced there.",
+    inputSchema: { identifier: z.string().min(2).describe("A known ECLI, BWBR or CVDR identifier.") },
+    annotations: TOOL_ANNOTATIONS,
+  }, async ({ identifier }) => {
+    try {
+      const out = await lido.relationsByIdentifier({ identifier });
+      const records = out.items.map((x) => record("lido", String(x.title ?? identifier), String(x.link ?? "https://linkeddata.overheid.nl"), x));
+      return toMcpToolPayload(successResponse({ summary: `LiDO-relaties voor ${identifier}`, records, provenance: prov("lido_relations_by_identifier", out.endpoint, out.params, records.length, out.total), access_note: out.access_note }));
+    } catch (e) {
+      return toMcpToolPayload(mapSourceError(e, "LiDO", "https://linkeddata.overheid.nl"));
+    }
+  });
+
+  server.registerTool("lido_search_free_text", {
+    description: "Search LiDO (Linked Data Overheid) by free text or a nickname when no formal identifier is known.",
+    inputSchema: { query: z.string().min(1).describe("Free-text search term or case nickname.") },
+    annotations: TOOL_ANNOTATIONS,
+  }, async ({ query }) => {
+    try {
+      const out = await lido.searchFreeText({ query });
+      const records = out.items.map((x) => record("lido", String(x.title ?? query), String(x.link ?? "https://linkeddata.overheid.nl"), x));
+      return toMcpToolPayload(successResponse({ summary: `LiDO-zoekresultaat voor "${query}"`, records, provenance: prov("lido_search_free_text", out.endpoint, out.params, records.length, out.total), access_note: out.access_note }));
+    } catch (e) {
+      return toMcpToolPayload(mapSourceError(e, "LiDO", "https://linkeddata.overheid.nl"));
     }
   });
 
