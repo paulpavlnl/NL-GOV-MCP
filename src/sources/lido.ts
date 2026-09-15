@@ -5,53 +5,54 @@ import { AsyncLocalStorage } from "node:async_hooks";
  * LiDO (Linked Data Overheid) source voor NL-GOV-MCP.
  *
  * Versie 2 — gelijkgetrokken met de LiDO-logica uit de verwijzingscontroleur
- * (server.js), maar met drie structurele verbeteringen die de "expired"-fout
- * moeten wegnemen:
+ * (server.js), met drie structurele verbeteringen die de "expired"-fout
+ * wegnemen:
  *
  *  1. HARDE eindgarantie. De volledige tool draait binnen een `Promise.race`
  *     met een watchdog. Loopt het budget af, dan wordt ALTIJD een geldig
  *     (gedeeltelijk) resultaat teruggegeven in plaats van te blijven hangen.
  *     Dit is het verschil tussen "partialResult: true" en "expired".
  *
- *  2. Eén gedeelde werkwachtrij. De oude versie haalde de componenten en
+ *  2. Eén gedeelde werkwachtrij. De vorige versie haalde componenten en
  *     relatiepagina's twee keer op: eerst in relationsByIdentifier en daarna
- *     nog eens in inventoryLido (die dezelfde URL's opnieuw ontdekte in de
- *     samengevoegde HTML). Dat verdubbelde de netwerktijd binnen hetzelfde
+ *     nog eens in inventoryLido, die dezelfde URL's opnieuw ontdekte in de
+ *     samengevoegde HTML. Dat verdubbelde de netwerktijd binnen hetzelfde
  *     budget. Nu wordt elke URL exact één keer opgehaald (visited-set).
  *
- *  3. Budget-bewuste per-fetch timeout. De per-request timeout is verlaagd en
- *     wordt geschaald naar de resterende tijd, zodat één trage LiDO-pagina niet
- *     het hele budget opeet en er meer relatiepagina's binnen het budget passen.
+ *  3. Budget-bewuste per-fetch timeout. De per-request timeout wordt geschaald
+ *     naar de resterende tijd, zodat één trage LiDO-pagina niet het hele
+ *     budget opeet en er meer relatiepagina's binnen het budget passen.
  *
- * Alles is configureerbaar via omgevingsvariabelen, in dezelfde stijl als
- * server.js, zodat de limieten zonder codewijziging bijgesteld kunnen worden.
+ * Alle limieten staan hieronder HARD GECODEERD. Er worden bewust geen
+ * omgevingsvariabelen gelezen: het gedrag van deze tool is daarmee op elke
+ * omgeving identiek en reproduceerbaar.
  */
 
 /* ------------------------------------------------------------------ */
-/* Configuratie                                                        */
+/* Configuratie — hard gecodeerd                                       */
 /* ------------------------------------------------------------------ */
 
-function intEnv(name: string, fallback: number, min: number, max: number): number {
-  const n = Number(process.env[name] ?? fallback);
-  return Number.isInteger(n) && n >= min && n <= max ? n : fallback;
-}
-
 /** Totale wandkloktijd voor één LiDO-tool-aanroep. */
-const LIDO_TOOL_BUDGET_MS = intEnv("LIDO_TOOL_BUDGET_MS", 20_000, 3_000, 45_000);
+const LIDO_TOOL_BUDGET_MS = 20_000;
 /** Maximale tijd voor één enkele HTTP-request naar LiDO. */
-const LIDO_FETCH_TIMEOUT_MS = intEnv("LIDO_FETCH_TIMEOUT_MS", 6_000, 1_000, 15_000);
+const LIDO_FETCH_TIMEOUT_MS = 6_000;
 /** Veiligheidsmarge: hierna wordt niets nieuws meer gestart en wordt afgerond. */
-const LIDO_WRAPUP_MS = intEnv("LIDO_WRAPUP_MS", 1_200, 200, 5_000);
+const LIDO_WRAPUP_MS = 1_200;
 
-const MAX_LIDO_RELATIONS = intEnv("MAX_LIDO_RELATIONS", 5_000, 1, 10_000);
-const MAX_LIDO_RELATION_PAGES = intEnv("MAX_LIDO_RELATION_PAGES", 50, 1, 100);
-const MAX_LIDO_COMPONENTS = intEnv("MAX_LIDO_COMPONENTS", 20, 1, 50);
-const MAX_CONCURRENCY = intEnv("MAX_CONCURRENCY", 4, 1, 8);
-const MAX_RESPONSE_BYTES = intEnv("MAX_RESPONSE_BYTES", 8_000_000, 10_000, 20_000_000);
+/** Maximaal aantal unieke relaties dat wordt teruggegeven. */
+const MAX_LIDO_RELATIONS = 5_000;
+/** Maximaal aantal relatiepagina's (spiegel-lijstweergave) dat wordt opgehaald. */
+const MAX_LIDO_RELATION_PAGES = 50;
+/** Maximaal aantal documentcomponenten dat wordt opgehaald. */
+const MAX_LIDO_COMPONENTS = 20;
+/** Aantal gelijktijdige HTTP-requests naar LiDO. */
+const MAX_CONCURRENCY = 4;
+/** Hardlimiet op de omvang van één responsbody. */
+const MAX_RESPONSE_BYTES = 8_000_000;
 
 const LIDO_ORIGIN = "https://linkeddata.overheid.nl";
-const DOCUMENT_VIEWER_URL = process.env.LIDO_DOCUMENT_VIEWER_URL ?? `${LIDO_ORIGIN}/front/portal/document-viewer`;
-const SEARCH_URL = process.env.LIDO_SEARCH_URL ?? `${LIDO_ORIGIN}/front/portal/lido-lx`;
+const DOCUMENT_VIEWER_URL = `${LIDO_ORIGIN}/front/portal/document-viewer`;
+const SEARCH_URL = `${LIDO_ORIGIN}/front/portal/lido-lx`;
 
 const ALLOWED_HOSTS = new Set([
   "linkeddata.overheid.nl",
@@ -260,7 +261,13 @@ function extractRelations(raw: string, base: string, sourceUrl: string): Relatio
       continue;
     }
     const description = stripHtml(m[2] ?? "");
-    const ids = extractIdentifiers(`${description} ${decodeURIComponent(url)}`);
+    let decodedUrl = url;
+    try {
+      decodedUrl = decodeURIComponent(url);
+    } catch {
+      /* laat url ongewijzigd bij ongeldige escape-reeksen */
+    }
+    const ids = extractIdentifiers(`${description} ${decodedUrl}`);
     let matched = false;
     for (const identifier of ids.eclis) {
       found.push({ kind: "ecli", identifier, url, description, sourceUrl });
@@ -482,7 +489,7 @@ async function crawlLido(
   requestOptions: { headers?: Record<string, string> },
 ): Promise<void> {
   const visited = new Set<string>();
-  let queue = unique(seedUrls).filter(isAllowedHost);
+  const queue = unique(seedUrls).filter(isAllowedHost);
 
   while (queue.length) {
     if (budgetExhausted()) {
@@ -561,6 +568,7 @@ function summarize(state: CrawlState, identifier: string | null) {
       ? "time_budget_reached"
       : "one_or_more_lido_requests_failed";
   }
+
   const ids = mergeIdentifiers([
     ...state.identifierSources.map((raw) => extractIdentifiers(raw)),
     extractIdentifiers(JSON.stringify(relations)),
@@ -605,6 +613,7 @@ function summarize(state: CrawlState, identifier: string | null) {
     limits: {
       toolBudgetMs: LIDO_TOOL_BUDGET_MS,
       fetchTimeoutMs: LIDO_FETCH_TIMEOUT_MS,
+      wrapUpMs: LIDO_WRAPUP_MS,
       maxRelations: MAX_LIDO_RELATIONS,
       maxRelationPages: MAX_LIDO_RELATION_PAGES,
       maxComponents: MAX_LIDO_COMPONENTS,
@@ -674,7 +683,10 @@ export class LidoSource {
     const endpoint = endpointUrl.toString();
     const params = { "ext-id": identifier };
 
-    const toResult = (state: CrawlState, viewerUrl: string, viewerNote?: string): LidoResult => {
+    let viewerUrl = endpoint;
+    let viewerNote: string | undefined;
+
+    const toResult = (state: CrawlState): LidoResult => {
       const inv = summarize(state, identifier);
       const item: LidoItem = {
         id: identifier,
@@ -712,9 +724,6 @@ export class LidoSource {
       };
     };
 
-    let viewerUrl = endpoint;
-    let viewerNote: string | undefined;
-
     return runLidoTool(
       async (state) => {
         const direct = buildDirectLidoUrls(identifier);
@@ -733,9 +742,9 @@ export class LidoSource {
         }
 
         await crawlLido(state, seeds, requestOptions);
-        return toResult(state, viewerUrl, viewerNote);
+        return toResult(state);
       },
-      (state) => toResult(state, viewerUrl, viewerNote),
+      (state) => toResult(state),
     );
   }
 
