@@ -4,13 +4,72 @@ import { AsyncLocalStorage } from "node:async_hooks";
 /**
  * LiDO (Linked Data Overheid) source voor NL-GOV-MCP.
  *
- * Geavanceerde versie: volgt niet alleen de documentviewer-/zoekpagina,
- * maar ook de daarin gevonden documentcomponenten en relatiepagina's
- * (incl. paginering), tot een tijdsbudget en tot configureerbare limieten.
- * Dit is een 1-op-1 poort van de LiDO-logica uit de verwijzingscontroleur
- * (server.js), aangepast naar TypeScript/regex (geen cheerio-dependency
- * in dit project) en naar de class-stijl van RechtspraakSource.
+ * Versie 2 — gelijkgetrokken met de LiDO-logica uit de verwijzingscontroleur
+ * (server.js), maar met drie structurele verbeteringen die de "expired"-fout
+ * moeten wegnemen:
+ *
+ *  1. HARDE eindgarantie. De volledige tool draait binnen een `Promise.race`
+ *     met een watchdog. Loopt het budget af, dan wordt ALTIJD een geldig
+ *     (gedeeltelijk) resultaat teruggegeven in plaats van te blijven hangen.
+ *     Dit is het verschil tussen "partialResult: true" en "expired".
+ *
+ *  2. Eén gedeelde werkwachtrij. De oude versie haalde de componenten en
+ *     relatiepagina's twee keer op: eerst in relationsByIdentifier en daarna
+ *     nog eens in inventoryLido (die dezelfde URL's opnieuw ontdekte in de
+ *     samengevoegde HTML). Dat verdubbelde de netwerktijd binnen hetzelfde
+ *     budget. Nu wordt elke URL exact één keer opgehaald (visited-set).
+ *
+ *  3. Budget-bewuste per-fetch timeout. De per-request timeout is verlaagd en
+ *     wordt geschaald naar de resterende tijd, zodat één trage LiDO-pagina niet
+ *     het hele budget opeet en er meer relatiepagina's binnen het budget passen.
+ *
+ * Alles is configureerbaar via omgevingsvariabelen, in dezelfde stijl als
+ * server.js, zodat de limieten zonder codewijziging bijgesteld kunnen worden.
  */
+
+/* ------------------------------------------------------------------ */
+/* Configuratie                                                        */
+/* ------------------------------------------------------------------ */
+
+function intEnv(name: string, fallback: number, min: number, max: number): number {
+  const n = Number(process.env[name] ?? fallback);
+  return Number.isInteger(n) && n >= min && n <= max ? n : fallback;
+}
+
+/** Totale wandkloktijd voor één LiDO-tool-aanroep. */
+const LIDO_TOOL_BUDGET_MS = intEnv("LIDO_TOOL_BUDGET_MS", 20_000, 3_000, 45_000);
+/** Maximale tijd voor één enkele HTTP-request naar LiDO. */
+const LIDO_FETCH_TIMEOUT_MS = intEnv("LIDO_FETCH_TIMEOUT_MS", 6_000, 1_000, 15_000);
+/** Veiligheidsmarge: hierna wordt niets nieuws meer gestart en wordt afgerond. */
+const LIDO_WRAPUP_MS = intEnv("LIDO_WRAPUP_MS", 1_200, 200, 5_000);
+
+const MAX_LIDO_RELATIONS = intEnv("MAX_LIDO_RELATIONS", 5_000, 1, 10_000);
+const MAX_LIDO_RELATION_PAGES = intEnv("MAX_LIDO_RELATION_PAGES", 50, 1, 100);
+const MAX_LIDO_COMPONENTS = intEnv("MAX_LIDO_COMPONENTS", 20, 1, 50);
+const MAX_CONCURRENCY = intEnv("MAX_CONCURRENCY", 4, 1, 8);
+const MAX_RESPONSE_BYTES = intEnv("MAX_RESPONSE_BYTES", 8_000_000, 10_000, 20_000_000);
+
+const LIDO_ORIGIN = "https://linkeddata.overheid.nl";
+const DOCUMENT_VIEWER_URL = process.env.LIDO_DOCUMENT_VIEWER_URL ?? `${LIDO_ORIGIN}/front/portal/document-viewer`;
+const SEARCH_URL = process.env.LIDO_SEARCH_URL ?? `${LIDO_ORIGIN}/front/portal/lido-lx`;
+
+const ALLOWED_HOSTS = new Set([
+  "linkeddata.overheid.nl",
+  "uitspraken.rechtspraak.nl",
+  "data.rechtspraak.nl",
+  "zoekservice.overheid.nl",
+  "zoekdienst.overheid.nl",
+  "repository.overheid.nl",
+  "wetten.overheid.nl",
+  "lokaleregelgeving.overheid.nl",
+  "tuchtrecht.overheid.nl",
+  "repository.officiele-overheidspublicaties.nl",
+  "deeplink.rechtspraak.nl",
+]);
+
+/* ------------------------------------------------------------------ */
+/* Types                                                               */
+/* ------------------------------------------------------------------ */
 
 interface LidoItem {
   id?: string;
@@ -27,8 +86,10 @@ interface LidoResult {
   access_note?: string;
 }
 
+type RelationKind = "ecli" | "bwbr" | "cvdr" | "celex" | "official-url";
+
 interface Relation {
-  kind: "ecli" | "bwbr" | "cvdr" | "celex" | "official-url";
+  kind: RelationKind;
   identifier?: string;
   url: string | null;
   description: string;
@@ -42,9 +103,22 @@ interface Identifiers {
   celexes: string[];
 }
 
-const LIDO_ORIGIN = "https://linkeddata.overheid.nl";
-const DOCUMENT_VIEWER_URL = `${LIDO_ORIGIN}/front/portal/document-viewer`;
-const SEARCH_URL = `${LIDO_ORIGIN}/front/portal/lido-lx`;
+interface FetchedPage {
+  url: string;
+  contentType: string;
+  rawHtml: string;
+  setCookies: string[];
+}
+
+interface PageResult {
+  url: string;
+  contentType?: string;
+  error?: string;
+}
+
+/* ------------------------------------------------------------------ */
+/* Regex                                                               */
+/* ------------------------------------------------------------------ */
 
 const ECLI_RE = /ECLI:[A-Z]{2}:[A-Z0-9.]+:[0-9]{4}:[A-Z0-9.]+/gi;
 const BWBR_RE = /BWBR[0-9]{6,8}/gi;
@@ -52,32 +126,46 @@ const CVDR_RE = /CVDR[0-9]{5,8}(?:_[0-9]+)?/gi;
 const CELEX_RE = /CELEX:[0-9A-Z][0-9]{4}[A-Z]{1,2}[0-9]{4}(?:\([0-9]{2}\))?/gi;
 const URL_RE = /https?:\/\/[^\s<>"']+/gi;
 const LINK_RE = /<a\s+[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+const REL_URL_RE =
+  /(?:\.\.\/|\.\/|\/)?(?:front\/portal\/)?(?:component\/(?:get-document-with-refs-html|item-text-with-links)|spiegel-lijstweergave)[^\s<>"']*/gi;
 const COMPONENT_RE = /\/component\/(?:get-document-with-refs-html|item-text-with-links)/i;
 const RELATION_PAGE_RE = /\/front\/portal\/spiegel-lijstweergave/i;
 const NEXT_PAGE_RE = /volgende|next|pagination/i;
 
-const ALLOWED_HOSTS = new Set([
-  "linkeddata.overheid.nl",
-  "uitspraken.rechtspraak.nl",
-  "data.rechtspraak.nl",
-  "zoekservice.overheid.nl",
-  "zoekdienst.overheid.nl",
-  "repository.overheid.nl",
-  "wetten.overheid.nl",
-  "lokaleregelgeving.overheid.nl",
-  "tuchtrecht.overheid.nl",
-  "repository.officiele-overheidspublicaties.nl",
-  "deeplink.rechtspraak.nl",
-]);
+/* ------------------------------------------------------------------ */
+/* Budget                                                              */
+/* ------------------------------------------------------------------ */
 
-const lidoExecution = new AsyncLocalStorage<{ deadline: number }>();
+interface Budget {
+  deadline: number;
+}
+
+const lidoExecution = new AsyncLocalStorage<Budget>();
+
+function remainingMs(): number {
+  const store = lidoExecution.getStore();
+  return store ? store.deadline - Date.now() : LIDO_TOOL_BUDGET_MS;
+}
+
+/** True zodra er geen nieuw werk meer gestart mag worden. */
+function budgetExhausted(): boolean {
+  return remainingMs() <= LIDO_WRAPUP_MS;
+}
+
+/* ------------------------------------------------------------------ */
+/* Helpers                                                             */
+/* ------------------------------------------------------------------ */
 
 function unique(values: string[]): string[] {
-  return [...new Set(values)];
+  return [...new Set(values.filter(Boolean))];
 }
 
 function asError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function normalizeIdentifier(value: string): string {
+  return String(value ?? "").trim().toUpperCase();
 }
 
 function stripHtml(html: string): string {
@@ -86,16 +174,18 @@ function stripHtml(html: string): string {
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
     .replace(/\s+/g, " ")
     .trim();
 }
 
 function extractIdentifiers(raw: string): Identifiers {
+  const s = String(raw ?? "");
   return {
-    eclis: unique((raw.match(ECLI_RE) ?? []).map((m) => m.toUpperCase())),
-    bwbrs: unique((raw.match(BWBR_RE) ?? []).map((m) => m.toUpperCase())),
-    cvdrs: unique((raw.match(CVDR_RE) ?? []).map((m) => m.toUpperCase())),
-    celexes: unique((raw.match(CELEX_RE) ?? []).map((m) => m.toUpperCase())),
+    eclis: unique((s.match(ECLI_RE) ?? []).map((m) => m.toUpperCase())),
+    bwbrs: unique((s.match(BWBR_RE) ?? []).map((m) => m.toUpperCase())),
+    cvdrs: unique((s.match(CVDR_RE) ?? []).map((m) => m.toUpperCase())),
+    celexes: unique((s.match(CELEX_RE) ?? []).map((m) => m.toUpperCase())),
   };
 }
 
@@ -110,25 +200,30 @@ function mergeIdentifiers(items: Identifiers[]): Identifiers {
 
 function extractUrls(raw: string, base: string): string[] {
   const out: string[] = [];
-  for (const m of raw.matchAll(LINK_RE)) {
+  const push = (value: string) => {
     try {
-      out.push(new URL(m[1], base).toString());
+      out.push(new URL(value.replace(/&amp;/g, "&"), base).toString());
     } catch {
-      // ongeldige/relatieve link overslaan
+      /* ongeldige URL overslaan */
     }
-  }
-  for (const m of raw.matchAll(URL_RE)) {
-    try {
-      out.push(new URL(m[0].replace(/&amp;/g, "&"), base).toString());
-    } catch {
-      // negeren
-    }
-  }
+  };
+  for (const m of raw.matchAll(LINK_RE)) push(m[1]);
+  for (const m of raw.matchAll(URL_RE)) push(m[0]);
+  // Relatieve component-/relatiepagina-URL's die in JS-snippets staan.
+  for (const m of raw.matchAll(REL_URL_RE)) push(m[0]);
   return unique(out);
 }
 
-function discoverLidoTargets(raw: string, base: string) {
-  const urls = extractUrls(raw, base);
+function isAllowedHost(url: string): boolean {
+  try {
+    return ALLOWED_HOSTS.has(new URL(url).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+function discoverLidoTargets(raw: string, base: string): { components: string[]; relationPages: string[] } {
+  const urls = extractUrls(raw, base).filter(isAllowedHost);
   return {
     components: urls.filter((u) => COMPONENT_RE.test(u)),
     relationPages: urls.filter((u) => RELATION_PAGE_RE.test(u)),
@@ -138,15 +233,13 @@ function discoverLidoTargets(raw: string, base: string) {
 function findNextRelationPages(raw: string, base: string): string[] {
   const out: string[] = [];
   for (const m of raw.matchAll(LINK_RE)) {
-    const href = m[1];
     const label = stripHtml(m[2] ?? "").toLowerCase();
-    if (NEXT_PAGE_RE.test(label)) {
-      try {
-        const u = new URL(href, base).toString();
-        if (RELATION_PAGE_RE.test(u)) out.push(u);
-      } catch {
-        // negeren
-      }
+    if (!NEXT_PAGE_RE.test(label)) continue;
+    try {
+      const u = new URL(m[1], base).toString();
+      if (RELATION_PAGE_RE.test(u)) out.push(u);
+    } catch {
+      /* negeren */
     }
   }
   return unique(out);
@@ -160,27 +253,33 @@ function extractRelations(raw: string, base: string, sourceUrl: string): Relatio
   const found: Relation[] = [];
 
   for (const m of raw.matchAll(LINK_RE)) {
-    const href = m[1];
     let url: string;
     try {
-      url = new URL(href, base).toString();
+      url = new URL(m[1], base).toString();
     } catch {
       continue;
     }
     const description = stripHtml(m[2] ?? "");
-    const ids = extractIdentifiers(`${description} ${url}`);
-    for (const identifier of ids.eclis) found.push({ kind: "ecli", identifier, url, description, sourceUrl });
-    for (const identifier of ids.bwbrs) found.push({ kind: "bwbr", identifier, url, description, sourceUrl });
-    for (const identifier of ids.cvdrs) found.push({ kind: "cvdr", identifier, url, description, sourceUrl });
-    for (const identifier of ids.celexes) found.push({ kind: "celex", identifier, url, description, sourceUrl });
-    if (!ids.eclis.length && !ids.bwbrs.length && !ids.cvdrs.length && !ids.celexes.length) {
-      try {
-        if (ALLOWED_HOSTS.has(new URL(url).hostname.toLowerCase())) {
-          found.push({ kind: "official-url", url, description, sourceUrl });
-        }
-      } catch {
-        // negeren
-      }
+    const ids = extractIdentifiers(`${description} ${decodeURIComponent(url)}`);
+    let matched = false;
+    for (const identifier of ids.eclis) {
+      found.push({ kind: "ecli", identifier, url, description, sourceUrl });
+      matched = true;
+    }
+    for (const identifier of ids.bwbrs) {
+      found.push({ kind: "bwbr", identifier, url, description, sourceUrl });
+      matched = true;
+    }
+    for (const identifier of ids.cvdrs) {
+      found.push({ kind: "cvdr", identifier, url, description, sourceUrl });
+      matched = true;
+    }
+    for (const identifier of ids.celexes) {
+      found.push({ kind: "celex", identifier, url, description, sourceUrl });
+      matched = true;
+    }
+    if (!matched && isAllowedHost(url)) {
+      found.push({ kind: "official-url", url, description, sourceUrl });
     }
   }
 
@@ -218,19 +317,45 @@ function parseReportedRelationCount(raw: string): number | null {
   return null;
 }
 
-async function fetchLidoPage(
-  url: string,
-  options: { headers?: Record<string, string> } = {},
-): Promise<{ url: string; contentType: string; rawHtml: string; setCookies: string[] }> {
+/* ------------------------------------------------------------------ */
+/* HTTP                                                                */
+/* ------------------------------------------------------------------ */
+
+async function readLimitedBody(response: Response): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) return response.text();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > MAX_RESPONSE_BYTES) {
+      await reader.cancel();
+      throw new Error(`Bronrespons groter dan ${MAX_RESPONSE_BYTES} bytes.`);
+    }
+    chunks.push(value);
+  }
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder("utf-8", { fatal: false }).decode(merged);
+}
+
+async function fetchLidoPage(url: string, options: { headers?: Record<string, string> } = {}): Promise<FetchedPage> {
   const parsed = new URL(url);
+  if (parsed.protocol !== "https:") throw new Error("Alleen HTTPS is toegestaan.");
   if (!ALLOWED_HOSTS.has(parsed.hostname.toLowerCase())) {
     throw new Error(`Domein niet toegestaan: ${parsed.hostname}`);
   }
 
-  const execution = lidoExecution.getStore();
-  const remaining = execution ? execution.deadline - Date.now() : 20_000;
-  if (remaining <= 250) throw new Error("LIDO_TIME_BUDGET_REACHED");
-  const timeoutMs = Math.max(250, Math.min(9_000, remaining - 100));
+  const remaining = remainingMs();
+  if (remaining <= LIDO_WRAPUP_MS) throw new Error("LIDO_TIME_BUDGET_REACHED");
+  const timeoutMs = Math.max(500, Math.min(LIDO_FETCH_TIMEOUT_MS, remaining - LIDO_WRAPUP_MS));
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -241,50 +366,40 @@ async function fetchLidoPage(
       headers: {
         "User-Agent":
           "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
-        Accept: "text/html,application/xhtml+xml",
+        "Accept-Language": "nl",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.5",
         ...(options.headers ?? {}),
       },
     });
 
-    const body = await response.text();
+    const body = await readLimitedBody(response);
+    if (!response.ok) throw new Error(`LiDO gaf HTTP ${response.status}: ${body.slice(0, 400)}`);
 
-    if (!response.ok) {
-      throw new Error(`LiDO gaf HTTP ${response.status}: ${body.slice(0, 500)}`);
-    }
-
+    const anyHeaders = response.headers as unknown as { getSetCookie?: () => string[] };
     const setCookies =
-      typeof (response.headers as any).getSetCookie === "function"
-        ? (response.headers as any).getSetCookie()
+      typeof anyHeaders.getSetCookie === "function"
+        ? anyHeaders.getSetCookie()
         : response.headers.get("set-cookie")
           ? [response.headers.get("set-cookie") as string]
           : [];
 
-    return { url: response.url || url, contentType: response.headers.get("content-type") ?? "", rawHtml: body, setCookies };
+    return {
+      url: response.url || url,
+      contentType: response.headers.get("content-type") ?? "",
+      rawHtml: body,
+      setCookies,
+    };
   } finally {
     clearTimeout(timer);
   }
 }
 
-async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array(items.length);
-  let i = 0;
-  async function worker() {
-    while (true) {
-      const n = i++;
-      if (n >= items.length) return;
-      try {
-        out[n] = await fn(items[n]);
-      } catch (error) {
-        out[n] = { url: items[n], error: asError(error) } as unknown as R;
-      }
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return out;
-}
+/* ------------------------------------------------------------------ */
+/* Crawler                                                             */
+/* ------------------------------------------------------------------ */
 
-function buildDirectLidoUrls(identifier: string) {
-  const id = identifier.trim();
+function buildDirectLidoUrls(identifier: string): { objectUri: string | null; urls: string[] } {
+  const id = String(identifier ?? "").trim();
   const objectUri = /^ECLI:/i.test(id) ? `http://linkeddata.overheid.nl/terms/jurisprudentie/id/${id}` : null;
   const urls: string[] = [];
 
@@ -308,190 +423,265 @@ function buildDirectLidoUrls(identifier: string) {
   return { objectUri, urls };
 }
 
-const MAX_LIDO_RELATIONS = 5000;
-const MAX_LIDO_RELATION_PAGES = 50;
-const MAX_LIDO_COMPONENTS = 20;
-const MAX_CONCURRENCY = 3;
-const LIDO_TOOL_BUDGET_MS = 15_000;
+interface CrawlState {
+  relations: Map<string, Relation>;
+  identifierSources: string[];
+  componentResults: PageResult[];
+  relationPageResults: PageResult[];
+  componentsFetched: number;
+  relationPagesFetched: number;
+  reportedRelationCount: number | null;
+  stopReason: string | null;
+  limitReached: boolean;
+}
 
-async function inventoryLido(seedPage: { url: string; rawHtml: string }) {
-  const execution = lidoExecution.getStore();
-  const timeBudgetReached = () => Boolean(execution && Date.now() >= execution.deadline - 500);
-  let stopReason: string | null = null;
-
-  const reportedRelationCount = parseReportedRelationCount(seedPage.rawHtml);
-  const initial = discoverLidoTargets(seedPage.rawHtml, seedPage.url);
-  const componentUrls = unique(initial.components).slice(0, MAX_LIDO_COMPONENTS);
-  const components: Array<{ url: string; contentType?: string; rawHtml?: string; error?: string }> = [];
-
-  for (
-    const batchStart of Array.from(
-      { length: Math.ceil(componentUrls.length / MAX_CONCURRENCY) },
-      (_, i) => i * MAX_CONCURRENCY,
-    )
-  ) {
-    if (timeBudgetReached()) {
-      stopReason = "time_budget_reached";
-      break;
-    }
-    const batch = componentUrls.slice(batchStart, batchStart + MAX_CONCURRENCY);
-    components.push(...(await mapLimit(batch, MAX_CONCURRENCY, (u) => fetchLidoPage(u))));
-  }
-
-  let relationQueue = unique([
-    ...initial.relationPages,
-    ...components.flatMap((c) => (c.rawHtml ? discoverLidoTargets(c.rawHtml, c.url).relationPages : [])),
-  ]);
-  const relationPages: Array<{ url: string; contentType?: string; error?: string }> = [];
-  const visited = new Set<string>();
-  let relations: Relation[] = [];
-
-  while (relationQueue.length && relationPages.length < MAX_LIDO_RELATION_PAGES && relations.length < MAX_LIDO_RELATIONS) {
-    if (timeBudgetReached()) {
-      stopReason = "time_budget_reached";
-      break;
-    }
-    const url = relationQueue.shift()!;
-    if (visited.has(url)) continue;
-    visited.add(url);
-    try {
-      const p = await fetchLidoPage(url);
-      relationPages.push({ url: p.url, contentType: p.contentType });
-      relations.push(...extractRelations(p.rawHtml, p.url, p.url));
-      relationQueue.push(...findNextRelationPages(p.rawHtml, p.url).filter((u) => !visited.has(u)));
-    } catch (error) {
-      relationPages.push({ url, error: asError(error) });
-    }
-  }
-
-  relations.push(...extractRelations(seedPage.rawHtml, seedPage.url, seedPage.url));
-  for (const c of components) if (c.rawHtml) relations.push(...extractRelations(c.rawHtml, c.url, c.url));
-
-  const dedup: Relation[] = [];
-  const seen = new Set<string>();
-  for (const r of relations) {
-    const k = relationKey(r);
-    if (!seen.has(k)) {
-      seen.add(k);
-      dedup.push(r);
-    }
-    if (dedup.length >= MAX_LIDO_RELATIONS) break;
-  }
-
-  const ids = mergeIdentifiers([
-    extractIdentifiers(seedPage.rawHtml),
-    ...components.filter((c) => c.rawHtml).map((c) => extractIdentifiers(c.rawHtml as string)),
-    extractIdentifiers(JSON.stringify(dedup)),
-  ]);
-
-  const fullByReported = reportedRelationCount !== null && dedup.length >= reportedRelationCount;
-  const capped = dedup.length >= MAX_LIDO_RELATIONS || relationPages.length >= MAX_LIDO_RELATION_PAGES;
-  if (!stopReason && capped) stopReason = "configured_limit_reached";
-
+function newCrawlState(): CrawlState {
   return {
-    reportedRelationCount,
-    relationsExtracted: dedup.length,
-    relationPagesFetched: relationPages.length,
-    documentComponentsFetched: components.filter((c) => c.rawHtml).length,
-    partialResult: reportedRelationCount === null ? true : !fullByReported,
-    limitReached: capped,
-    stopReason,
-    discoveredIdentifiers: ids,
-    relations: dedup,
-    componentResults: components.map((c) => (c.error ? c : { url: c.url, contentType: c.contentType })),
-    relationPageResults: relationPages,
+    relations: new Map(),
+    identifierSources: [],
+    componentResults: [],
+    relationPageResults: [],
+    componentsFetched: 0,
+    relationPagesFetched: 0,
+    reportedRelationCount: null,
+    stopReason: null,
+    limitReached: false,
   };
 }
 
-function normalizeIdentifier(v: string): string {
-  return v.trim().toUpperCase();
-}
+function ingestPage(state: CrawlState, page: FetchedPage): { components: string[]; relationPages: string[] } {
+  state.identifierSources.push(page.rawHtml);
 
-function candidatesFromInventory(
-  inv: Awaited<ReturnType<typeof inventoryLido>>,
-  exclude: string,
-): Array<{ kind: "ecli" | "bwbr" | "cvdr" | "celex"; value: string }> {
-  const ex = normalizeIdentifier(exclude);
-  const out: Array<{ kind: "ecli" | "bwbr" | "cvdr" | "celex"; value: string }> = [];
-
-  for (const r of inv.relations) {
-    if (r.identifier && normalizeIdentifier(r.identifier) !== ex && ["ecli", "bwbr", "cvdr", "celex"].includes(r.kind)) {
-      out.push({ kind: r.kind as "ecli" | "bwbr" | "cvdr" | "celex", value: r.identifier });
-    }
+  if (state.reportedRelationCount === null) {
+    state.reportedRelationCount = parseReportedRelationCount(page.rawHtml);
   }
 
+  for (const relation of extractRelations(page.rawHtml, page.url, page.url)) {
+    if (state.relations.size >= MAX_LIDO_RELATIONS) {
+      state.limitReached = true;
+      break;
+    }
+    const key = relationKey(relation);
+    if (!state.relations.has(key)) state.relations.set(key, relation);
+  }
+
+  const discovered = discoverLidoTargets(page.rawHtml, page.url);
+  return {
+    components: discovered.components,
+    relationPages: unique([...discovered.relationPages, ...findNextRelationPages(page.rawHtml, page.url)]),
+  };
+}
+
+/**
+ * Haalt alle LiDO-componenten en relatiepagina's op vanaf een set start-URL's.
+ * Elke URL wordt maximaal één keer opgehaald. Stopt netjes op budget of limiet.
+ */
+async function crawlLido(
+  state: CrawlState,
+  seedUrls: string[],
+  requestOptions: { headers?: Record<string, string> },
+): Promise<void> {
+  const visited = new Set<string>();
+  let queue = unique(seedUrls).filter(isAllowedHost);
+
+  while (queue.length) {
+    if (budgetExhausted()) {
+      state.stopReason = "time_budget_reached";
+      return;
+    }
+    if (state.componentsFetched >= MAX_LIDO_COMPONENTS && state.relationPagesFetched >= MAX_LIDO_RELATION_PAGES) {
+      state.limitReached = true;
+      state.stopReason ??= "configured_limit_reached";
+      return;
+    }
+
+    const batch: string[] = [];
+    while (queue.length && batch.length < MAX_CONCURRENCY) {
+      const url = queue.shift() as string;
+      if (visited.has(url)) continue;
+      const isComponent = COMPONENT_RE.test(url);
+      const isRelationPage = RELATION_PAGE_RE.test(url);
+      if (!isComponent && !isRelationPage) continue;
+      if (isComponent && state.componentsFetched + batch.length >= MAX_LIDO_COMPONENTS) continue;
+      if (isRelationPage && state.relationPagesFetched + batch.length >= MAX_LIDO_RELATION_PAGES) continue;
+      visited.add(url);
+      batch.push(url);
+    }
+    if (!batch.length) {
+      if (queue.length) continue;
+      return;
+    }
+
+    const settled = await Promise.all(
+      batch.map(async (url) => {
+        try {
+          return { url, page: await fetchLidoPage(url, requestOptions) };
+        } catch (error) {
+          return { url, error: asError(error) };
+        }
+      }),
+    );
+
+    const next: string[] = [];
+    for (const entry of settled) {
+      const isComponent = COMPONENT_RE.test(entry.url);
+      const bucket = isComponent ? state.componentResults : state.relationPageResults;
+
+      if ("error" in entry && entry.error) {
+        bucket.push({ url: entry.url, error: entry.error });
+        if (entry.error === "LIDO_TIME_BUDGET_REACHED") state.stopReason = "time_budget_reached";
+        continue;
+      }
+
+      const page = (entry as { page: FetchedPage }).page;
+      bucket.push({ url: page.url, contentType: page.contentType });
+      if (isComponent) state.componentsFetched += 1;
+      else state.relationPagesFetched += 1;
+
+      const found = ingestPage(state, page);
+      next.push(...found.components, ...found.relationPages);
+    }
+
+    if (state.relations.size >= MAX_LIDO_RELATIONS) {
+      state.limitReached = true;
+      state.stopReason ??= "configured_limit_reached";
+      return;
+    }
+
+    queue.push(...next.filter((u) => !visited.has(u)));
+  }
+}
+
+function summarize(state: CrawlState, identifier: string | null) {
+  const relations = [...state.relations.values()];
+
+  const failedRequests = [...state.componentResults, ...state.relationPageResults].filter((p) => p.error);
+  if (!state.stopReason && failedRequests.length) {
+    state.stopReason = failedRequests.some((p) => /aborted|timeout|TIME_BUDGET/i.test(p.error ?? ""))
+      ? "time_budget_reached"
+      : "one_or_more_lido_requests_failed";
+  }
+  const ids = mergeIdentifiers([
+    ...state.identifierSources.map((raw) => extractIdentifiers(raw)),
+    extractIdentifiers(JSON.stringify(relations)),
+  ]);
+
+  const reported = state.reportedRelationCount;
+  const fullByReported = reported !== null && relations.length >= reported;
+  const partial = reported === null ? true : !fullByReported || state.stopReason !== null;
+
+  const ex = identifier ? normalizeIdentifier(identifier) : null;
+  const followCandidates = new Set<string>();
+  for (const r of relations) {
+    if (!r.identifier || r.kind === "official-url") continue;
+    if (ex && normalizeIdentifier(r.identifier) === ex) continue;
+    followCandidates.add(`${r.kind}|${r.identifier}`);
+  }
   for (const [plural, kind] of [
     ["eclis", "ecli"],
     ["bwbrs", "bwbr"],
     ["cvdrs", "cvdr"],
     ["celexes", "celex"],
   ] as const) {
-    for (const value of inv.discoveredIdentifiers[plural]) {
-      if (normalizeIdentifier(value) !== ex) out.push({ kind, value });
+    for (const value of ids[plural]) {
+      if (ex && normalizeIdentifier(value) === ex) continue;
+      followCandidates.add(`${kind}|${value}`);
     }
   }
 
-  const seen = new Set<string>();
-  return out.filter((x) => {
-    const k = `${x.kind}|${x.value}`;
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
+  return {
+    reportedRelationCount: reported,
+    relationsExtracted: relations.length,
+    relationPagesFetched: state.relationPagesFetched,
+    documentComponentsFetched: state.componentsFetched,
+    partialResult: partial,
+    limitReached: state.limitReached,
+    stopReason: state.stopReason,
+    discoveredIdentifiers: ids,
+    relations,
+    componentResults: state.componentResults,
+    relationPageResults: state.relationPageResults,
+    totalFollowCandidates: followCandidates.size,
+    limits: {
+      toolBudgetMs: LIDO_TOOL_BUDGET_MS,
+      fetchTimeoutMs: LIDO_FETCH_TIMEOUT_MS,
+      maxRelations: MAX_LIDO_RELATIONS,
+      maxRelationPages: MAX_LIDO_RELATION_PAGES,
+      maxComponents: MAX_LIDO_COMPONENTS,
+      concurrency: MAX_CONCURRENCY,
+    },
+    explanation:
+      reported === null
+        ? `LiDO vermeldde geen betrouwbaar totaal. De server las ${relations.length} unieke relatieverwijzingen uit ${state.componentsFetched} componenten en ${state.relationPagesFetched} relatiepagina's. Stopreden: ${state.stopReason ?? "geen"}.`
+        : `LiDO meldt ${reported} relaties. De server las ${relations.length} unieke relatieverwijzingen uit ${state.componentsFetched} componenten en ${state.relationPagesFetched} relatiepagina's. Het resultaat is ${partial ? "gedeeltelijk" : "volledig volgens het gemelde totaal"}. Stopreden: ${state.stopReason ?? "geen"}.`,
+  };
 }
 
-async function runLidoTool<T>(work: () => Promise<T>): Promise<T> {
-  return lidoExecution.run({ deadline: Date.now() + LIDO_TOOL_BUDGET_MS }, work);
+/* ------------------------------------------------------------------ */
+/* Budget-runner met harde eindgarantie                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Voert het werk uit binnen het tijdsbudget en garandeert dat er ALTIJD binnen
+ * LIDO_TOOL_BUDGET_MS iets wordt teruggegeven. Bij overschrijding wordt de
+ * fallback gebruikt: een geldig gedeeltelijk resultaat in plaats van een
+ * hangende request die door de MCP-client als "expired" wordt gezien.
+ */
+async function runLidoTool<T>(work: (state: CrawlState) => Promise<T>, fallback: (state: CrawlState) => T): Promise<T> {
+  const state = newCrawlState();
+  const deadline = Date.now() + LIDO_TOOL_BUDGET_MS;
+
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
+  const guard = new Promise<T>((resolve) => {
+    watchdog = setTimeout(() => {
+      state.stopReason = "time_budget_reached";
+      resolve(fallback(state));
+    }, LIDO_TOOL_BUDGET_MS);
+  });
+
+  try {
+    return await Promise.race([
+      lidoExecution.run({ deadline }, () => work(state)).catch(() => {
+        state.stopReason ??= "unrecoverable_error";
+        return fallback(state);
+      }),
+      guard,
+    ]);
+  } finally {
+    if (watchdog) clearTimeout(watchdog);
+  }
 }
+
+/* ------------------------------------------------------------------ */
+/* Publieke source                                                     */
+/* ------------------------------------------------------------------ */
 
 export class LidoSource {
   constructor(private readonly config: AppConfig) {}
 
   /**
-   * Haal de LiDO-documentviewer op voor een bekende identifier, volg de
-   * daarin gevonden documentcomponenten en relatiepagina's (met paginering),
-   * en geef de unieke gevonden relaties (ECLI/BWBR/CVDR/CELEX) terug.
+   * Haalt de LiDO-relaties op voor een bekende identifier (ECLI/BWBR/CVDR).
+   *
+   * De documentviewer wordt gebruikt als startpunt, maar is niet blokkerend:
+   * mislukt die, dan wordt alsnog doorgezocht via de directe component- en
+   * relatiepagina-URL's die uit de identifier worden afgeleid. Zo levert de
+   * tool ook bij een trage of falende viewer nog links op.
    */
   async relationsByIdentifier(args: { identifier: string; maxFollow?: number }): Promise<LidoResult> {
     const identifier = args.identifier.trim();
-    const maxFollow = args.maxFollow ?? 5;
+    const endpointUrl = new URL(DOCUMENT_VIEWER_URL);
+    endpointUrl.searchParams.set("ext-id", identifier);
+    const endpoint = endpointUrl.toString();
+    const params = { "ext-id": identifier };
 
-    return runLidoTool(async () => {
-      const url = new URL(DOCUMENT_VIEWER_URL);
-      url.searchParams.set("ext-id", identifier);
-
-      let viewer;
-      try {
-        viewer = await fetchLidoPage(url.toString());
-      } catch (error) {
-        return {
-          items: [] as LidoItem[],
-          total: 0,
-          endpoint: url.toString(),
-          params: { "ext-id": identifier },
-          access_note: `De LiDO-documentviewer kon niet worden opgehaald: ${asError(error)}`,
-        };
-      }
-
-      const cookie = viewer.setCookies.map((v) => v.split(";", 1)[0]).join("; ");
-      const discovered = discoverLidoTargets(viewer.rawHtml, viewer.url);
-      const direct = buildDirectLidoUrls(identifier);
-      const targetUrls = unique([...discovered.components, ...discovered.relationPages, ...direct.urls]);
-      const requestOptions = { headers: { Referer: viewer.url, ...(cookie ? { Cookie: cookie } : {}) } };
-
-      const fetched = await mapLimit(targetUrls, MAX_CONCURRENCY, (u) => fetchLidoPage(u, requestOptions));
-      const successes = fetched.filter((x) => x?.rawHtml);
-      const combinedHtml = [viewer.rawHtml, ...successes.map((x) => x.rawHtml)].join("\n");
-
-      const inv = await inventoryLido({ url: viewer.url, rawHtml: combinedHtml });
-      const candidates = candidatesFromInventory(inv, identifier);
-
+    const toResult = (state: CrawlState, viewerUrl: string, viewerNote?: string): LidoResult => {
+      const inv = summarize(state, identifier);
       const item: LidoItem = {
         id: identifier,
         title: `LiDO-relaties voor ${identifier}`,
-        link: viewer.url,
+        link: viewerUrl,
         identifier,
-        lido_page_url: viewer.url,
+        lido_page_url: viewerUrl,
         reported_relation_count: inv.reportedRelationCount,
         relations_extracted: inv.relationsExtracted,
         relation_pages_fetched: inv.relationPagesFetched,
@@ -503,75 +693,123 @@ export class LidoSource {
         relations: inv.relations,
         component_results: inv.componentResults,
         relation_page_results: inv.relationPageResults,
-        total_follow_candidates: candidates.length,
-        explanation:
-          inv.reportedRelationCount === null
-            ? `LiDO vermeldde geen betrouwbaar totaal. ${inv.relationsExtracted} unieke relaties gevonden uit ${inv.documentComponentsFetched} componenten en ${inv.relationPagesFetched} relatiepagina's.`
-            : `LiDO meldt ${inv.reportedRelationCount} relaties. ${inv.relationsExtracted} unieke relaties gevonden uit ${inv.documentComponentsFetched} componenten en ${inv.relationPagesFetched} relatiepagina's. Resultaat is ${inv.partialResult ? "gedeeltelijk" : "volledig"}.`,
+        total_follow_candidates: inv.totalFollowCandidates,
+        limits: inv.limits,
+        explanation: inv.explanation,
+        ...(viewerNote ? { viewer_note: viewerNote } : {}),
         limitation:
-          "LiDO-pagina's kunnen deels client-side worden opgebouwd; deze tool doorzoekt de ruwe HTML-respons op identifiers en volgt gevonden componenten/relatiepagina's tot een tijdsbudget van 30 seconden.",
+          "LiDO-pagina's worden deels client-side opgebouwd. Deze tool doorzoekt de ruwe HTML van de documentviewer, de documentcomponenten en de relatiepagina's (inclusief paginering) tot het tijdsbudget of de ingestelde limieten zijn bereikt.",
       };
 
       return {
         items: [item],
         total: inv.relationsExtracted,
-        endpoint: url.toString(),
-        params: { "ext-id": identifier },
+        endpoint,
+        params,
         ...(inv.relationsExtracted === 0
           ? { access_note: "Geen relaties gevonden na het volgen van componenten en relatiepagina's." }
           : {}),
       };
-    });
+    };
+
+    let viewerUrl = endpoint;
+    let viewerNote: string | undefined;
+
+    return runLidoTool(
+      async (state) => {
+        const direct = buildDirectLidoUrls(identifier);
+        const seeds: string[] = [...direct.urls];
+        const requestOptions: { headers?: Record<string, string> } = {};
+
+        try {
+          const viewer = await fetchLidoPage(endpoint);
+          viewerUrl = viewer.url;
+          const cookie = viewer.setCookies.map((v) => v.split(";", 1)[0]).join("; ");
+          requestOptions.headers = { Referer: viewer.url, ...(cookie ? { Cookie: cookie } : {}) };
+          const found = ingestPage(state, viewer);
+          seeds.unshift(...found.components, ...found.relationPages);
+        } catch (error) {
+          viewerNote = `De LiDO-documentviewer kon niet worden opgehaald (${asError(error)}); er is doorgezocht via de directe component- en relatiepagina-URL's.`;
+        }
+
+        await crawlLido(state, seeds, requestOptions);
+        return toResult(state, viewerUrl, viewerNote);
+      },
+      (state) => toResult(state, viewerUrl, viewerNote),
+    );
   }
 
-  /** Zoek op LiDO met vrije tekst wanneer geen formele identifier bekend is. */
+  /** Zoekt in LiDO op vrije tekst wanneer geen formele identifier bekend is. */
   async searchFreeText(args: { query: string; maxFollow?: number }): Promise<LidoResult> {
-    const url = new URL(SEARCH_URL);
-    url.searchParams.set("inputtext", args.query);
+    const query = args.query.trim();
+    const endpointUrl = new URL(SEARCH_URL);
+    endpointUrl.searchParams.set("inputtext", query);
+    const endpoint = endpointUrl.toString();
+    const params = { inputtext: query };
 
-    return runLidoTool(async () => {
-      let page;
-      try {
-        page = await fetchLidoPage(url.toString());
-      } catch (error) {
-        return {
-          items: [] as LidoItem[],
-          total: 0,
-          endpoint: url.toString(),
-          params: { inputtext: args.query },
-          access_note: `De LiDO-zoekpagina kon niet worden opgehaald: ${asError(error)}`,
-        };
-      }
+    let pageUrl = endpoint;
+    let pageNote: string | undefined;
 
-      const inv = await inventoryLido({ url: page.url, rawHtml: page.rawHtml });
-
+    const toResult = (state: CrawlState): LidoResult => {
+      const inv = summarize(state, null);
       const item: LidoItem = {
-        id: args.query,
-        title: `LiDO-zoekresultaat: ${args.query}`,
-        link: page.url,
-        query: args.query,
-        lido_search_url: page.url,
+        id: query,
+        title: `LiDO-zoekresultaat: ${query}`,
+        link: pageUrl,
+        query,
+        lido_search_url: pageUrl,
         reported_relation_count: inv.reportedRelationCount,
         relations_extracted: inv.relationsExtracted,
         relation_pages_fetched: inv.relationPagesFetched,
         document_components_fetched: inv.documentComponentsFetched,
         partial_result: inv.partialResult,
+        limit_reached: inv.limitReached,
         stop_reason: inv.stopReason,
         discovered_identifiers: inv.discoveredIdentifiers,
         relations: inv.relations,
+        component_results: inv.componentResults,
+        relation_page_results: inv.relationPageResults,
+        total_follow_candidates: inv.totalFollowCandidates,
+        limits: inv.limits,
+        explanation: inv.explanation,
+        ...(pageNote ? { search_note: pageNote } : {}),
         limitation:
-          "LiDO-zoekresultaten kunnen deels client-side worden opgebouwd; deze tool doorzoekt de ruwe HTML-respons op identifiers en volgt gevonden componenten/relatiepagina's tot een tijdsbudget van 30 seconden.",
+          "LiDO-zoekresultaten worden deels client-side opgebouwd. Deze tool doorzoekt de ruwe HTML-respons op identifiers en volgt gevonden componenten en relatiepagina's tot het tijdsbudget of de ingestelde limieten zijn bereikt.",
       };
 
       return {
         items: [item],
         total: inv.relationsExtracted,
-        endpoint: url.toString(),
-        params: { inputtext: args.query },
+        endpoint,
+        params,
         ...(inv.relationsExtracted === 0
           ? { access_note: "Geen relaties gevonden in de LiDO-zoekresultaten." }
           : {}),
       };
-    });
+    };
+
+    return runLidoTool(
+      async (state) => {
+        const seeds: string[] = [];
+        try {
+          const page = await fetchLidoPage(endpoint);
+          pageUrl = page.url;
+          const found = ingestPage(state, page);
+          seeds.push(...found.components, ...found.relationPages);
+        } catch (error) {
+          pageNote = `De LiDO-zoekpagina kon niet worden opgehaald: ${asError(error)}`;
+          state.stopReason ??= "search_page_fetch_failed";
+          return toResult(state);
+        }
+
+        // Identifiers uit de zoekresultaten kunnen zelf weer LiDO-documenten zijn.
+        const ids = extractIdentifiers(state.identifierSources.join("\n"));
+        for (const ecli of ids.eclis.slice(0, 3)) seeds.push(...buildDirectLidoUrls(ecli).urls);
+
+        await crawlLido(state, seeds, {});
+        return toResult(state);
+      },
+      (state) => toResult(state),
+    );
   }
 }
