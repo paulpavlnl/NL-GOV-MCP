@@ -15,6 +15,7 @@ import { OriSource } from "./sources/ori.js";
 import { NdwSource } from "./sources/ndw.js";
 import { LuchtmeetnetSource } from "./sources/luchtmeetnet.js";
 import { RechtspraakSource } from "./sources/rechtspraak.js";
+import { LidoSource } from "./sources/lido.js";
 import { RdwSource } from "./sources/rdw.js";
 import { RijkswaterstaatWaterdataSource } from "./sources/rijkswaterstaat-waterdata.js";
 import { NgrSource } from "./sources/ngr.js";
@@ -44,7 +45,6 @@ import { KoopCollectieSource } from "./sources/koop-collecties.js";
 import { BrpGewasperceelSource } from "./sources/brp-gewaspercelen.js";
 import { VerkiezingsuitslagenSource } from "./sources/verkiezingsuitslagen.js";
 import { EuCellarSource, normalizeCelex } from "./sources/eu-cellar.js";
-import { LidoSource, parseLidoId } from "./sources/lido.js";
 import { mapSourceError, nowIso, successResponse, toMcpToolPayload, errorResponse } from "./utils/response.js";
 import { parseTemporalRange } from "./utils/temporal.js";
 import { applyOutputFormat } from "./utils/output-format.js";
@@ -70,6 +70,7 @@ const ori = new OriSource(config);
 const ndw = new NdwSource(config);
 const luchtmeetnet = new LuchtmeetnetSource(config);
 const rechtspraak = new RechtspraakSource(config);
+const lido = new LidoSource(config);
 const rdw = new RdwSource(config);
 const rwsWaterdata = new RijkswaterstaatWaterdataSource(config);
 const ngr = new NgrSource(config);
@@ -97,7 +98,6 @@ const samenwerkendeCatalogi = new KoopCollectieSource(config, "samenwerkendecata
 const brpGewaspercelen = new BrpGewasperceelSource(config);
 const verkiezingsuitslagen = new VerkiezingsuitslagenSource(config);
 const euCellar = new EuCellarSource(config);
-const lido = new LidoSource(config);
 
 function record(source: string, title: string, canonical_url: string, data: Record<string, unknown>, snippet?: string, date?: string): MCPRecord {
   return { source_name: source, title, canonical_url, data, snippet, date };
@@ -254,40 +254,6 @@ export function extractVerkiezingHint(lowered: string): string | undefined {
   if (/waterschap/.test(lowered)) return "WS";
   const code = /\b([a-z]{2})\s?(\d{8})\b/.exec(lowered);
   return code ? `${code[1].toUpperCase()}${code[2]}` : undefined;
-}
-
-export type EuIntent =
-  | { kind: "document"; celex: string }
-  | { kind: "transposition"; celex: string }
-  | { kind: "search"; query: string };
-
-const EU_CELEX_TOKEN = /(?:^|[^\p{L}\d])(?:celex\s*:?\s*)?(3\d{4}[RLD]\d{4})(?=$|[^\p{L}\d])/iu;
-// Tight citation shape: a bare "verordening 2024/12" can be a municipal bylaw, so
-// regulations and decisions need an EU/EG/EEG marker; directives are EU-only.
-const EU_CITATION = /(?:uitvoerings|gedelegeerde\s+)?(verordening|richtlijn|besluit)\s*(\((?:eu|eg|eeg|euratom)\)|\b(?:eu|eg|eeg)\b)?\s*(?:nr\.?\s*)?\d{1,4}\s*\/\s*\d{1,4}(\s*\/\s*(?:eu|eg|eeg)\b)?/iu;
-const EU_SEARCH_TRIGGER = /(?:^|[^\p{L}\d-])(?:eur-?lex|eu-(?:richtlijn|verordening|wetgeving)(?:en)?|europese\s+(?:richtlijn|verordening|wetgeving)(?:en)?|omzetting\s+(?:van\s+(?:de\s+|een\s+)?)?(?:eu-)?richtlijn(?:en)?)(?=$|[^\p{L}\d-])/iu;
-const EU_STRIP_WORDS = /(?:^|[^\p{L}\d-])(?:eur-?lex|eu|eu-richtlijn(?:en)?|eu-verordening(?:en)?|eu-wetgeving|europese|europees|richtlijn(?:en)?|verordening(?:en)?|wetgeving|omzetting|welke|zijn|er|over|op|het|gebied|van|de|een|in)(?=$|[^\p{L}\d-])/giu;
-
-/**
- * Narrow EU-legislation intent for nl_gov_ask. Runs on the RAW question: the
- * query rewriter strips '/', which would destroy citations like "2016/679".
- */
-export function detectEuIntent(question: string): EuIntent | undefined {
-  const raw = String(question ?? "");
-  let celex: string | null = null;
-  const token = EU_CELEX_TOKEN.exec(raw);
-  if (token) celex = normalizeCelex(token[1]);
-  if (!celex) {
-    const cit = EU_CITATION.exec(raw);
-    if (cit && (cit[2] || cit[3] || cit[1].toLowerCase() === "richtlijn")) celex = normalizeCelex(cit[0]);
-  }
-  if (celex) {
-    const isDirective = celex.charAt(5) === "L";
-    return isDirective && /omzet|omgezet|implementatie|ge[iï]mplementeerd|transpos/i.test(raw) ? { kind: "transposition", celex } : { kind: "document", celex };
-  }
-  if (!EU_SEARCH_TRIGGER.test(raw)) return undefined;
-  const query = raw.replace(/[?!.,;:]/g, " ").replace(EU_STRIP_WORDS, " ").replace(/\s+/g, " ").trim();
-  return query ? { kind: "search", query } : undefined;
 }
 
 export function shouldDeepenTweedeKamerQuery(question: string): boolean {
@@ -1252,6 +1218,58 @@ export function registerTools(server: McpServer): void {
     }
   });
 
+    server.registerTool("rechtspraak_get_by_ecli", {
+    description: "Fetch a Dutch ruling directly by a known ECLI, without searching first. Returns the official ruling XML (Rechtspraak Open Data content service).",
+    inputSchema: {
+      ecli: z.string().regex(/^ECLI:/i).describe("Full ECLI, e.g. ECLI:NL:HR:2019:1734."),
+      returnType: z.enum(["DOC", "META"]).default("DOC"),
+    },
+    annotations: TOOL_ANNOTATIONS,
+  }, async ({ ecli, returnType }) => {
+    try {
+      const out = await rechtspraak.getByEcli({ ecli, returnType });
+      const records = out.items.map((x) =>
+        record("rechtspraak", String(x.title ?? x.ecli ?? "Rechtspraak uitspraak"), String(x.link ?? "https://data.rechtspraak.nl"), x, String(x.summary ?? ""), String(x.updated ?? "")),
+      );
+      return toMcpToolPayload(successResponse({
+        summary: records.length ? `Uitspraak ${ecli} opgehaald` : `Geen uitspraak gevonden voor ${ecli}`,
+        records,
+        provenance: prov("rechtspraak_get_by_ecli", out.endpoint, out.params, records.length, out.total),
+        access_note: out.access_note,
+      }));
+    } catch (e) {
+      return toMcpToolPayload(mapSourceError(e, "Rechtspraak", "https://data.rechtspraak.nl"));
+    }
+  });
+
+    server.registerTool("lido_relations_by_identifier", {
+    description: "Fetch the LiDO (Linked Data Overheid) document page for a known ECLI/BWBR/CVDR identifier and detect related identifiers referenced there.",
+    inputSchema: { identifier: z.string().min(2).describe("A known ECLI, BWBR or CVDR identifier.") },
+    annotations: TOOL_ANNOTATIONS,
+  }, async ({ identifier }) => {
+    try {
+      const out = await lido.relationsByIdentifier({ identifier });
+      const records = out.items.map((x) => record("lido", String(x.title ?? identifier), String(x.link ?? "https://linkeddata.overheid.nl"), x));
+      return toMcpToolPayload(successResponse({ summary: `LiDO-relaties voor ${identifier}`, records, provenance: prov("lido_relations_by_identifier", out.endpoint, out.params, records.length, out.total), access_note: out.access_note }));
+    } catch (e) {
+      return toMcpToolPayload(mapSourceError(e, "LiDO", "https://linkeddata.overheid.nl"));
+    }
+  });
+
+  server.registerTool("lido_search_free_text", {
+    description: "Search LiDO (Linked Data Overheid) by free text or a nickname when no formal identifier is known.",
+    inputSchema: { query: z.string().min(1).describe("Free-text search term or case nickname.") },
+    annotations: TOOL_ANNOTATIONS,
+  }, async ({ query }) => {
+    try {
+      const out = await lido.searchFreeText({ query });
+      const records = out.items.map((x) => record("lido", String(x.title ?? query), String(x.link ?? "https://linkeddata.overheid.nl"), x));
+      return toMcpToolPayload(successResponse({ summary: `LiDO-zoekresultaat voor "${query}"`, records, provenance: prov("lido_search_free_text", out.endpoint, out.params, records.length, out.total), access_note: out.access_note }));
+    } catch (e) {
+      return toMcpToolPayload(mapSourceError(e, "LiDO", "https://linkeddata.overheid.nl"));
+    }
+  });
+
   server.registerTool("rivm_discovery_search", { inputSchema: { query: z.string().describe("Public health topic keywords. Examples: 'vaccinatie', 'luchtkwaliteit gezondheid', 'PFAS', 'infectieziekten'. Do NOT pass full questions."), rows: z.number().int().min(1).max(config.limits.maxRows).default(20) }, description: "Search/discover RIVM (Dutch public health institute) datasets and API references. Use health/environment topic keywords.", annotations: TOOL_ANNOTATIONS }, async ({ query, rows }) => {
     const rw = rewriteQuery(query, "moderate");
     try {
@@ -1514,8 +1532,6 @@ export function registerTools(server: McpServer): void {
 
       const uniquePlannerCandidates = Array.from(new Set(plannerCandidates));
       const multiIntentSignal = explicitMulti || implicitMulti || uniquePlannerCandidates.length >= 2;
-      // EU legislation goes first: "Verordening (EU) 2016/679" would otherwise hit obTerms.
-      const euIntent = detectEuIntent(decodedQuestion);
 
       if (dryRun) {
         const endpointByCandidate: Record<string, string> = {
@@ -1527,14 +1543,11 @@ export function registerTools(server: McpServer): void {
           duo: config.endpoints.duoDatasets,
           api: config.endpoints.apiRegister,
           rechtspraak: "https://uitspraken.rechtspraak.nl/api/zoek",
-          eu_cellar: "https://publications.europa.eu/webapi/rdf/sparql",
         };
 
-        const estimatedSources: string[] = euIntent
-          ? ["eu_cellar"]
-          : uniquePlannerCandidates.length
-            ? uniquePlannerCandidates
-            : ["data_overheid"];
+        const estimatedSources = uniquePlannerCandidates.length
+          ? uniquePlannerCandidates
+          : ["data_overheid"];
 
         const plannedRequests = estimatedSources.map((candidate) => ({
           connector: candidate,
@@ -1575,32 +1588,6 @@ export function registerTools(server: McpServer): void {
           content: [{ type: "text", text: JSON.stringify(dryRunPayload, null, 2) }],
           structuredContent: dryRunPayload,
         };
-      }
-
-      if (euIntent) try {
-        if (euIntent.kind === "search") {
-          const euQuery = makeKeywordQuery(euIntent.query) || euIntent.query;
-          const out = await timed("eu_cellar", () => euCellar.search({ query: euQuery, limit: top }));
-          const records = out.items.map((x) => record("eu-cellar", String(x.title ?? x.celex ?? "EU-handeling"), String(x.eurlex_url ?? "https://eur-lex.europa.eu"), x, String(x.document_type_label ?? ""), String(x.date ?? "")));
-          if (records.length) {
-            return askSuccess({ summary: `Router: EUR-Lex (${records.length} EU-handelingen)`, records, provenance: prov("nl_gov_ask", out.endpoint, out.params, records.length, out.total), access_note: out.access_note, total: out.total });
-          }
-        } else if (euIntent.kind === "transposition") {
-          const out = await timed("eu_cellar", () => euCellar.nlTransposition({ id: euIntent.celex, limit: top }));
-          const records = out.items.map((x) => record("eu-cellar", String(x.title ?? x.identifier ?? "Omzettingsmaatregel"), String(x.canonical_url ?? `https://eur-lex.europa.eu/legal-content/NL/TXT/?uri=CELEX:${euIntent.celex}`), x, [x.measure_type, x.official_journal].filter(Boolean).join(" — "), String(x.publication_date ?? "")));
-          if (records.length) {
-            return askSuccess({ summary: `Router: EUR-Lex NL-omzetting ${euIntent.celex} (${records.length} maatregelen)`, records, provenance: prov("nl_gov_ask", out.endpoint, out.params, records.length, out.total), access_note: out.access_note, total: out.total });
-          }
-        } else {
-          const out = await timed("eu_cellar", () => euCellar.document({ id: euIntent.celex }));
-          const records = out.items.map((x) => record("eu-cellar", String(x.title ?? x.celex ?? "EU-handeling"), String(x.eurlex_url ?? "https://eur-lex.europa.eu"), x, String(x.document_type_label ?? ""), String(x.date ?? "")));
-          if (records.length) {
-            return askSuccess({ summary: `Router: EUR-Lex ${euIntent.celex}`, records, provenance: prov("nl_gov_ask", out.endpoint, out.params, records.length, out.total), access_note: out.access_note, total: out.total });
-          }
-        }
-        fallbackSteps.push(`eu_cellar:${euIntent.kind}:no_results`);
-      } catch {
-        fallbackSteps.push(`eu_cellar:${euIntent.kind}:failed`);
       }
 
       if (multiIntentSignal && uniquePlannerCandidates.length >= 2) {
@@ -2495,28 +2482,6 @@ export function registerTools(server: McpServer): void {
       const response = buildFormattedResponse({ summary: `${records.length} NL-omzettingsmaatregelen bij ${celex}`, records, provenance: prov("eurlex_nl_omzetting", out.endpoint, out.params, Math.min(effectiveLimit, Math.max(0, records.length - offset)), out.total), outputFormat, offset, limit: effectiveLimit, total: out.total, access_note: out.access_note, verbose: singleConnectorVerbose({ enabled: verbose, connector: "eu_cellar", endpoint: out.endpoint, responseTimeMs }) });
       return toMcpToolPayload(response);
     } catch (e) { return toMcpToolPayload(mapSourceError(e, "EUR-Lex/CELLAR", "https://eur-lex.europa.eu")); }
-  });
-
-  server.registerTool("lido_verwijzingen", {
-    description: "Count references per document type in LiDO (Linked Data Overheid) to a ruling (ECLI), law article (BWBR + artikel), EU act (CELEX) or Staatsblad/Staatscourant publication; includes a portal link to the list.",
-    inputSchema: { id: z.string().describe("ECLI:NL:HR:2019:2006, BWBR0011823, 32016L0680 or stb-2018-401."), artikel: z.string().optional().describe("Article number, only with a BWBR id, e.g. '7:658'."), outputFormat: outputFormatSchema, verbose: z.boolean().default(false), dryRun: z.boolean().default(false) },
-    annotations: TOOL_ANNOTATIONS,
-  }, async ({ id, artikel, outputFormat, verbose, dryRun }) => {
-    const parsed = parseLidoId(id);
-    if (!parsed) return toMcpToolPayload(errorResponse({ error: "unexpected", message: `Onbekend LiDO-identifier: ${id.slice(0, 100)}`, suggestion: "Use an ECLI (ECLI:NL:HR:2019:2006), BWB id (BWBR0011823, optionally with artikel), CELEX (32016L0680) or OEP publication (stb-2018-401)." }));
-    try {
-      if (dryRun) return dryRunPayload({ connector: "lido", url: "https://linkeddata.overheid.nl/service/get-aantal-per-informatietype", params: { kind: parsed.kind, id: parsed.value, artikel } });
-      const started = Date.now();
-      const out = await lido.references({ id, artikel });
-      const responseTimeMs = Date.now() - started;
-      const records = out.items.map((x) => {
-        const perType = Array.isArray(x.per_type) ? (x.per_type as Array<{ type: string; count: number }>) : [];
-        const snippet = perType.slice(0, 5).map((p) => `${p.type}: ${p.count}`).join(", ");
-        return record("lido", String(x.title ?? `LiDO-verwijzingen naar ${id}`), String(x.portal_url ?? "https://linkeddata.overheid.nl"), x, `${String(x.total_references ?? "?")} verwijzingen${snippet ? ` (${snippet})` : ""}`);
-      });
-      const response = buildFormattedResponse({ summary: `LiDO-verwijzingen naar ${parsed.value}${artikel ? ` art. ${artikel}` : ""}`, records, provenance: prov("lido_verwijzingen", out.endpoint, out.params, records.length, out.total), outputFormat, offset: 0, limit: Math.max(1, records.length), total: out.total, access_note: out.access_note, verbose: singleConnectorVerbose({ enabled: verbose, connector: "lido", endpoint: out.endpoint, responseTimeMs }) });
-      return toMcpToolPayload(response);
-    } catch (e) { return toMcpToolPayload(mapSourceError(e, "LiDO Linked Data Overheid", "https://linkeddata.overheid.nl")); }
   });
 
   server.registerTool("bestuurlijke_gebieden_search", {
