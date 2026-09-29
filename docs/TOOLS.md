@@ -217,6 +217,10 @@ Search CBS Iv3 municipal/provincial finance statistics. Filters: `gemeente` (Gem
 
 Search consolidated Dutch national legislation (BWB) via the KOOP SRU service. Keywords match the title index `overheidbwb.titel` (title search, not full text). Full-pattern tool: supports `offset`/`limit`/`top`, `outputFormat`, `verbose` and `dryRun`. Returns BWBR id, title, competent authority, date and a wetten.overheid.nl link.
 
+## bwb_artikel_tekst
+
+Fetch the official text of ONE article of a Dutch national law/regulation (BWB), as valid on a given date. Input: `bwbId` (e.g. `BWBR0019057`; find it with `wetten_bwb_search`), `artikel` (e.g. `55`, `8:77`, `7:658` for BW book 7), optional `datum` (YYYY-MM-DD, default today) and optional `pad` filter (e.g. `Boek7`, `Hoofdstuk7`) when a number occurs more than once. Works in two steps: BWB SRU (identifier + `overheidbwb.geldigheidsdatum`) resolves the toestand valid on that date; the toestand XML from the KOOP repository is parsed server-side and only the requested `<artikel>` is returned. Returns heading, full text with leden/onderdelen, `label_id`, `inwerking`, and permanent links (wetten.overheid.nl, jci, LiDO linktool and the LiDO `bwb-zoek-toestand` text component).
+
 ## cvdr_search
 
 Search Dutch decentralised/local regulations (CVDR) via the KOOP SRU service. Keywords match the `keyword` index. Full-pattern tool: supports `offset`/`limit`/`top`, `outputFormat`, `verbose` and `dryRun`. Returns CVDR id, title, issuing municipality/authority, date and a lokaleregelgeving.overheid.nl link.
