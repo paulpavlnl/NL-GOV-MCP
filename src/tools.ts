@@ -28,6 +28,7 @@ import { DataEuropaSource } from "./sources/data-europa.js";
 import { DataPolitieSource } from "./sources/data-politie.js";
 import { CbsIv3Source } from "./sources/cbs-iv3.js";
 import { WettenBwbSource } from "./sources/wetten-bwb.js";
+import { BwbArtikelSource } from "./sources/bwb-artikel.js";
 import { CvdrSource } from "./sources/cvdr.js";
 import { BestuurlijkeGebiedenSource } from "./sources/bestuurlijke-gebieden.js";
 import { BrkKadastraleKaartSource } from "./sources/brk-kadastrale-kaart.js";
@@ -84,6 +85,7 @@ const dataEuropa = new DataEuropaSource(config);
 const dataPolitie = new DataPolitieSource(config);
 const cbsIv3 = new CbsIv3Source(config);
 const wettenBwb = new WettenBwbSource(config);
+const bwbArtikel = new BwbArtikelSource(config);
 const cvdr = new CvdrSource(config);
 const bestuurlijkeGebieden = new BestuurlijkeGebiedenSource(config);
 const brkKadastraleKaart = new BrkKadastraleKaartSource(config);
@@ -2404,6 +2406,28 @@ export function registerTools(server: McpServer): void {
       const records = out.items.map((x) => record("wetten-bwb", String(x.title ?? x.identifier ?? "BWB regeling"), String(x.canonical_url ?? "https://wetten.overheid.nl"), x as Record<string, unknown>, String(x.authority ?? ""), String(x.date ?? "")));
       const response = buildFormattedResponse({ summary: `${records.length} BWB wetten`, records, provenance: prov("wetten_bwb_search", out.endpoint, out.params, Math.min(effectiveLimit, Math.max(0, records.length - offset)), out.total), outputFormat, offset, limit: effectiveLimit, total: out.total, access_note: out.access_note, verbose: singleConnectorVerbose({ enabled: verbose, connector: "wetten_bwb", endpoint: out.endpoint, responseTimeMs }) });
       return toMcpToolPayload(response);
+    } catch (e) { return toMcpToolPayload(mapSourceError(e, "BWB wetgeving", "https://wetten.overheid.nl")); }
+  });
+
+  server.registerTool("bwb_artikel_tekst", {
+    description: "Fetch the official text of ONE article of a Dutch national law/regulation from the Basiswettenbestand (BWB), as valid on a given date. Use this whenever you need the literal article text (wetten_bwb_search only returns titles/metadata). Input: BWBR id (find it with wetten_bwb_search), article number (e.g. '55', '8:77', '7:658' for BW book 7), optional date (YYYY-MM-DD, default today) and optional path filter (e.g. 'Boek7', 'Hoofdstuk7'). Returns the article heading, full text with leden/onderdelen, and permanent links (wetten.overheid.nl, jci, LiDO).",
+    inputSchema: {
+      bwbId: z.string().describe("BWBR identifier, e.g. 'BWBR0019057' (Wet WIA). Use wetten_bwb_search to find it."),
+      artikel: z.string().min(1).describe("Article number, e.g. '55', '3:4', '7:658' (BW), '1a'."),
+      datum: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Validity date YYYY-MM-DD (geldigheidsdatum). Default: today."),
+      pad: z.string().optional().describe("Optional filter on the article path, e.g. 'Boek7' or 'Hoofdstuk7', when an article number occurs more than once."),
+    },
+    annotations: TOOL_ANNOTATIONS,
+  }, async ({ bwbId, artikel, datum, pad }) => {
+    try {
+      const out = await bwbArtikel.getArtikel({ bwbId, artikel, datum, pad });
+      const records = out.items.map((x) => record("wetten-bwb", `${x.titel_regeling ?? x.bwb_id}, ${x.kop}`, x.wetten_url, x as unknown as Record<string, unknown>, x.tekst.slice(0, 300), x.inwerking ?? ""));
+      return toMcpToolPayload(successResponse({
+        summary: records.length ? `${records.length} artikel(en) ${artikel} uit ${bwbId} (geldig op ${datum ?? "vandaag"})` : `Artikel ${artikel} niet gevonden in ${bwbId}`,
+        records,
+        provenance: prov("bwb_artikel_tekst", out.endpoint, out.params as Record<string, string>, records.length, out.total),
+        access_note: out.access_note,
+      }));
     } catch (e) { return toMcpToolPayload(mapSourceError(e, "BWB wetgeving", "https://wetten.overheid.nl")); }
   });
 
