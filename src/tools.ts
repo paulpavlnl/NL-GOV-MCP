@@ -1244,11 +1244,17 @@ export function registerTools(server: McpServer): void {
     }
   });
 
+  // Compacte LiDO-weergave is standaard; het volledige crawlresultaat is honderdduizenden tekens.
+  const lidoOutputSchema = {
+    detail: z.enum(["compact", "volledig"]).default("compact").describe('"compact" (default): rulings and regulations with direction, newest first, plus a breakdown by court/year/type; "volledig": all raw crawl data (very large).'),
+    maxResultaten: z.number().int().min(1).max(5000).default(100).describe("Max rulings and regulations listed in compact mode (newest first); totals and breakdown always count everything."),
+  };
+
     server.registerTool("lido_relations_by_identifier", {
     description: "Fetch LiDO (Linked Data Overheid) relations for a known identifier: an ECLI (ruling), a CVDR, a whole law (BWBR, e.g. 'BWBR0040635'), or one law article ('BWBR0005537 artikel 1:7', a wetten.overheid.nl/id/... article URI, or a linkeddata.overheid.nl linktool-bwb-verfijnen URL as returned by bwb_artikel_tekst as lido_url). For laws and articles the relation list includes rulings that cite them (incoming) and references they make (outgoing).",
-    inputSchema: { identifier: z.string().min(2).describe("ECLI, CVDR, BWBR, 'BWBR… artikel <nr>', a wetten.overheid.nl/id/... URI or a LiDO linktool URL.") },
+    inputSchema: { identifier: z.string().min(2).describe("ECLI, CVDR, BWBR, 'BWBR… artikel <nr>', a wetten.overheid.nl/id/... URI or a LiDO linktool URL."), ...lidoOutputSchema },
     annotations: TOOL_ANNOTATIONS,
-  }, async ({ identifier }) => {
+  }, async ({ identifier, detail, maxResultaten }) => {
     try {
       // Wetsartikel → LiDO-object-URI (…/terms/bwb/id/BWBR…/label-id/inwerking/inwerking).
       // De LiDO-linktool kan dat ook, maar doet er voor artikelen 17-19 s over (alle versies).
@@ -1271,7 +1277,7 @@ export function registerTools(server: McpServer): void {
           ? `http://linkeddata.overheid.nl/terms/bwb/id/${a.bwb_id}/${a.label_id}/${a.inwerking}/${a.inwerking}`
           : (a.lido_url ?? identifier);
       }
-      const out = await lido.relationsByIdentifier({ identifier: lidoId });
+      const out = await lido.relationsByIdentifier({ identifier: lidoId, detail, maxResultaten });
       const records = out.items.map((x) => record("lido", String(x.title ?? identifier), String(x.link ?? "https://linkeddata.overheid.nl"), x));
       return toMcpToolPayload(successResponse({ summary: `LiDO-relaties voor ${identifier}`, records, provenance: prov("lido_relations_by_identifier", out.endpoint, out.params, records.length, out.total), access_note: out.access_note }));
     } catch (e) {
@@ -1281,11 +1287,11 @@ export function registerTools(server: McpServer): void {
 
   server.registerTool("lido_search_free_text", {
     description: "Search LiDO (Linked Data Overheid) by free text or a nickname when no formal identifier is known.",
-    inputSchema: { query: z.string().min(1).describe("Free-text search term or case nickname.") },
+    inputSchema: { query: z.string().min(1).describe("Free-text search term or case nickname."), ...lidoOutputSchema },
     annotations: TOOL_ANNOTATIONS,
-  }, async ({ query }) => {
+  }, async ({ query, detail, maxResultaten }) => {
     try {
-      const out = await lido.searchFreeText({ query });
+      const out = await lido.searchFreeText({ query, detail, maxResultaten });
       const records = out.items.map((x) => record("lido", String(x.title ?? query), String(x.link ?? "https://linkeddata.overheid.nl"), x));
       return toMcpToolPayload(successResponse({ summary: `LiDO-zoekresultaat voor "${query}"`, records, provenance: prov("lido_search_free_text", out.endpoint, out.params, records.length, out.total), access_note: out.access_note }));
     } catch (e) {

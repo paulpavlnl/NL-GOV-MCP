@@ -43,9 +43,12 @@ const call = (id, method, params) => new Promise((res) => { pending.set(id, res)
     } else if (name === 'wetten_bwb_search') {
       console.log(`${label}\n   ${Date.now() - t} ms: ${o.records.map((x) => `${x.data.identifier} [${x.data.type}] ${x.data.title}`).join(' | ')}`);
     } else {
+      // Compacte LiDO-weergave (standaard).
       const d = o.records?.[0]?.data ?? {};
-      const ids = d.discoveredIdentifiers ?? d.discovered_identifiers ?? {};
-      console.log(`${label}\n   ${Date.now() - t} ms: gemeld ${d.reportedOutgoingRelations ?? '?'} uit / ${d.reportedIncomingRelations ?? '?'} in, gelezen ${d.relationsExtracted} relaties, ${d.relationPagesFetched} lijstpagina's, ECLI's ${ids.eclis?.length ?? 0}, BWBR's ${ids.bwbrs?.length ?? 0}, gedeeltelijk=${d.partialResult}, stop=${d.stopReason}${d.viewer_note ? `\n   noot: ${d.viewer_note}` : ''}${o.error ? `\n   FOUT: ${JSON.stringify(o.error).slice(0, 200)}` : ''}`);
+      const v = d.gevonden ?? {};
+      console.log(`${label}\n   ${Date.now() - t} ms, ${r.result.content[0].text.length} tekens: gemeld ${d.gemeld?.uitgaand ?? '?'} uit / ${d.gemeld?.inkomend ?? '?'} in, gevonden ${v.uitspraken} uitspraken + ${v.regelingen} regelingen (in ${v.inkomend}, uit ${v.uitgaand}), ${d.relatiepaginas} lijstpagina's, volledig=${d.volledig}, stop=${d.stopReason}`
+        + (d.uitspraken?.length ? `\n   eerste: ${d.uitspraken[0].ecli} ${d.uitspraken[0].omschrijving ?? ''} (${d.uitspraken[0].richting})` : '')
+        + (d.note ? `\n   noot: ${String(d.note).slice(0, 140)}` : '') + (o.error ? `\n   FOUT: ${JSON.stringify(o.error).slice(0, 200)}` : ''));
     }
   }
   p.kill();

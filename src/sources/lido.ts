@@ -507,11 +507,27 @@ function canonicalRelationPage(url: string): string {
   }
 }
 
+/**
+ * Een relatielijst zonder tabblad toont één richting zonder dat te zeggen; relaties daaruit
+ * verliezen hun richting (en verdringen bij het ontdubbelen dezelfde relatie mét richting).
+ * Zo'n eerste pagina wordt daarom vervangen door de twee tabblad-pagina's.
+ */
+function relationPagesFor(url: string): string[] {
+  const c = canonicalRelationPage(url);
+  try {
+    const u = new URL(c);
+    if (!u.searchParams.has("fq") && !u.searchParams.has("start")) return relationTabUrls(u.searchParams.get("id") ?? "");
+  } catch {
+    /* ongewijzigd */
+  }
+  return [c];
+}
+
 function discoverLidoTargets(raw: string, base: string, scope: Set<string>) {
   const urls = extractUrls(raw, base).filter(isAllowedHost).map(stripFragment);
   return {
     components: unique(urls.filter((u) => COMPONENT_RE.test(u))),
-    relationPages: unique(urls.filter((u) => isInScopeRelationPage(u, scope)).map(canonicalRelationPage)),
+    relationPages: unique(urls.filter((u) => isInScopeRelationPage(u, scope)).flatMap(relationPagesFor)),
   };
 }
 
@@ -523,7 +539,7 @@ function findNextRelationPages(raw: string, base: string, scope: Set<string>): s
     try {
       const u = stripFragment(new URL(anchor.href.replace(/&amp;/g, "&"), base).toString());
       // Paginering blijft per definitie binnen hetzelfde object.
-      if (RELATION_PAGE_RE.test(u) && isInScopeRelationPage(u, scope)) out.push(canonicalRelationPage(u));
+      if (RELATION_PAGE_RE.test(u) && isInScopeRelationPage(u, scope)) out.push(...relationPagesFor(u));
     } catch {
       /* negeren */
     }
@@ -1227,6 +1243,147 @@ function summarize(state: CrawlState, identifier: string | null) {
   };
 }
 
+/* ------------------------------------------------------------------ */
+/* Compacte weergave                                                   */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Het volledige resultaat is voor 28 relaties al 300.000+ tekens: per relatie de lange
+ * paginalink (2x), versie-URI's en pagina-onderdelen van het object zelf, menulinks, de
+ * zijbalk-tellingen als "relaties", en alles in camelCase én snake_case. Compact (standaard)
+ * houdt alleen echte relaties over (uitspraken en regelingen, ontdubbeld, met richting,
+ * meest recente eerst) plus de zijbalk-tellingen als verdeling per instantie, jaar en soort.
+ */
+export type LidoDetail = "compact" | "volledig";
+
+const PAGINA_ONDERDELEN =
+  /^(?:inhoud|menu|zoeken|help|brongegevens|services|feedback|proclaimer|permanente link|oorspronkelijk document|terug naar het begin|objectinformatie|relaties\b.*|uitgaande relaties.*|inkomende relaties.*|toon meer.*|volgende.*|vorige.*|\d+)$/i;
+
+type Richting = "inkomend" | "uitgaand" | undefined;
+
+function richtingVan(r: Record<string, unknown>): Richting {
+  let s = String(r.sourceUrl ?? r.url ?? "").replace(/&amp;/g, "&");
+  try {
+    s = decodeURIComponent(s);
+  } catch {
+    /* ruwe tekst gebruiken */
+  }
+  // LiDO benoemt de richting vanuit het andere document.
+  if (/link_richting:"uitgaand"/.test(s)) return "inkomend";
+  if (/link_richting:"inkomend"/.test(s)) return "uitgaand";
+  return undefined;
+}
+
+/** Datum uit "Rechtbank Den Haag, 16-04-2026 / NL26.13905" als sorteersleutel (jjjjmmdd). */
+function datumSleutel(oms: string | undefined): string {
+  const m = String(oms ?? "").match(/(\d{2})-(\d{2})-(\d{4})/);
+  return m ? `${m[3]}${m[2]}${m[1]}` : "";
+}
+
+export function compactLidoItem(item: LidoItem, subject: string | null, maxResultaten = 100): LidoItem {
+  const subj = String(subject ?? "").toUpperCase();
+  const note = String(item.viewer_note ?? item.search_note ?? "");
+  // BWBR van het onderzochte object: verwijzingen naar dat object zelf (kop, versies) zijn geen relaties.
+  const eigenBwbr = (`${subject ?? ""} ${note}`.match(/BWBR\d{7}/i)?.[0] ?? "").toUpperCase();
+  const seen = new Set<string>();
+  let uitspraken: Array<{ ecli: string; omschrijving?: string; richting: Richting }> = [];
+  let regelingen: Array<{ soort: string; identifier: string; omschrijving: string; richting: Richting }> = [];
+  const overig: Array<Record<string, unknown>> = [];
+  const inTekst = new Map<string, { soort: string; identifier: string; vermeldingen: number; voorbeelden: string[] }>();
+  const verdeling: Record<"inkomend" | "uitgaand", Record<string, number>> = { inkomend: {}, uitgaand: {} };
+
+  for (const r of (item.relations as Array<Record<string, unknown>> | undefined) ?? []) {
+    // Versies van dezelfde regeling ("… (vanaf 01-08-2026)") tellen als één relatie.
+    const oms = String(r.description ?? "").trim().replace(/\s*\(vanaf \d{2}-\d{2}-\d{4}\)$/i, "");
+    if (!oms || PAGINA_ONDERDELEN.test(oms) || /^https?:\/\//i.test(oms)) continue;
+    const richting = richtingVan(r);
+    const kind = String(r.kind ?? "");
+    const id = String(r.identifier ?? "").toUpperCase();
+    // Uit de tekst van het document zelf (componentpagina's): groeperen per identifier.
+    if (!richting && kind !== "official-url" && id && !RELATION_PAGE_RE.test(String(r.sourceUrl ?? ""))) {
+      if (subj.includes(id) || (eigenBwbr && id === eigenBwbr && !subj.startsWith("ECLI"))) continue;
+      const g = inTekst.get(id) ?? { soort: kind, identifier: id, vermeldingen: 0, voorbeelden: [] };
+      g.vermeldingen++;
+      if (g.voorbeelden.length < 3 && !g.voorbeelden.includes(oms)) g.voorbeelden.push(oms);
+      inTekst.set(id, g);
+      continue;
+    }
+    // Zijbalk-tellingen ("Rechtbank Den Haag (12)", "2026 (26)") als verdeling, niet als relatie.
+    const facet = oms.match(/^(.+?)\s*\((\d+)\)$/);
+    if (facet && richting) {
+      verdeling[richting][facet[1]] = Number(facet[2]);
+      continue;
+    }
+    if (kind === "official-url") {
+      // Alleen echte doelen (bv. Staatsblad), geen links binnen de LiDO-website.
+      const url = String(r.url ?? "");
+      if (!url || /linkeddata\.overheid\.nl/i.test(url)) continue;
+      const key = `${url}|${richting ?? ""}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        overig.push({ soort: "link", url, omschrijving: oms, richting });
+      }
+      continue;
+    }
+    if (!id) continue;
+    const key = `${id}|${oms}|${richting ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (kind === "ecli") {
+      if (subj.includes(id)) continue;
+      const rest = oms.startsWith(id) ? oms.slice(id.length).replace(/^\s*-\s*/, "") : oms;
+      uitspraken.push({ ecli: id, omschrijving: rest || undefined, richting });
+    } else if (kind === "bwbr" || kind === "cvdr" || kind === "celex") {
+      if (eigenBwbr && id === eigenBwbr) continue;
+      regelingen.push({ soort: kind, identifier: id, omschrijving: oms, richting });
+    } else {
+      overig.push({ soort: kind, identifier: id, omschrijving: oms, richting });
+    }
+  }
+
+  const tel = (richting: Richting) => [...uitspraken, ...regelingen].filter((x) => x.richting === richting).length;
+  const gevonden = { uitspraken: uitspraken.length, regelingen: regelingen.length, inkomend: tel("inkomend"), uitgaand: tel("uitgaand") };
+  uitspraken = uitspraken.sort((a, b) => datumSleutel(b.omschrijving).localeCompare(datumSleutel(a.omschrijving)));
+  const ingekort = uitspraken.length > maxResultaten || regelingen.length > maxResultaten;
+  uitspraken = uitspraken.slice(0, maxResultaten);
+  regelingen = regelingen.slice(0, maxResultaten);
+  const followed = (item.followedResults as Array<Record<string, unknown>> | undefined) ?? [];
+
+  return {
+    id: item.id,
+    title: item.title,
+    link: item.link,
+    ...(item.identifier ? { identifier: item.identifier } : {}),
+    ...(item.query ? { query: item.query } : {}),
+    lidoPageUrl: item.lidoPageUrl,
+    ...(note ? { note } : {}),
+    gemeld: { uitgaand: item.reportedOutgoingRelations ?? null, inkomend: item.reportedIncomingRelations ?? null },
+    gevonden,
+    ...(ingekort ? { getoond: `de ${maxResultaten} meest recente per soort; verhoog maxResultaten voor meer` } : {}),
+    volledig: !item.partialResult,
+    stopReason: item.stopReason ?? null,
+    relatiepaginas: item.relationPagesFetched,
+    ...(Object.keys(verdeling.inkomend).length || Object.keys(verdeling.uitgaand).length ? { verdeling } : {}),
+    uitspraken,
+    regelingen,
+    ...(inTekst.size ? { genoemdInTekst: [...inTekst.values()].sort((a, b) => b.vermeldingen - a.vermeldingen).slice(0, maxResultaten) } : {}),
+    ...(overig.length ? { overig } : {}),
+    ...(followed.length
+      ? {
+          gevolgd: followed.map((f) => ({
+            identifier: f.identifier ?? f.ecli ?? f.value,
+            kind: f.kind,
+            url: f.detailUrl ?? f.url ?? f.xmlUrl,
+            ...(f.error ? { error: f.error } : {}),
+            fragment: String(f.text ?? f.xml ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 600),
+          })),
+        }
+      : {}),
+    toelichting:
+      'Compacte weergave: echte relaties (uitspraken en regelingen), ontdubbeld, met richting, meest recente eerst; zijbalk-tellingen als verdeling; verwijzingen uit de tekst van het document zelf gegroepeerd onder genoemdInTekst. Uitspraak openen: https://uitspraken.rechtspraak.nl/details?id=<ECLI>. Gebruik detail="volledig" voor alle ruwe gegevens.',
+  };
+}
+
 /**
  * Bouwt het item op met ZOWEL camelCase (server.js-contract) als snake_case
  * (NL-GOV-MCP-conventie), zodat clients van beide vormen blijven werken.
@@ -1334,7 +1491,7 @@ export class LidoSource {
    * doorgezocht via de direct uit de identifier afgeleide URL's. `stopReason`
    * meldt dat als "document_viewer_fetch_failed".
    */
-  async relationsByIdentifier(args: { identifier: string; maxFollow?: number }): Promise<LidoResult> {
+  async relationsByIdentifier(args: { identifier: string; maxFollow?: number; detail?: LidoDetail; maxResultaten?: number }): Promise<LidoResult> {
     const identifier = args.identifier.trim();
     const maxFollow = args.maxFollow ?? 5;
     const endpointUrl = new URL(DOCUMENT_VIEWER_URL);
@@ -1361,7 +1518,7 @@ export class LidoSource {
       );
 
       return {
-        items: [item],
+        items: [args.detail === "volledig" ? item : compactLidoItem(item, identifier, args.maxResultaten)],
         total: inv.relationsExtracted,
         endpoint,
         params,
@@ -1453,7 +1610,7 @@ export class LidoSource {
   }
 
   /** Zoekt in LiDO op vrije tekst wanneer geen formele identifier bekend is. */
-  async searchFreeText(args: { query: string; maxFollow?: number }): Promise<LidoResult> {
+  async searchFreeText(args: { query: string; maxFollow?: number; detail?: LidoDetail; maxResultaten?: number }): Promise<LidoResult> {
     const query = args.query.trim();
     const maxFollow = args.maxFollow ?? 5;
     const endpointUrl = new URL(SEARCH_URL);
@@ -1480,7 +1637,7 @@ export class LidoSource {
       );
 
       return {
-        items: [item],
+        items: [args.detail === "volledig" ? item : compactLidoItem(item, null, args.maxResultaten)],
         total: inv.relationsExtracted,
         endpoint,
         params,
