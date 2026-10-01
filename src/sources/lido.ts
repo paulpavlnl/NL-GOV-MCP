@@ -450,20 +450,68 @@ function isInScopeRelationPage(url: string, scope: Set<string>): boolean {
   } catch {
     return false;
   }
-  // Facet- en filterweergaven zijn navigatie, geen relaties.
-  for (const key of parsed.searchParams.keys()) {
-    if (/^facet\./i.test(key) || /^(?:fq|link_richting|obj_type|obj_jaar|obj_organisatie)/i.test(key)) return false;
+  // Filterweergaven (fq op type/jaar/instantie, link_richting=…) tonen een deelverzameling;
+  // die zijn navigatie. Twee uitzonderingen staan in élke pagineringslink van LiDO en mogen
+  // dus niet tot uitsluiting leiden (anders wordt pagina 2+ nooit gelezen):
+  //  - `facet.field`: alleen de zijbalk met tellingen;
+  //  - `fq=link_richting:"uitgaand"|"inkomend"`: het tabblad (de richting), geen beperking.
+  for (const [key, value] of parsed.searchParams.entries()) {
+    if (/^fq$/i.test(key) && LINK_RICHTING_FQ_RE.test(value)) continue;
+    if (/^(?:fq|link_richting|obj_type|obj_jaar|obj_organisatie|link_type)/i.test(key)) return false;
   }
   if (!scope.size) return true;
   const object = relationPageObject(url);
   return object !== null && scope.has(object);
 }
 
+/** Tabblad-filter van een LiDO-relatielijst. LiDO benoemt de richting vanuit het andere
+ *  document: inkomende relaties staan onder link_richting:"uitgaand" en omgekeerd. */
+const LINK_RICHTING_FQ_RE = /^\{!tag=link_richting\}link_richting:"(?:uitgaand|inkomend)"$/;
+/** 500 per pagina laadt in ±2 s; 1457 relaties passen dan in 3 pagina's binnen het budget. */
+const RELATION_PAGE_ROWS = 500;
+
+function relationListUrl(objectUri: string, fq: string | null, start = 0, rows: string | number = RELATION_PAGE_ROWS): string {
+  const out = new URL(`${LIDO_ORIGIN}/front/portal/spiegel-lijstweergave`);
+  out.searchParams.set("id", objectUri);
+  out.searchParams.set("callback", "");
+  out.searchParams.set("dates", "");
+  out.searchParams.set("fields", "");
+  if (fq) out.searchParams.set("fq", fq);
+  if (start > 0) out.searchParams.set("start", String(start));
+  out.searchParams.set("rows", String(rows));
+  return out.toString();
+}
+
+/** Startpagina's voor beide tabbladen (uitgaande en inkomende relaties) van een LiDO-object. */
+function relationTabUrls(objectUri: string): string[] {
+  return ["inkomend", "uitgaand"].map((r) => relationListUrl(objectUri, `{!tag=link_richting}link_richting:"${r}"`));
+}
+
+/**
+ * Brengt een relatiepagina-URL terug tot id, tabblad, start en rows, zodat dezelfde pagina met
+ * andere facet-parameters of een andere volgorde niet dubbel wordt opgehaald.
+ */
+function canonicalRelationPage(url: string): string {
+  try {
+    // Hrefs uit de regex-parser bevatten nog "&amp;"; dan heet de parameter "amp;start".
+    const u = new URL(url.replace(/&amp;/g, "&"));
+    if (!RELATION_PAGE_RE.test(u.pathname)) return url;
+    return relationListUrl(
+      u.searchParams.get("id") ?? "",
+      u.searchParams.getAll("fq").find((v) => LINK_RICHTING_FQ_RE.test(v)) ?? null,
+      Number(u.searchParams.get("start") ?? 0),
+      u.searchParams.get("rows") ?? String(RELATION_PAGE_ROWS),
+    );
+  } catch {
+    return url;
+  }
+}
+
 function discoverLidoTargets(raw: string, base: string, scope: Set<string>) {
   const urls = extractUrls(raw, base).filter(isAllowedHost).map(stripFragment);
   return {
     components: unique(urls.filter((u) => COMPONENT_RE.test(u))),
-    relationPages: unique(urls.filter((u) => isInScopeRelationPage(u, scope))),
+    relationPages: unique(urls.filter((u) => isInScopeRelationPage(u, scope)).map(canonicalRelationPage)),
   };
 }
 
@@ -473,9 +521,9 @@ function findNextRelationPages(raw: string, base: string, scope: Set<string>): s
     const label = `${anchor.text} ${anchor.rel}`.toLowerCase();
     if (!NEXT_PAGE_RE.test(label)) continue;
     try {
-      const u = stripFragment(new URL(anchor.href, base).toString());
+      const u = stripFragment(new URL(anchor.href.replace(/&amp;/g, "&"), base).toString());
       // Paginering blijft per definitie binnen hetzelfde object.
-      if (RELATION_PAGE_RE.test(u) && isInScopeRelationPage(u, scope)) out.push(u);
+      if (RELATION_PAGE_RE.test(u) && isInScopeRelationPage(u, scope)) out.push(canonicalRelationPage(u));
     } catch {
       /* negeren */
     }
@@ -830,6 +878,37 @@ async function verifyBwbIdentifier(id: string) {
   };
 }
 
+/**
+ * Wetten en wetsartikelen staan in LiDO niet achter de documentviewer (die toont voor een
+ * BWBR een lege pagina) maar achter de "linktool". Die werkt alleen met een volledige
+ * BWB-toestand-URI (wet: .../id/BWBR…/datum/0, artikel: .../id/BWBR…/datum/0/…/ArtikelX).
+ * Geeft de linktool-URL terug, of null als de identifier geen BWB-verwijzing is.
+ */
+async function bwbLinktoolUrl(identifier: string): Promise<string | null> {
+  const id = identifier.trim();
+  if (/^https:\/\/linkeddata\.overheid\.nl\/front\/portal\/linktool-bwb-verfijnen\?/i.test(id)) return id;
+  const datum = new Date().toISOString().slice(0, 10);
+  let extId: string | null = null;
+  if (/^https?:\/\/wetten\.overheid\.nl\/id\/BWBR\d+\/\d{4}-\d{2}-\d{2}\/\d+/i.test(id)) {
+    extId = id.replace(/^https:/i, "http:");
+  } else if (/^BWBR\d+$/i.test(id)) {
+    const s = await searchSru({
+      endpoint: BWB_SRU_URL,
+      version: "2.0",
+      connection: "BWB",
+      query: `dcterms.identifier==${cleanQuery(id.toUpperCase())} and overheidbwb.geldigheidsdatum==${datum}`,
+      maximumRecords: 1,
+    });
+    extId = s.xml.match(/<overheidbwb:toestand>([^<]+)<\/overheidbwb:toestand>/)?.[1]?.trim() ?? null;
+  }
+  if (!extId) return null;
+  const u = new URL(`${LIDO_ORIGIN}/front/portal/linktool-bwb-verfijnen`);
+  u.searchParams.set("ext-id", extId);
+  u.searchParams.set("geldigheidsdatum", datum);
+  u.searchParams.set("zichtdatum", datum);
+  return u.toString();
+}
+
 async function verifyCvdrIdentifier(id: string) {
   const s = await searchSru({
     endpoint: CVDR_SRU_URL,
@@ -878,14 +957,7 @@ function buildDirectLidoUrls(identifier: string): { objectUri: string | null; ur
   component2.searchParams.set("id", id);
   urls.push(component2.toString());
 
-  if (objectUri) {
-    const relation = new URL(`${LIDO_ORIGIN}/front/portal/spiegel-lijstweergave`);
-    relation.searchParams.set("id", objectUri);
-    relation.searchParams.set("callback", "");
-    relation.searchParams.set("dates", "");
-    relation.searchParams.set("fields", "");
-    urls.push(relation.toString());
-  }
+  if (objectUri) urls.push(...relationTabUrls(objectUri));
 
   return { objectUri, urls };
 }
@@ -1267,7 +1339,7 @@ export class LidoSource {
     const maxFollow = args.maxFollow ?? 5;
     const endpointUrl = new URL(DOCUMENT_VIEWER_URL);
     endpointUrl.searchParams.set("ext-id", identifier);
-    const endpoint = endpointUrl.toString();
+    let endpoint = endpointUrl.toString();
     const params = { "ext-id": identifier };
 
     let viewerUrl = endpoint;
@@ -1303,6 +1375,40 @@ export class LidoSource {
 
     return runLidoTool(
       async (state) => {
+        // Wet of wetsartikel: naar de relatielijst van het BWB-object in LiDO. Een LiDO-object-URI
+        // (…/terms/bwb/id/BWBR…/label-id/datum/datum) gaat direct; anders via de BWB-linktool.
+        // De linktool is voor artikelen te traag (17-19 s); artikelen komen daarom als object-URI
+        // binnen (tools.ts stelt die samen uit label-id en inwerkingtreding).
+        let objectUri: string | null = /^https?:\/\/linkeddata\.overheid\.nl\/terms\/bwb\/id\/BWBR\d+\/\d+\/\d{4}-\d{2}-\d{2}/i.test(identifier)
+          ? identifier.replace(/^https:/i, "http:")
+          : null;
+        const linktool = objectUri ? null : await bwbLinktoolUrl(identifier);
+        if (linktool) {
+          endpoint = linktool;
+          viewerUrl = linktool;
+          const page = await fetchLidoPage(linktool);
+          state.contentType = page.contentType;
+          state.readableSnippet = clip(htmlToText(page.rawHtml), READABLE_SNIPPET_CHARACTERS);
+          state.relationCount = parseRelationCount(page.rawHtml);
+          const objectId = page.rawHtml.match(/spiegel-lijstweergave\?id=([^&"']+)/)?.[1];
+          if (!objectId) {
+            viewerNote = "LiDO kent deze regeling of dit artikel niet: de BWB-linkpagina bevat geen relatielijst.";
+            return toResult(state);
+          }
+          objectUri = decodeURIComponent(objectId);
+        }
+        if (objectUri) {
+          state.scope.add(normalizeObjectUri(objectUri));
+          const tabs = relationTabUrls(objectUri);
+          viewerUrl = relationListUrl(objectUri, null, 0, 100);
+          if (!linktool) endpoint = viewerUrl;
+          viewerNote = `BWB-object ${objectUri}; relaties gelezen uit de LiDO-relatielijst.`;
+          await crawlLido(state, tabs, { headers: { Referer: linktool ?? viewerUrl } });
+          const bwbIds = mergeIdentifiers(state.identifierSources.map((raw) => extractIdentifiers(raw)));
+          await followCandidates(state, candidatesFromState(state, bwbIds, identifier), maxFollow);
+          return toResult(state);
+        }
+
         const direct = buildDirectLidoUrls(identifier);
 
         // Scope: alleen relatiepagina's over dit object worden gevolgd.

@@ -32,13 +32,17 @@ function escapeSruValue(v: string): string {
  * (cql.textAndIndexes, dcterms.title …); it exposes its own indexes such as
  * overheidbwb.titel. Free-text terms are matched against the title index.
  */
-function buildCql(query: string): string {
+function buildCql(query: string, geldigheidsdatum?: string): string {
   const term = query.trim();
-  if (!term) return "overheidbwb.titel=*";
   // Quote multi-word terms so CQL treats them as an ordered phrase.
   const value = /\s/.test(term) ? `"${escapeSruValue(term)}"` : escapeSruValue(term);
-  return `overheidbwb.titel=${value}`;
+  const titel = term ? `overheidbwb.titel=${value}` : "overheidbwb.titel=*";
+  // Zonder datumfilter levert elke historische toestand een eigen record op, zodat één
+  // regeling de hele resultatenlijst kan vullen.
+  return geldigheidsdatum ? `${titel} and overheidbwb.geldigheidsdatum==${geldigheidsdatum}` : titel;
 }
+
+const TYPE_RANG: Record<string, number> = { wet: 0, AMvB: 1, "ministeriele-regeling": 2 };
 
 /**
  * Narrow one parsed SRU <gzd> record into the useful BWB fields.
@@ -54,6 +58,7 @@ function extractBwb(record: Record<string, unknown>) {
 
   const identifier = toStringValue(owmskern?.identifier) ?? toStringValue(record.identifier);
   const title = toStringValue(owmskern?.title) ?? toStringValue(record.title);
+  const type = toStringValue(owmskern?.type);
   const authority = toStringValue(owmskern?.authority);
   const creator = toStringValue(owmskern?.creator);
   const date = toStringValue(owmskern?.modified) ?? toStringValue(owmsmantel?.created);
@@ -62,19 +67,26 @@ function extractBwb(record: Record<string, unknown>) {
     toStringValue(enriched?.preferredUrl) ??
     (identifier ? `https://wetten.overheid.nl/${identifier}` : undefined);
 
-  return { identifier, title, authority, creator, date, canonical };
+  return { identifier, title, type, authority, creator, date, canonical };
 }
 
 export class WettenBwbSource {
   constructor(private readonly config: AppConfig) {}
 
-  async search(args: { query: string; maximumRecords: number; startRecord?: number }) {
+  /**
+   * Zoekt op titel. Standaard alleen regelingen die vandaag gelden (`geldigheidsdatum`,
+   * of `inclusiefVervallen` voor de volledige historie), ontdubbeld per BWBR, met een
+   * exacte titeltreffer en daarna wetten bovenaan.
+   */
+  async search(args: { query: string; maximumRecords: number; startRecord?: number; geldigheidsdatum?: string; inclusiefVervallen?: boolean }) {
+    const datum = args.inclusiefVervallen ? undefined : (args.geldigheidsdatum ?? new Date().toISOString().slice(0, 10));
     const params: Record<string, string | number> = {
       "x-connection": BWB_CONNECTION,
       operation: "searchRetrieve",
       version: "1.2",
-      query: buildCql(args.query),
-      maximumRecords: args.maximumRecords,
+      query: buildCql(args.query, datum),
+      // Ruimer ophalen zodat een exacte titeltreffer na het rangschikken niet buiten de pagina valt.
+      maximumRecords: Math.min(200, Math.max(args.maximumRecords, 50)),
       startRecord: args.startRecord ?? 1,
     };
 
@@ -86,25 +98,38 @@ export class WettenBwbSource {
     const records = extractSruRecords(parsed);
     const total = extractSruNumberOfRecords(parsed);
 
-    const items = records.map((r) => {
-      const m = extractBwb(r);
-      return {
+    const term = args.query.trim().toLowerCase();
+    const seen = new Set<string>();
+    const items = records
+      .map((r) => extractBwb(r))
+      .filter((m) => {
+        const key = m.identifier ?? m.title ?? "";
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .map((m, i) => ({ m, i, exact: (m.title ?? "").toLowerCase() === term ? 0 : 1, rang: TYPE_RANG[m.type ?? ""] ?? 3 }))
+      .sort((a, b) => a.exact - b.exact || a.rang - b.rang || a.i - b.i)
+      .map(({ m }) => ({
         identifier: m.identifier,
         title: m.title,
+        type: m.type,
         authority: m.authority,
         creator: m.creator,
         date: m.date,
         canonical_url: m.canonical,
-      } as Record<string, unknown>;
-    });
+      }) as Record<string, unknown>);
 
     return {
       items,
-      total,
+      // Alles binnen? Dan is het ontdubbelde aantal het echte totaal; anders het SRU-totaal.
+      total: typeof total === "number" && records.length >= total ? items.length : total,
       endpoint: meta.url,
       params: Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)])),
       access_note:
-        "Bron: BWB geconsolideerde wetgeving via KOOP SRU. Gezocht op de titel-index (overheidbwb.titel).",
+        "Bron: BWB geconsolideerde wetgeving via KOOP SRU. Gezocht op de titel-index (overheidbwb.titel)" +
+        (datum ? `, alleen regelingen geldig op ${datum}` : ", inclusief vervallen versies") +
+        "; één resultaat per regeling, exacte titel en wetten eerst.",
     };
   }
 }

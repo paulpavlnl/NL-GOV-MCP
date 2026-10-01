@@ -1245,12 +1245,33 @@ export function registerTools(server: McpServer): void {
   });
 
     server.registerTool("lido_relations_by_identifier", {
-    description: "Fetch the LiDO (Linked Data Overheid) document page for a known ECLI/BWBR/CVDR identifier and detect related identifiers referenced there.",
-    inputSchema: { identifier: z.string().min(2).describe("A known ECLI, BWBR or CVDR identifier.") },
+    description: "Fetch LiDO (Linked Data Overheid) relations for a known identifier: an ECLI (ruling), a CVDR, a whole law (BWBR, e.g. 'BWBR0040635'), or one law article ('BWBR0005537 artikel 1:7', a wetten.overheid.nl/id/... article URI, or a linkeddata.overheid.nl linktool-bwb-verfijnen URL as returned by bwb_artikel_tekst as lido_url). For laws and articles the relation list includes rulings that cite them (incoming) and references they make (outgoing).",
+    inputSchema: { identifier: z.string().min(2).describe("ECLI, CVDR, BWBR, 'BWBR… artikel <nr>', a wetten.overheid.nl/id/... URI or a LiDO linktool URL.") },
     annotations: TOOL_ANNOTATIONS,
   }, async ({ identifier }) => {
     try {
-      const out = await lido.relationsByIdentifier({ identifier });
+      // Wetsartikel → LiDO-object-URI (…/terms/bwb/id/BWBR…/label-id/inwerking/inwerking).
+      // De LiDO-linktool kan dat ook, maar doet er voor artikelen 17-19 s over (alle versies).
+      // Invoer: "BWBR0005537 artikel 1:7", een wetten.overheid.nl/id/…/ArtikelX-URI of een
+      // linktool-URL (zoals bwb_artikel_tekst die als lido_url teruggeeft).
+      let artikelArgs: { bwbId: string; artikel: string; pad?: string; datum?: string } | null = null;
+      const trimmed = identifier.trim();
+      const artikelRef = trimmed.match(/^(BWBR\d+)\s*,?\s*(?:art(?:ikel)?\.?\s*)(\S+)$/i);
+      if (artikelRef) artikelArgs = { bwbId: artikelRef[1].toUpperCase(), artikel: artikelRef[2] };
+      let extId: string | null = trimmed;
+      try { if (/linktool-bwb-verfijnen\?/i.test(trimmed)) extId = new URL(trimmed).searchParams.get("ext-id"); } catch { /* geen URL */ }
+      const toestandArt = extId?.match(/^https?:\/\/wetten\.overheid\.nl\/id\/(BWBR\d+)\/(\d{4}-\d{2}-\d{2})\/\d+(\/.*\/Artikel([^/]+))$/i);
+      if (toestandArt) artikelArgs = { bwbId: toestandArt[1].toUpperCase(), artikel: decodeURIComponent(toestandArt[4]), pad: decodeURIComponent(toestandArt[3]), datum: toestandArt[2] };
+      let lidoId = identifier;
+      if (artikelArgs) {
+        const art = await bwbArtikel.getArtikel(artikelArgs);
+        const a = art.items[0];
+        if (!a) return toMcpToolPayload(successResponse({ summary: `Artikel ${artikelArgs.artikel} niet gevonden in ${artikelArgs.bwbId}; geen LiDO-relaties op te halen.`, records: [], provenance: prov("lido_relations_by_identifier", art.endpoint, art.params as Record<string, string>, 0, 0) }));
+        lidoId = a.label_id && a.inwerking
+          ? `http://linkeddata.overheid.nl/terms/bwb/id/${a.bwb_id}/${a.label_id}/${a.inwerking}/${a.inwerking}`
+          : (a.lido_url ?? identifier);
+      }
+      const out = await lido.relationsByIdentifier({ identifier: lidoId });
       const records = out.items.map((x) => record("lido", String(x.title ?? identifier), String(x.link ?? "https://linkeddata.overheid.nl"), x));
       return toMcpToolPayload(successResponse({ summary: `LiDO-relaties voor ${identifier}`, records, provenance: prov("lido_relations_by_identifier", out.endpoint, out.params, records.length, out.total), access_note: out.access_note }));
     } catch (e) {
@@ -2392,16 +2413,16 @@ export function registerTools(server: McpServer): void {
   });
 
   server.registerTool("wetten_bwb_search", {
-    description: "Search Dutch consolidated national legislation (BWB, wetten.overheid.nl) via KOOP SRU. Keywords are matched against the law title index (overheidbwb.titel). Returns BWBR id, title, competent authority, date and a wetten.overheid.nl link. Pass title keywords only, not full sentences.",
-    inputSchema: { query: z.string().describe("Law/regulation title keywords, e.g. 'arbeid vreemdelingen', 'wegenverkeerswet', 'omgevingswet'. Matched against the BWB title index (overheidbwb.titel), not full text."), top: z.number().int().min(1).max(config.limits.maxRows).default(20), ...paginationInputSchema, outputFormat: outputFormatSchema, verbose: z.boolean().default(false), dryRun: z.boolean().default(false) },
+    description: "Search Dutch consolidated national legislation (BWB, wetten.overheid.nl) via KOOP SRU. Keywords are matched against the law title index (overheidbwb.titel). By default only regulations in force today are returned, one result per regulation, with an exact title match and then laws (type 'wet') first. Returns BWBR id, title, type, competent authority, date and a wetten.overheid.nl link. Pass title keywords only, not full sentences.",
+    inputSchema: { query: z.string().describe("Law/regulation title keywords, e.g. 'arbeid vreemdelingen', 'wegenverkeerswet', 'omgevingswet'. Matched against the BWB title index (overheidbwb.titel), not full text."), geldigOp: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Only regulations in force on this date (YYYY-MM-DD). Default: today."), inclusiefVervallen: z.boolean().default(false).describe("Also return repealed regulations and historical versions."), top: z.number().int().min(1).max(config.limits.maxRows).default(20), ...paginationInputSchema, outputFormat: outputFormatSchema, verbose: z.boolean().default(false), dryRun: z.boolean().default(false) },
     annotations: TOOL_ANNOTATIONS,
-  }, async ({ query, top, offset, limit, outputFormat, verbose, dryRun }) => {
+  }, async ({ query, geldigOp, inclusiefVervallen, top, offset, limit, outputFormat, verbose, dryRun }) => {
     try {
       const effectiveLimit = limit ?? top;
       const fetchRows = Math.min(config.limits.maxRows, Math.max(top, offset + effectiveLimit));
       if (dryRun) return dryRunPayload({ connector: "wetten_bwb", url: "https://zoekservice.overheid.nl/sru/Search", params: { "x-connection": "BWB", operation: "searchRetrieve", version: "1.2", query, maximumRecords: fetchRows } });
       const started = Date.now();
-      const out = await wettenBwb.search({ query, maximumRecords: fetchRows });
+      const out = await wettenBwb.search({ query, maximumRecords: fetchRows, geldigheidsdatum: geldigOp, inclusiefVervallen });
       const responseTimeMs = Date.now() - started;
       const records = out.items.map((x) => record("wetten-bwb", String(x.title ?? x.identifier ?? "BWB regeling"), String(x.canonical_url ?? "https://wetten.overheid.nl"), x as Record<string, unknown>, String(x.authority ?? ""), String(x.date ?? "")));
       const response = buildFormattedResponse({ summary: `${records.length} BWB wetten`, records, provenance: prov("wetten_bwb_search", out.endpoint, out.params, Math.min(effectiveLimit, Math.max(0, records.length - offset)), out.total), outputFormat, offset, limit: effectiveLimit, total: out.total, access_note: out.access_note, verbose: singleConnectorVerbose({ enabled: verbose, connector: "wetten_bwb", endpoint: out.endpoint, responseTimeMs }) });

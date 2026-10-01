@@ -53,7 +53,7 @@ describe("WettenBwbSource", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const src = new WettenBwbSource(config);
-    const out = await src.search({ query: "arbeid", maximumRecords: 2 });
+    const out = await src.search({ query: "arbeid", maximumRecords: 52 });
 
     expect(out.total).toBe(607);
     expect(out.items).toHaveLength(1);
@@ -72,7 +72,7 @@ describe("WettenBwbSource", () => {
     const src = new WettenBwbSource(config);
     // Distinct maximumRecords from the other tests so the shared HTTP cache
     // does not short-circuit fetch on an identical request (cf. cvdr.test.ts).
-    await src.search({ query: "arbeid", maximumRecords: 1 });
+    await src.search({ query: "arbeid", maximumRecords: 51 });
 
     const calledUrl = String((fetchMock.mock.calls[0] as unknown as Array<unknown>)[0]);
     expect(calledUrl).toContain("x-connection=BWB");
@@ -81,19 +81,50 @@ describe("WettenBwbSource", () => {
     expect(decodeURIComponent(calledUrl)).toContain("overheidbwb.titel=arbeid");
   });
 
-  it("quotes multi-word queries as a CQL phrase", async () => {
+  it("quotes multi-word queries as a CQL phrase and limits to regulations in force", async () => {
     const fetchMock = vi.fn(async () => xmlResponse(SAMPLE_XML));
     vi.stubGlobal("fetch", fetchMock);
 
     const src = new WettenBwbSource(config);
-    await src.search({ query: "arbeid vreemdelingen", maximumRecords: 3 });
+    await src.search({ query: "arbeid vreemdelingen", maximumRecords: 53, geldigheidsdatum: "2026-10-01" });
 
     // Decode via URLSearchParams: the query string encodes spaces as "+"
     // (URLSearchParams form-encoding), which decodeURIComponent does NOT turn
     // back into a space. searchParams.get maps "+" → " " correctly.
     const calledUrl = String((fetchMock.mock.calls[0] as unknown as Array<unknown>)[0]);
     const cql = new URL(calledUrl).searchParams.get("query");
-    expect(cql).toBe('overheidbwb.titel="arbeid vreemdelingen"');
+    expect(cql).toBe('overheidbwb.titel="arbeid vreemdelingen" and overheidbwb.geldigheidsdatum==2026-10-01');
+  });
+
+  it("omits the date filter when repealed versions are requested", async () => {
+    const fetchMock = vi.fn(async () => xmlResponse(SAMPLE_XML));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const src = new WettenBwbSource(config);
+    await src.search({ query: "arbeid", maximumRecords: 54, inclusiefVervallen: true });
+
+    const calledUrl = String((fetchMock.mock.calls[0] as unknown as Array<unknown>)[0]);
+    expect(new URL(calledUrl).searchParams.get("query")).toBe("overheidbwb.titel=arbeid");
+  });
+
+  it("returns one result per regulation with an exact title and laws first", async () => {
+    const rec = (id: string, title: string, type: string) => `<sru:record><sru:recordData><gzd xmlns="http://standaarden.overheid.nl/sru"><originalData>
+      <overheidbwb:meta xmlns:overheidbwb="http://standaarden.overheid.nl/bwb/"><owmskern xmlns:dcterms="http://purl.org/dc/terms/">
+      <dcterms:identifier>${id}</dcterms:identifier><dcterms:title>${title}</dcterms:title><dcterms:type>${type}</dcterms:type>
+      </owmskern></overheidbwb:meta></originalData></gzd></sru:recordData></sru:record>`;
+    const xml = `<?xml version="1.0" encoding="UTF-8"?><sru:searchRetrieveResponse xmlns:sru="http://docs.oasis-open.org/ns/search-ws/sruResponse">
+      <sru:numberOfRecords>4</sru:numberOfRecords><sru:records>
+      ${rec("BWBR0035779", "Besluit Jeugdwet", "AMvB")}${rec("BWBR0035779", "Besluit Jeugdwet", "AMvB")}
+      ${rec("BWBR0035782", "Invoeringswet Jeugdwet", "wet")}${rec("BWBR0034925", "Jeugdwet", "wet")}
+      </sru:records></sru:searchRetrieveResponse>`;
+    vi.stubGlobal("fetch", vi.fn(async () => xmlResponse(xml)));
+
+    const src = new WettenBwbSource(config);
+    const out = await src.search({ query: "jeugdwet", maximumRecords: 55 });
+
+    expect(out.items.map((i) => i.identifier)).toEqual(["BWBR0034925", "BWBR0035782", "BWBR0035779"]);
+    expect(out.items[0].type).toBe("wet");
+    expect(out.total).toBe(3);
   });
 
   it("returns an empty result set without throwing", async () => {
@@ -101,7 +132,7 @@ describe("WettenBwbSource", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const src = new WettenBwbSource(config);
-    const out = await src.search({ query: "nietbestaandeterm", maximumRecords: 2 });
+    const out = await src.search({ query: "nietbestaandeterm", maximumRecords: 56 });
 
     expect(out.total).toBe(0);
     expect(out.items).toHaveLength(0);

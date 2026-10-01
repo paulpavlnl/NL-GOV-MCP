@@ -119,9 +119,11 @@ export function findArtikelen(
   padFilter?: string,
 ): Array<{ openTag: string; xml: string; pad: string }> {
   let wanted = normalizeArtikelNr(artikelNr);
-  // BW-notatie "7:658" → artikel 658 in Boek 7.
+  // BW-notatie "7:658" → artikel 658 in Boek 7. Wetten met hoofdstuknummering (Awb "1:7",
+  // Wvggz "6:4") kennen geen Boek-pad; daar is "1:7" zelf het artikelnummer.
   const bw = wanted.match(/^(\d+[a-z]?):(.+)$/);
-  if (bw) {
+  const isBwBoek = bw !== null && toestandXml.toLowerCase().includes(`bwb-ng-variabel-deel="/boek${bw[1]}/`);
+  if (bw && isBwBoek) {
     wanted = bw[2];
     padFilter = padFilter ?? `/Boek${bw[1]}/`;
   }
