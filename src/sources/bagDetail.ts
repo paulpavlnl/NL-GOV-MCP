@@ -1,5 +1,5 @@
 import type { AppConfig } from "../types.js";
-import { getJson } from "../utils/http.js";
+import { getJson, SourceRequestError } from "../utils/http.js";
 import { parseRdPoint } from "../utils/geo.js";
 
 const PDOK_LOCATIESERVER = "https://api.pdok.nl/bzk/locatieserver/search/v3_1";
@@ -79,6 +79,14 @@ export interface BagAddressDetail {
   rd_y: number | null;
   notes: string[];
 }
+
+/** The Kadaster refuses the key: 401/403 on the REST API. */
+function isKeyRejected(err: unknown): boolean {
+  return err instanceof SourceRequestError && (err.status === 401 || err.status === 403);
+}
+
+const KEY_REJECTED_NOTE =
+  "Het Kadaster weigert de BAG_API_KEY (401/403): oude of onjuiste key. Zet de juiste key in .env naast de server (BAG_API_KEY=...); die gaat vóór de waarde in claude_desktop_config.json.";
 
 export class BagDetailSource {
   constructor(private readonly config: AppConfig) {}
@@ -225,6 +233,7 @@ export class BagDetailSource {
         }
       } catch (err) {
         notes.push(`BAG verblijfsobject-lookup mislukt: ${(err as Error).message}`);
+        if (isKeyRejected(err)) notes.push(KEY_REJECTED_NOTE);
       }
     } else {
       notes.push("Geen adresseerbaarobject_id uit Locatieserver; verblijfsobject-detail overgeslagen.");
@@ -250,6 +259,7 @@ export class BagDetailSource {
         }
       } catch (err) {
         notes.push(`BAG pand-lookup mislukt: ${(err as Error).message}`);
+        if (isKeyRejected(err) && !notes.includes(KEY_REJECTED_NOTE)) notes.push(KEY_REJECTED_NOTE);
       }
     } else if (!detail.verblijfsobject_id) {
       notes.push("Geen pand-id beschikbaar; bouwjaar niet opgehaald.");
