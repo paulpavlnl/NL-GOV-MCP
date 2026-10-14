@@ -18,6 +18,7 @@ Examples:
 - *"Wat besteedt provincie Overijssel aan?"* → TenderNed procurement notices and awards
 - *"Hoe stemde Tilburg bij de Tweede Kamerverkiezingen?"* → Kiesraad results per party
 - *"Toon alle rechtspraak over huurrecht dit jaar"* → Rechtspraak search with date-aware mapping
+- *"Laat een luchtfoto zien van Visstraat 19, 3311 KX Dordrecht"* → a map image (PDOK luchtfoto + perceelgrenzen + marker) via `pdok_kaartbeeld`
 - *"Wat is de luchtkwaliteit in Utrecht?"* → live Luchtmeetnet measurements from that city’s own stations
 - *"Geef me de rijksbegroting voor onderwijs"* → Rijksbegroting search + chapter navigation
 - *"Hoe is Richtlijn (EU) 2016/680 omgezet in Nederland?"* → EUR-Lex/CELLAR: the Dutch transposition measures with their Staatsblad reference
@@ -29,7 +30,7 @@ Examples:
 
 `NL-GOV-MCP` actively retrieves and normalizes data across many sources, can combine cross-source results, and returns a consistent MCP response contract ready for assistants and automations.
 
-## Sources (50 connectors, 85 tools)
+## Sources (50 connectors, 90 tools)
 
 | Source | What it covers |
 |---|---|
@@ -186,7 +187,7 @@ npm run test:live    # integration test suite (live API calls)
 
 ### Transport modes
 
-Three transport modes are supported. All expose the same 85 tools.
+Three transport modes are supported. All expose the same 90 tools.
 
 #### stdio (Claude Desktop, Claude Code)
 
@@ -348,6 +349,25 @@ Two tools read the legal text itself instead of a link to it:
 - `wetten_bwb_tekst` reads a national law or regulation as it was geldig on a day (`peildatum`, default today in the Netherlands): one artikel, lid or onderdeel (`artikel: "3:4"`, `"3:4 lid 2"`, `"6:162 lid 2 sub b"`), the artikelen that contain every word of a `zoekterm`, or the table of contents with the beginning of the text. Name the regeling by `bwb_id` (`BWBR0005537`) or `wet`: a title or official afkorting (`Awb`, `Sr`, `Gemeentewet`, `BW boek 6`, or `BW` with `artikel: "6:162"`). An ambiguous `wet` (`Ow`), or one that only matches words of titles, returns candidates to choose from by `bwb_id`, never a guess. Each artikel comes with its status (geldend, vervallen, nog niet in werking), the date its text took effect, the publication that last changed it and a deep link on wetten.overheid.nl. An unknown law or id, a day without a geldige version or a missing artikel is an answer without records: `access_note` says why, with suggestions (`'3.4'` never silently becomes `'3:4'`), and `provenance.query_params.niet_gevonden` names what was missing (`wet`, `bwb_id`, `versie` or `artikel`). An upstream failure is a typed error such as `http_error` or `malformed_response` (a download that is not a BWB toestand is rejected and never cached); invalid input stays an error. Shortened text is always marked. The text is the consolidated text from the KOOP BWB repository; only the publication in Staatsblad or Staatscourant is authentic.
 - `wetten_bwb_search` now returns one record per regeling: the version (toestand) geldig today, or on an optional `peildatum`, with `geldig_vanaf`/`geldig_tot` (that version's validity), `versie_url`, `xml_url` and `metadata_gewijzigd` (the last change of the BWB metadata record, not of the law; `date` holds the same value for older clients). The regeling whose title is exactly the query comes first (the SRU does not rank); `query` is at most 500 characters. A regeling without a version geldig that day (repealed, or not yet in force) is left out; when the query is exactly its title, `access_note` names it and points to a `peildatum` inside its period.
 - `rechtspraak_uitspraak_get` reads one ruling or Advocaat-Generaal conclusie by ECLI from Rechtspraak's open data service (`data.rechtspraak.nl`): metadata (instantie, dates, zaaknummer, rechtsgebied, procedure), relations to other instances, inhoudsindicatie, a table of contents and text. `onderdeel` is `overzicht` (default, with the beslissing), `beslissing`, `overwegingen` or `volledig`; `sectie` reads one section or numbered paragraph (`"4.3"`, `"r.o. 4.3"`, `"beoordeling"`); `zoekterm` returns only the paragraphs with every word. `access_note` says how the beslissing or overwegingen were found and when text was cut at `max_chars`. A ruling registered without published text has `tekst_gepubliceerd: false`; a tuchtrecht ruling links to tuchtrecht.overheid.nl. An unknown ECLI is an empty result that says so, not an error.
+
+### Kaartbeeld (PDOK luchtfoto en kadastrale kaart)
+
+`pdok_kaartbeeld` returns a picture instead of data: a map image around an address or RD point, composed server-side from PDOK WMS GetMap layers (WMS 1.3.0, `CRS=EPSG:28992`) and returned as MCP content of type `image` (base64, `image/png`; `image/jpeg` only when needed to stay under ~1 MB), followed by a text block with the usual `summary`/`records`/`provenance`/`access_note`.
+
+- **Input**: `adres` (free text, resolved via the PDOK Locatieserver) or `rd_x`/`rd_y` (EPSG:28992, wins over `adres`); `straal_m` (default 60, max 500: half the shorter image side), `lagen` (`luchtfoto`, `kadastrale_kaart`, `bgt`, `brt`; default `["luchtfoto","kadastrale_kaart"]`), `breedte`/`hoogte` (pixels, default 800, max 1600) and `markering` (default `true`: a red circle with crosshair on the point).
+- **Layers**: luchtfoto `service.pdok.nl/hwh/luchtfotorgb/wms/v1_0` (`Actueel_orthoHR`, JPEG), BRT `brt/achtergrondkaart/wms/v2_0`, BGT `lv/bgt/wms/v1_0`, kadastrale kaart `kadaster/kadastralekaart/wms/v5_0` (transparent PNG overlay, always on top). The layer names are checked against each service's GetCapabilities (once per process); when a known name is missing or GetCapabilities does not answer, the first default name is tried and `access_note` says so. BRT/BGT over a luchtfoto are drawn at 55 % opacity.
+- **Errors**: a layer that fails (HTTP error, timeout, or a WMS ServiceException instead of an image) is left out; the image shows the layers that worked and `access_note` names the failed layer and why. When no layer works the answer is an `http_error` without an image. An address the Locatieserver does not know, or a point outside the Netherlands, is an error with a suggestion.
+- **Provenance**: `provenance.query_params` holds the address, RD point, `bbox`, the Locatieserver URL and the full GetMap URL of every layer (`getmap_luchtfoto`, ...); `records[0].data` holds bbox, size, MIME type and `bronvermelding`. Attribution: **© Kadaster / PDOK, Beeldmateriaal.nl** (CC BY 4.0).
+- **Elsewhere**: `bag_address_detail` and `brk_kadastrale_kaart_search` take `includeImage: true` to append the same image (for BRK: the bbox centre, without marker, radius at most 500 m). `nl_gov_ask` answers "luchtfoto van <adres>", "kaart van <adres>", "laat <adres> zien" with this image (after the DSO route, so "welke regels gelden op <adres>" still goes to the DSO).
+- **Image library**: [`sharp`](https://sharp.pixelplumbing.com/) (libvips). It ships prebuilt binaries for linux-x64 (glibc, e.g. Render; and musl, e.g. the Alpine Docker image) and win32-x64 as optional npm packages, so `npm ci` needs no compiler, Python or build tools on either platform. Do not install with `--omit=optional`.
+
+Example call:
+
+```json
+{ "name": "pdok_kaartbeeld", "arguments": { "adres": "Visstraat 19, 3311 KX Dordrecht", "straal_m": 60, "lagen": ["luchtfoto", "kadastrale_kaart"] } }
+```
+
+or with RD coordinates: `{ "rd_x": 105255.6, "rd_y": 425245.7 }`. Expected result: a luchtfoto with perceelgrenzen and a red marker on the building.
 
 ### EUR-Lex and LiDO details
 

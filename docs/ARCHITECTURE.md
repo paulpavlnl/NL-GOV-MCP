@@ -259,7 +259,7 @@ The HTTP client, caching, circuit breaker, retry, and concurrency limiting are a
 
 ## Transport modes
 
-All three transports expose the same 85 tools and are created by `server.ts`:
+All three transports expose the same 90 tools and are created by `server.ts`:
 
 | Mode | Protocol | Session model | Use case |
 |------|----------|---------------|----------|

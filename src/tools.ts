@@ -23,6 +23,8 @@ import { RuimtelijkePlannenSource } from "./sources/ruimtelijke-plannen.js";
 import { RivmSource } from "./sources/rivm.js";
 import { SparqlLinkedDataSource, SPARQL_LIMIT_CAP } from "./sources/sparql-linked-data.js";
 import { BagDetailSource } from "./sources/bagDetail.js";
+import { PdokKaartbeeldSource, KAARTBEELD_LAYERS, KAARTBEELD_DEFAULT_LAYERS, type KaartbeeldArgs, type KaartbeeldResult } from "./sources/pdok-kaartbeeld.js";
+import { kaartbeeldPayload, kaartbeeldError, kaartbeeldExtraContent } from "./utils/kaartbeeld-payload.js";
 import { EurostatSource } from "./sources/eurostat.js";
 import { DataEuropaSource } from "./sources/data-europa.js";
 import { DataPolitieSource } from "./sources/data-politie.js";
@@ -86,6 +88,7 @@ const ruimtelijkePlannen = new RuimtelijkePlannenSource(config);
 const rivm = new RivmSource(config);
 const bagLinkedData = new SparqlLinkedDataSource(config, "https://api.labs.kadaster.nl/datasets/bag/lv/services/default/sparql", "Kadaster BAG Linked Data");
 const bagDetail = new BagDetailSource(config);
+const kaartbeeld = new PdokKaartbeeldSource(config);
 const rceLinkedData = new SparqlLinkedDataSource(config, "https://api.linkeddata.cultureelerfgoed.nl/datasets/rce/cho/services/cho/sparql", "RCE Linked Data");
 const eurostat = new EurostatSource(config);
 const dataEuropa = new DataEuropaSource(config);
@@ -265,6 +268,15 @@ function prov(tool: string, endpoint: string, query_params: Record<string, strin
     returned_results,
     total_results: total_results ?? undefined,
   };
+}
+
+/**
+ * A tool answer with a kaartbeeld appended (includeImage): the image, then a
+ * short text block. A failed image never fails the tool's own answer.
+ */
+async function withKaartbeeld(payload: ReturnType<typeof toMcpToolPayload>, args: KaartbeeldArgs) {
+  const out: KaartbeeldResult | Error = await kaartbeeld.kaartbeeld(args).catch((e: unknown) => (e instanceof Error ? e : new Error(String(e))));
+  return { ...payload, content: [...payload.content, ...kaartbeeldExtraContent(out)] };
 }
 
 /**
@@ -2069,10 +2081,11 @@ export function registerTools(server: McpServer): void {
     inputSchema: {
       query: z.string().describe("Free-text address (e.g. 'Kelvinring 23a Alblasserdam'). Either `query` or `pdok_id` must be provided.").optional(),
       pdok_id: z.string().describe("PDOK Locatieserver id (e.g. 'adr-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx') as returned by bag_lookup_address. Preferred over `query` when known.").optional(),
+      includeImage: z.boolean().default(false).describe("Also return a map image of the address (luchtfoto + kadastrale kaart + marker, as pdok_kaartbeeld)."),
     },
     description: "Resolve an address (PDOK Locatieserver id or free-text) and fetch authoritative BAG building/unit detail from the Kadaster Individuele Bevragingen REST API: oppervlakte_m2, bouwjaar, gebruiksdoelen, verblijfsobject-status, pand-status. Requires BAG_API_KEY for full detail; falls back to Locatieserver-only when missing. Use this instead of bag_linked_data_select when the linked-data SPARQL endpoint is down or when you already have an address id.",
     annotations: TOOL_ANNOTATIONS,
-  }, async ({ query, pdok_id }) => {
+  }, async ({ query, pdok_id, includeImage }) => {
     try {
       const out = await bagDetail.lookupDetail({ query, pdok_id });
       const rec = record(
@@ -2088,14 +2101,42 @@ export function registerTools(server: McpServer): void {
           : out.detail.data_kwaliteit === "partial"
           ? "Gedeeltelijke hit: niet alle BAG REST velden beschikbaar."
           : "Alleen Locatieserver-lookup gelukt; BAG REST detail ontbreekt.";
-      return toMcpToolPayload(successResponse({
+      const payload = toMcpToolPayload(successResponse({
         summary: `BAG detail ${out.detail.data_kwaliteit} voor ${out.detail.weergavenaam ?? out.detail.pdok_id ?? "(onbekend)"}`,
         records: [rec],
         provenance: prov("bag_address_detail", out.endpoints[0] ?? "https://api.pdok.nl/bzk/locatieserver/search/v3_1", { endpoints: String(out.endpoints.length) }, 1, 1),
         access_note: mergeAccessNotes(hint, out.detail.notes.join(" | ") || undefined),
       }));
+      if (!includeImage) return payload;
+      const { rd_x, rd_y, weergavenaam } = out.detail;
+      return withKaartbeeld(payload, rd_x !== null && rd_y !== null ? { rd_x, rd_y } : { adres: weergavenaam ?? query });
     } catch (e) {
       return toMcpToolPayload(errorResponse(mapSourceError(e, "bag_address_detail")));
+    }
+  });
+
+  server.registerTool("pdok_kaartbeeld", {
+    description: "Show a map image of a Dutch address or RD point: a PDOK luchtfoto (aerial photo) with the kadastrale kaart (parcel boundaries) and a red marker, or BGT/BRT topography. Use for 'laat zien', 'luchtfoto van', 'kaart van <adres>', 'perceelgrenzen van'. Input: adres (free text, resolved via the PDOK Locatieserver) or rd_x/rd_y (EPSG:28992). Returns the image (PNG, or JPEG when needed to stay under ~1 MB) plus a text block with bbox, the GetMap URL of every layer and the bronvermelding. A layer that fails is left out and named in access_note.",
+    inputSchema: {
+      adres: z.string().max(200).optional().describe("Free-text address or place, e.g. 'Visstraat 19, 3311 KX Dordrecht'. Give this or rd_x/rd_y."),
+      rd_x: z.number().optional().describe("RD New (EPSG:28992) x, e.g. 105255.6. Together with rd_y; wins over adres."),
+      rd_y: z.number().optional().describe("RD New (EPSG:28992) y, e.g. 425245.7."),
+      straal_m: z.number().min(5).max(500).default(60).describe("Half the extent of the shorter image side, in metres (default 60, max 500)."),
+      lagen: z.array(z.enum(KAARTBEELD_LAYERS)).min(1).max(4).default(KAARTBEELD_DEFAULT_LAYERS).describe("Layers, bottom to top: luchtfoto, brt, bgt, kadastrale_kaart (overlay). Default luchtfoto + kadastrale_kaart."),
+      breedte: z.number().int().min(64).max(1600).default(800).describe("Image width in pixels (max 1600)."),
+      hoogte: z.number().int().min(64).max(1600).default(800).describe("Image height in pixels (max 1600)."),
+      markering: z.boolean().default(true).describe("Draw a red marker on the point."),
+    },
+    annotations: TOOL_ANNOTATIONS,
+  }, async ({ adres, rd_x, rd_y, straal_m, lagen, breedte, hoogte, markering }) => {
+    if ((rd_x === undefined) !== (rd_y === undefined)) {
+      return toMcpToolPayload(errorResponse({ error: "unexpected", message: "Geef rd_x en rd_y allebei, of een adres.", suggestion: "Bijvoorbeeld rd_x 105255.6 en rd_y 425245.7 (EPSG:28992)." }));
+    }
+    try {
+      const out = await kaartbeeld.kaartbeeld({ adres, rd_x, rd_y, straal_m, lagen, breedte, hoogte, markering });
+      return kaartbeeldPayload(out, "pdok_kaartbeeld");
+    } catch (e) {
+      return toMcpToolPayload(kaartbeeldError(e));
     }
   });
 
@@ -2144,7 +2185,20 @@ export function registerTools(server: McpServer): void {
     }
   });
 
-  registerNlGovAsk(server, { config, TOOL_ANNOTATIONS, dataOverheid, cbs, tk, debatten, bekend, rijksoverheid, rijksbegroting, duo, ori, luchtmeetnet, rechtspraak, tenderned, tuchtrecht, samenwerkendeCatalogi, brpGewaspercelen, verkiezingsuitslagen, euCellar, algoritmeregister, record, algoritmeRecord, wodc, wodcRecord, uitspraakResult, wettenTekstResult, debatRecords, debatSummary, debatNotes, dsoRecord, prov, outputFormatSchema, paginationInputSchema });
+  /** nl_gov_ask's kaartbeeld route: the same image as pdok_kaartbeeld, or the reason there is none. */
+  const kaartbeeldAnswer = async (intent: { adres: string; lagen: KaartbeeldArgs["lagen"] }) => {
+    try {
+      const out = await kaartbeeld.kaartbeeld({ adres: intent.adres, lagen: intent.lagen });
+      const payload = kaartbeeldPayload(out, "nl_gov_ask");
+      const result = payload.structuredContent as unknown as ToolResult;
+      return "error" in result ? { error: result } : { payload };
+    } catch (e) {
+      const error = kaartbeeldError(e);
+      return { error: "error" in error ? error : errorResponse({ error: "unexpected", message: "Geen kaartbeeld" }) };
+    }
+  };
+
+  registerNlGovAsk(server, { config, TOOL_ANNOTATIONS, dataOverheid, cbs, tk, debatten, bekend, rijksoverheid, rijksbegroting, duo, ori, luchtmeetnet, rechtspraak, tenderned, tuchtrecht, samenwerkendeCatalogi, brpGewaspercelen, verkiezingsuitslagen, euCellar, algoritmeregister, record, algoritmeRecord, wodc, wodcRecord, uitspraakResult, wettenTekstResult, debatRecords, debatSummary, debatNotes, dsoRecord, kaartbeeldAnswer, prov, outputFormatSchema, paginationInputSchema });
 
   server.registerTool("data_politie_search", {
     description: "Search Dutch registered crime statistics (data.politie.nl / CBS dataderden OData). Filter by region (RegioS gemeente/wijk/buurt code or name), crime type (SoortMisdrijf code or name) and period. Set 'dimension' to explore valid filter values.",
@@ -2741,6 +2795,7 @@ export function registerTools(server: McpServer): void {
       collectie: z.enum(["perceel", "kadastralegrens", "openbareruimtenaam", "bebouwing", "nummeraanduidingreeks"]).default("perceel").describe("BRK collection to query."),
       bbox: z.string().describe("Required RD New (EPSG:28992) bounding box 'minx,miny,maxx,maxy'. Keep it small; this API is bbox-driven."),
       includeGeometry: z.boolean().default(false).describe("Include full GeoJSON geometry. Needed for outputFormat=geojson."),
+      includeImage: z.boolean().default(false).describe("Also return a map image of the bbox centre (luchtfoto + kadastrale kaart, as pdok_kaartbeeld; radius at most 500 m)."),
       top: z.number().int().min(1).max(config.limits.maxRows).default(50),
       ...paginationInputSchema,
       outputFormat: outputFormatSchema,
@@ -2748,7 +2803,7 @@ export function registerTools(server: McpServer): void {
       dryRun: z.boolean().default(false),
     },
     annotations: TOOL_ANNOTATIONS,
-  }, async ({ collectie, bbox, includeGeometry, top, offset, limit, outputFormat, verbose, dryRun }) => {
+  }, async ({ collectie, bbox, includeGeometry, includeImage, top, offset, limit, outputFormat, verbose, dryRun }) => {
     try {
       const effectiveLimit = limit ?? top;
       const fetchRows = Math.min(config.limits.maxRows, Math.max(top, offset + effectiveLimit));
@@ -2778,7 +2833,19 @@ export function registerTools(server: McpServer): void {
         access_note: out.access_note,
         verbose: singleConnectorVerbose({ enabled: verbose, connector: "brk_kadastrale_kaart", endpoint: out.endpoint, responseTimeMs }),
       });
-      return toMcpToolPayload(response);
+      if (!includeImage) return toMcpToolPayload(response);
+      const [minx, miny, maxx, maxy] = bbox.split(",").map(Number);
+      const halfW = (maxx - minx) / 2;
+      const halfH = (maxy - miny) / 2;
+      const side = (n: number) => Math.round(800 * Math.min(1, n / Math.max(halfW, halfH)));
+      return withKaartbeeld(toMcpToolPayload(response), {
+        rd_x: minx + halfW,
+        rd_y: miny + halfH,
+        straal_m: Math.min(500, halfW, halfH),
+        breedte: Math.max(64, side(halfW)),
+        hoogte: Math.max(64, side(halfH)),
+        markering: false,
+      });
     } catch (e) {
       return toMcpToolPayload(mapSourceError(e, "PDOK BRK Kadastrale Kaart", "https://api.pdok.nl/kadaster/brk-kadastrale-kaart/ogc/v1"));
     }

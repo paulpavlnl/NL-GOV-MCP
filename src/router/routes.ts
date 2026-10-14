@@ -109,6 +109,8 @@ export interface RouteFacts {
   eu: boolean;
   /** An Omgevingswet document question with DSO_API_KEY set (detectDsoIntent). */
   dso: boolean;
+  /** A map image of an address or place (detectKaartbeeldIntent). */
+  kaartbeeld?: boolean;
   /** Rulings the question names by a Dutch ECLI (detectEcliIntent). */
   ecli: boolean;
   /** Only ECLIs of other countries or the EU, none Dutch (detectForeignEcliIntent). */
@@ -142,6 +144,7 @@ export interface RouteFacts {
 export type RouteId =
   | "eu_cellar"
   | "dso"
+  | "kaartbeeld"
   | "uitspraak"
   | "ecli_buitenland"
   | "wet_artikel"
@@ -188,6 +191,8 @@ export const ROUTES: readonly Route[] = [
   // EU legislation first: "Verordening (EU) 2016/679" would otherwise hit the publication words.
   { id: "eu_cellar", matches: (f) => f.eu, sources: one("eu_cellar") },
   { id: "dso", matches: (f) => f.dso, sources: one("dso_omgevingsdocumenten") },
+  // "Luchtfoto van <adres>", "kaart van <adres>": a picture, after the rules at an address (DSO).
+  { id: "kaartbeeld", matches: (f) => Boolean(f.kaartbeeld), sources: one("pdok_kaartbeeld") },
   // A ruling named by its ECLI and an artikel of a named law are read, not searched.
   { id: "uitspraak", matches: (f) => f.ecli, sources: one("rechtspraak_uitspraak") },
   // No request: a ruling of another country or the EU is not on Rechtspraak.nl; the answer says where it is.

@@ -1679,3 +1679,58 @@ export function extractPopulationYear(question: string): number | undefined {
   const m = /(?:^|[^\p{L}\d])(?:(?:in|op|per|anno|van)\s+(?:1\s+januari\s+)?)?(1\d{3}|2\d{3})(?![\p{L}\d])/u.exec(String(question ?? ""));
   return m ? Number(m[1]) : undefined;
 }
+
+/** A map image of a location (pdok_kaartbeeld): where, and which layers the question asks for. */
+export interface KaartbeeldIntent {
+  adres: string;
+  lagen: Array<"luchtfoto" | "kadastrale_kaart" | "bgt" | "brt">;
+}
+
+/** Words that ask for a picture of a place by themselves ("luchtfoto van ..."). */
+const KAART_IMAGE_RE = /\b(?:luchtfoto'?s?|satellietfoto'?s?|satellietbeeld(?:en)?|kaartbeeld(?:en)?|bovenaanzicht|kadastrale\s+kaart|perceelgrenzen|topografische\s+kaart|plattegrond)\b/i;
+/** "Kaart van <adres>", "op de kaart": a map, but only with an address. */
+const KAART_WORD_RE = /\b(?:kaart\s+(?:van|rond|bij|met)|op\s+(?:de\s+)?kaart|kaartje)\b/i;
+/** "Laat ... zien", "toon ...": a picture, but only with an address. */
+const SHOW_RE = /\b(?:laat\b[\s\S]*\bzien|toon|tonen|weergeven|bekijken)\b/i;
+/** A street with a house number, or a postcode. */
+const ADDRESS_RE = /\b(?:[1-9]\d{3}\s?[a-z]{2}\b|\p{L}[\p{L}.'-]+\s+\d{1,5}(?:\s?[a-z]\b|-\d+)?)/iu;
+/** What other routes answer for an address: the rules (DSO), data, documents. */
+const KAART_NOT_RE = /\b(?:regels?|omgevingsplan|bestemmingsplan|vergunning\w*|mag\s+ik|dataset\w*|data|gegevens|wms|api|downloaden|kamerstuk\w*|besluit\w*|uitspraak|uitspraken|moties?)\b/i;
+/** Words around the location, stripped from its edges. */
+const KAART_FILLER = new Set(["laat", "laten", "zien", "toon", "tonen", "weergeven", "bekijken", "geef", "mij", "me", "ons", "een", "de", "het", "luchtfoto", "luchtfoto's", "satellietfoto", "satellietbeeld", "kaartbeeld", "bovenaanzicht", "kaart", "kaartje", "kadastrale", "perceelgrenzen", "topografische", "plattegrond", "met", "van", "op", "bij", "rond", "rondom", "voor", "pand", "perceel", "adres", "graag", "kun", "kan", "je", "jij", "u", "wil", "ik", "zou", "willen", "even", "en", "alsjeblieft", "aub", "please", "show", "map", "of", "aerial", "photo"]);
+
+/**
+ * A request for a map image of a location: "Laat een luchtfoto zien van
+ * Visstraat 19 Dordrecht", "Kaart van 3311 KX 19", "Toon Visstraat 19,
+ * Dordrecht op de kaart". Image words (luchtfoto, kadastrale kaart) need any
+ * location; "kaart van" and "laat zien" need an address (street and number,
+ * or postcode). Questions about rules, permits, data or documents at an
+ * address are not a picture request.
+ */
+export function detectKaartbeeldIntent(question: string): KaartbeeldIntent | undefined {
+  const raw = String(question ?? "").replace(/\s+/g, " ").trim();
+  if (!raw || raw.length > 300) return undefined;
+  const imageWord = KAART_IMAGE_RE.test(raw);
+  const hasAddress = ADDRESS_RE.test(raw);
+  if (!imageWord && !((KAART_WORD_RE.test(raw) || SHOW_RE.test(raw)) && hasAddress)) return undefined;
+  if (KAART_NOT_RE.test(raw)) return undefined;
+
+  // The location: after the first preposition, or what is left at the edges.
+  let text = raw.replace(/[?!]+/g, " ").replace(/\bop\s+(?:de\s+)?kaart\b/gi, " ");
+  const prep = /\b(?:van|op|bij|rond|rondom|voor)\s+(.+)$/i.exec(text);
+  if (prep) text = prep[1];
+  const words = text.split(" ").filter(Boolean);
+  // A capitalised article belongs to a place name ("De Bilt", "Het Gooi").
+  const isFiller = (w: string) => !/^(?:De|Het)$/.test(w) && KAART_FILLER.has(w.toLowerCase().replace(/[.,;:]+$/, ""));
+  while (words.length && isFiller(words[0])) words.shift();
+  while (words.length && isFiller(words[words.length - 1])) words.pop();
+  const adres = words.join(" ").replace(/[.,;:]+$/, "").trim();
+  if (!/\p{L}{2,}|\d{4}\s?[a-z]{2}/iu.test(adres)) return undefined;
+
+  const lagen: KaartbeeldIntent["lagen"] = [];
+  if (/\bbgt\b/i.test(raw)) lagen.push("bgt");
+  else if (/\b(?:brt|topografische\s+kaart|plattegrond)\b/i.test(raw)) lagen.push("brt");
+  else lagen.push("luchtfoto");
+  lagen.push("kadastrale_kaart");
+  return { adres, lagen };
+}

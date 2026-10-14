@@ -20,7 +20,7 @@ import { SourceRequestError } from "../utils/http.js";
 import { parseTemporalRange } from "../utils/temporal.js";
 import { getConnectorHealth } from "../utils/connector-runtime.js";
 import { buildFormattedResponse, mergeAccessNotes } from "../utils/tool-runner.js";
-import type { MCPRecord, AppConfig, ToolResult } from "../types.js";
+import type { MCPRecord, AppConfig, ToolResult, MCPErrorResponse } from "../types.js";
 import { rewriteQuery, extractKeywords, extractKeywordTerms, looseTimePhrases, rewriteNote, quotedQuery } from "../utils/query-rewriter.js";
 import type { DataOverheidSource } from "../sources/data-overheid.js";
 import { CBS_POPULATION_TABLE, cbsCatalogItemUrl, cbsMunicipalityPopulation, cbsTableUrl, type CbsSource } from "../sources/cbs.js";
@@ -37,8 +37,11 @@ import type { KoopCollectieSource } from "../sources/koop-collecties.js";
 import type { BrpGewasperceelSource } from "../sources/brp-gewaspercelen.js";
 import type { VerkiezingsuitslagenSource } from "../sources/verkiezingsuitslagen.js";
 import { matchesTerm, hasTerm, CBS_TERMS, TK_TERMS, OB_TERMS, RIJK_TERMS, RIJK_OFFICE_TERMS, BUDGET_TERMS, DUO_TERMS, API_TERMS, CASE_LAW_TERMS, ENFORCEMENT_TERMS, EXAM_TERMS, SCHOOL_TERMS, duoSector, routeChain, firstRoute, type RouteFacts, type RouteId } from "./routes.js";
-import { extractPlaceName, cbsNarrowingCandidates, extractLuchtComponent, extractVerkiezingHint, detectEuIntent, shouldDeepenTweedeKamerQuery, MUNICIPAL_SCOPE_WORDS, ORGANISATION_WORDS, uitsprakenSense, detectPolicyIntent, detectDebatIntent, detectAlgoritmeIntent, DSO_DOCUMENT_WORDS_RE, dsoWords, type DsoIntent, detectDsoIntent, toPhraseQuery, toOriQuery, oriPlacePhrase, detectEcliIntent, detectForeignEcliIntent, detectWetArtikelIntent, detectResearchOrgIntent, extractPopulationPlace, extractPopulationYear, type ResearchOrg } from "./intents.js";
+import { extractPlaceName, cbsNarrowingCandidates, extractLuchtComponent, extractVerkiezingHint, detectEuIntent, shouldDeepenTweedeKamerQuery, MUNICIPAL_SCOPE_WORDS, ORGANISATION_WORDS, uitsprakenSense, detectPolicyIntent, detectDebatIntent, detectAlgoritmeIntent, DSO_DOCUMENT_WORDS_RE, dsoWords, type DsoIntent, detectDsoIntent, toPhraseQuery, toOriQuery, oriPlacePhrase, detectEcliIntent, detectForeignEcliIntent, detectWetArtikelIntent, detectResearchOrgIntent, extractPopulationPlace, extractPopulationYear, type ResearchOrg, detectKaartbeeldIntent, type KaartbeeldIntent } from "./intents.js";
 import { KnmiSource } from "../sources/knmi.js";
+import type { KaartbeeldPayload } from "../utils/kaartbeeld-payload.js";
+import { LOCATIESERVER_FREE } from "../utils/geo.js";
+import { WMS_SERVICES } from "../sources/pdok-kaartbeeld.js";
 
 /** data.match of a Tweede Kamer record that holds the words of a name apart, not as the phrase (nl_gov_ask). */
 const TK_WORDS_APART = "woorden afzonderlijk";
@@ -348,13 +351,15 @@ export interface NlGovAskDeps {
   debatSummary: (out: DebatSearchResult) => string;
   debatNotes: (out: DebatSearchResult, single: boolean) => string | undefined;
   dsoRecord: (x: DsoSearchItem) => MCPRecord;
+  /** pdok_kaartbeeld: the map image of a location (image + text content), or why there is none. */
+  kaartbeeldAnswer: (intent: KaartbeeldIntent) => Promise<{ payload?: KaartbeeldPayload; error?: MCPErrorResponse }>;
   prov: (tool: string, endpoint: string, query_params: Record<string, string>, returned_results: number, total_results?: number | null) => { tool: string; endpoint: string; query_params: Record<string, string>; timestamp: string; returned_results: number; total_results: number | undefined; };
   outputFormatSchema: z.ZodDefault<z.ZodEnum<{ json: "json"; csv: "csv"; geojson: "geojson"; markdown_table: "markdown_table"; }>>;
   paginationInputSchema: { offset: z.ZodDefault<z.ZodNumber>; limit: z.ZodOptional<z.ZodNumber>; };
 }
 
 export function registerNlGovAsk(server: McpServer, deps: NlGovAskDeps): void {
-  const { config, TOOL_ANNOTATIONS, dataOverheid, cbs, tk, debatten, bekend, rijksoverheid, rijksbegroting, duo, ori, luchtmeetnet, rechtspraak, tenderned, tuchtrecht, samenwerkendeCatalogi, brpGewaspercelen, verkiezingsuitslagen, euCellar, algoritmeregister, record, algoritmeRecord, wodc, wodcRecord, uitspraakResult, wettenTekstResult, debatRecords, debatSummary, debatNotes, dsoRecord, prov, outputFormatSchema, paginationInputSchema } = deps;
+  const { config, TOOL_ANNOTATIONS, dataOverheid, cbs, tk, debatten, bekend, rijksoverheid, rijksbegroting, duo, ori, luchtmeetnet, rechtspraak, tenderned, tuchtrecht, samenwerkendeCatalogi, brpGewaspercelen, verkiezingsuitslagen, euCellar, algoritmeregister, record, algoritmeRecord, wodc, wodcRecord, uitspraakResult, wettenTekstResult, debatRecords, debatSummary, debatNotes, dsoRecord, kaartbeeldAnswer, prov, outputFormatSchema, paginationInputSchema } = deps;
 
   /**
    * An ORI item as nl_gov_ask shows it, the way ori_search does: the passage
@@ -377,7 +382,7 @@ export function registerNlGovAsk(server: McpServer, deps: NlGovAskDeps): void {
   }
 
   // _meta "anthropic/alwaysLoad": Claude Code loads this entry point upfront instead of behind its tool search.
-  server.registerTool("nl_gov_ask", { inputSchema: { question: z.string().min(1, "question is leeg").max(NL_GOV_ASK_QUESTION_MAX_CHARS, `question is te lang: maximaal ${NL_GOV_ASK_QUESTION_MAX_CHARS} tekens; stel een kortere vraag of gebruik de zoektool van de bron`), top: z.number().int().min(1).max(config.limits.maxRows).default(10), reference_now: z.string().optional(), timezone: z.string().optional(), ...paginationInputSchema, outputFormat: outputFormatSchema, verbose: z.boolean().default(false), dryRun: z.boolean().default(false) }, description: "Use this when the best source is unclear: routes a question about Dutch government data to the best source(s); then use that source's own tool for full text. Reads dates ('vorige week', 'since 2020'). Policy questions ('GGZ-beleid gemeente Utrecht') search council records (ORI), publications, Tweede Kamer, Rijksoverheid. An ECLI gives that ruling, 'artikel 3:4 Awb' the law text ('op <datum>' too), Algemene Rekenkamer/SCP/WODC their reports, 'inwoners <gemeente>' a CBS count. With DSO_API_KEY, Omgevingswet document questions go to the DSO first: an omgevingsplan, -visie, -verordening, -programma, waterschapsverordening, voorbereidingsbesluit, projectbesluit or ontwerpregeling with an address, place or body, or asking for a list, the newest or ontwerpen; 'welke regels gelden op <adres/postcode>' ('mag ik een dakkapel plaatsen op ...'); ontwerpen ter inzage of a named body or place. An address covers every bestuurslaag, 'in de provincie X' also its gemeenten; 'gelden op <dag>' sets the day. Questions about the law, procedures, costs, participation or politics, or naming another kind of source (publications, case law, enforcement, permits, tenders, statistics, news) skip the DSO, as do questions over 500 characters. For an address, place or ontwerpen an empty DSO answer stands; if the DSO fails, times out (20 s) or misses the place, other routes answer. Without an answer it falls back to the data.overheid.nl catalogue. access_note names the search terms and the routes tried.", annotations: TOOL_ANNOTATIONS, _meta: { "anthropic/alwaysLoad": true } }, async ({ question, top, reference_now, timezone, offset, limit, outputFormat, verbose, dryRun }) => {
+  server.registerTool("nl_gov_ask", { inputSchema: { question: z.string().min(1, "question is leeg").max(NL_GOV_ASK_QUESTION_MAX_CHARS, `question is te lang: maximaal ${NL_GOV_ASK_QUESTION_MAX_CHARS} tekens; stel een kortere vraag of gebruik de zoektool van de bron`), top: z.number().int().min(1).max(config.limits.maxRows).default(10), reference_now: z.string().optional(), timezone: z.string().optional(), ...paginationInputSchema, outputFormat: outputFormatSchema, verbose: z.boolean().default(false), dryRun: z.boolean().default(false) }, description: "Use this when the best source is unclear: routes a question about Dutch government data to the best source(s); then use that source's own tool for full text. Reads dates ('vorige week', 'since 2020'). Policy questions ('GGZ-beleid gemeente Utrecht') search council records (ORI), publications, Tweede Kamer, Rijksoverheid. An ECLI gives that ruling, 'artikel 3:4 Awb' the law text ('op <datum>' too), Algemene Rekenkamer/SCP/WODC their reports, 'inwoners <gemeente>' a CBS count. With DSO_API_KEY, Omgevingswet document questions go to the DSO first: an omgevingsplan, -visie, -verordening, -programma, waterschapsverordening, voorbereidingsbesluit, projectbesluit or ontwerpregeling with an address, place or body, or asking for a list, the newest or ontwerpen; 'welke regels gelden op <adres/postcode>' ('mag ik een dakkapel plaatsen op ...'); ontwerpen ter inzage of a named body or place. 'Luchtfoto van <adres>', 'kaart van <adres>' or 'laat <adres> zien' returns a map image (pdok_kaartbeeld: luchtfoto, kadastrale kaart, marker). An address covers every bestuurslaag, 'in de provincie X' also its gemeenten; 'gelden op <dag>' sets the day. Questions about the law, procedures, costs, participation or politics, or naming another kind of source (publications, case law, enforcement, permits, tenders, statistics, news) skip the DSO, as do questions over 500 characters. For an address, place or ontwerpen an empty DSO answer stands; if the DSO fails, times out (20 s) or misses the place, other routes answer. Without an answer it falls back to the data.overheid.nl catalogue. access_note names the search terms and the routes tried.", annotations: TOOL_ANNOTATIONS, _meta: { "anthropic/alwaysLoad": true } }, async ({ question, top, reference_now, timezone, offset, limit, outputFormat, verbose, dryRun }) => {
     const decodedQuestion = (() => {
       try { return decodeURIComponent(question.replace(/\+/g, " ")); } catch { return question; }
     })();
@@ -774,6 +779,8 @@ export function registerNlGovAsk(server: McpServer, deps: NlGovAskDeps): void {
       // the routes it took before.
       const dsoKey = process.env[ENV_KEYS.DSO_API_KEY]?.trim();
       const dsoIntent = dsoKey && !euIntent ? detectDsoIntent(decodedQuestion) : undefined;
+      // "Luchtfoto van <adres>", "kaart van <adres>": a picture (pdok_kaartbeeld); see detectKaartbeeldIntent.
+      const kaartbeeldIntent = !euIntent ? detectKaartbeeldIntent(decodedQuestion) : undefined;
       // What was said in a Tweede Kamer debate is in the verslagen; see detectDebatIntent.
       const debatIntent = !euIntent && !dsoIntent ? detectDebatIntent(decodedQuestion) : undefined;
       const debatArgs = debatIntent ? { ...debatIntent, date_from: temporal?.from, date_to: temporal?.to } : undefined;
@@ -857,6 +864,7 @@ export function registerNlGovAsk(server: McpServer, deps: NlGovAskDeps): void {
         place: extractPlaceName(decodedQuestion),
         eu: Boolean(euIntent),
         dso: Boolean(dsoIntent && dsoKey),
+        kaartbeeld: Boolean(kaartbeeldIntent),
         ecli: Boolean(ecliIntent),
         foreignEcli: Boolean(foreignEclis),
         wetArtikel: Boolean(wetIntent),
@@ -956,6 +964,12 @@ export function registerNlGovAsk(server: McpServer, deps: NlGovAskDeps): void {
         // an election or a school sector read from the question.
         const specificRequests = (candidate: string): PlannedRequest[] | undefined => {
           if (candidate === "dso_omgevingsdocumenten" && dsoIntent) return dsoPlannedRequests(dsoIntent, decodedQuestion, top);
+          if (candidate === "pdok_kaartbeeld" && kaartbeeldIntent) {
+            return [
+              { connector: "pdok_bag", method: "GET", url: LOCATIESERVER_FREE, params: { q: kaartbeeldIntent.adres, fq: "type:adres", rows: 1, question: decodedQuestion } },
+              ...kaartbeeldIntent.lagen.map((laag) => ({ connector: "pdok_wms", method: "GET", url: WMS_SERVICES[laag].url, params: { REQUEST: "GetMap", VERSION: "1.3.0", CRS: "EPSG:28992", laag, straal_m: 60, WIDTH: 800, HEIGHT: 800 } })),
+            ];
+          }
           if (candidate === "tweede_kamer_debatten" && debatArgs) {
             return [{
               connector: "tweede_kamer",
@@ -1248,6 +1262,16 @@ export function registerNlGovAsk(server: McpServer, deps: NlGovAskDeps): void {
         } finally {
           clearTimeout(deadlineTimer);
         }
+      }
+
+      if (takes("kaartbeeld") && kaartbeeldIntent) {
+        const started = Date.now();
+        const answer = await kaartbeeldAnswer(kaartbeeldIntent);
+        requestDebug.push({ connector: "pdok_wms", request_url: WMS_SERVICES[kaartbeeldIntent.lagen[0]].url, request_method: "GET", response_time_ms: Date.now() - started, cache_hit: null, cache_ttl_remaining_s: null });
+        if (answer.payload) return answer.payload;
+        fallbackSteps.push("pdok_kaartbeeld:failed");
+        triedRoutes.push(`PDOK kaartbeeld (mislukt: ${answer.error?.error ?? "onbekend"})`);
+        routeFailures.push({ connector: "pdok_wms", error_type: answer.error?.error ?? "unexpected", message: answer.error?.message ?? "Geen kaartbeeld" });
       }
 
       if (takes("uitspraak") && ecliIntent) {

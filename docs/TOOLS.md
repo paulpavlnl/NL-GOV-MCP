@@ -123,6 +123,9 @@
   - requires `BAG_API_KEY` for step 2; without it the tool returns Locatieserver-only (`data_kwaliteit: "lookup_only"`)
   - response flags `data_kwaliteit`: `hard` (both REST hits) | `partial` (one) | `lookup_only` (none)
   - complements `bag_linked_data_select` when the Labs SPARQL endpoint is slow or down
+  - returns `rd_x`/`rd_y` (EPSG:28992) of the address; `includeImage: true` appends a map image (luchtfoto + kadastrale kaart + marker) as `pdok_kaartbeeld`
+- `pdok_kaartbeeld`
+  - map image of an address or RD point (MCP `image` content + JSON text); see `## pdok_kaartbeeld` below
 
 ## ORI / Open Raadsinformatie
 - `ori_search`
@@ -360,7 +363,7 @@ Search CBS Iv3 municipal/provincial finance statistics. Filters: `gemeente` (Gem
 
 Search consolidated Dutch national legislation (BWB) via the KOOP SRU service. Keywords match the title index `overheidbwb.titel` (title search, not full text). Full-pattern tool: supports `offset`/`limit`/`top`, `outputFormat`, `verbose` and `dryRun`.
 
-- **Inputs**: `query` (verplicht, max. 500 tekens, titelwoorden, bv. 'arbeid vreemdelingen', 'wegenverkeerswet', 'omgevingswet'; geen volledige zinnen), `peildatum` (optioneel, YYYY-MM-DD: de versies die op die dag gelden in plaats van vandaag, Nederlandse datum; vindt ook regelingen die sindsdien zijn ingetrokken), `top`, `offset`/`limit`, `outputFormat`, `verbose`, `dryRun`.
+- **Inputs**: `query` (verplicht, max. 500 tekens, titelwoorden, bv. 'arbeid vreemdelingen', 'wegenverkeerswet', 'omgevingswet'; geen volledige zinnen), `peildatum` (optioneel, YYYY-MM-DD: de versies die op die dag gelden in plaats van vandaag, Nederlandse datum; vindt ook regelingen die sindsdien zijn ingetrokken), `geldigOp` (alias van `peildatum` voor oudere clients; `peildatum` wint), volgorde: exacte titel, dan wetten, AMvB's en ministeriële regelingen, `top`, `offset`/`limit`, `outputFormat`, `verbose`, `dryRun`.
 - **Eén record per regeling**: de versie (toestand) die vandaag of op `peildatum` geldt (de CQL krijgt `overheidbwb.geldigheidsdatum=<dag>`); gelden twee versies op dezelfde dag, dan de latere. De SRU rangschikt niet; de regeling waarvan de titel precies de zoekterm is, komt vooraan. Een regeling zonder versie die op die dag geldt (ingetrokken, of nog niet in werking) staat er niet bij. Is de zoekterm precies de titel van zo'n regeling ('Wet openbaarheid van bestuur' vandaag), dan noemt `access_note` haar met de hint om een `peildatum` binnen haar looptijd te geven; vindt de zoekterm vandaag niets maar op andere data wel, dan noemt `access_note` voorbeelden met hun periode.
 - **Output**: `identifier` (BWBR-id), `title`, `type` (wet, AMvB, ministeriële regeling, ...), `authority`, `creator`, `geldig_vanaf`/`geldig_tot` (de geldigheidsperiode van deze versie; geen `geldig_tot`: geen einddatum bekend), `toestand`, `versie_url` (wetten.overheid.nl/{BWBR}/{geldig_vanaf}), `xml_url` (de XML van deze versie in de KOOP-repository), `metadata_gewijzigd` (laatste wijziging van het BWB-metadatarecord, niet van de wet of de tekst; `data.date` blijft als alias met dezelfde waarde), `rechtsgebied`, `peildatum` en `canonical_url` (zonder `peildatum` de kale wetten.overheid.nl/{BWBR}-link, die de versie van vandaag opent; met `peildatum` de `versie_url`). De record-`date` is `geldig_vanaf`.
 - De tekst van een regeling of artikel: `wetten_bwb_tekst`.
@@ -398,6 +401,17 @@ Search Dutch administrative areas (gemeente/provincie/land) via PDOK Bestuurlijk
 ## brk_kadastrale_kaart_search
 
 Search Dutch cadastral parcels and map objects (BRK Kadastrale Kaart) via PDOK OGC API Features. bbox-driven (RD New / EPSG:28992). Read-only, keyless. Collections: perceel, kadastralegrens, openbareruimtenaam, bebouwing, nummeraanduidingreeks. Returns kadastrale aanduiding (gemeente/sectie/perceelnummer), grootte (m2), bbox/centroid and optional GeoJSON geometry (set `includeGeometry=true` for `outputFormat=geojson`). Supports pagination, outputFormat (json/csv/geojson/markdown_table), verbose and dryRun. A `bbox` is required.
+
+`includeImage: true` appends a map image of the bbox centre (luchtfoto + kadastrale kaart, without marker, radius at most 500 m), as `pdok_kaartbeeld`; a failed image never fails the search.
+
+## pdok_kaartbeeld
+
+Map image of an address or RD point, composed from PDOK WMS GetMap layers (WMS 1.3.0, EPSG:28992) and returned as MCP `image` content (PNG, JPEG only to stay under ~1 MB) plus a JSON text block.
+
+- **Input**: `adres` (free text, PDOK Locatieserver) or `rd_x` + `rd_y` (EPSG:28992); `straal_m` (default 60, max 500), `lagen` (`luchtfoto`, `kadastrale_kaart`, `bgt`, `brt`; default `["luchtfoto","kadastrale_kaart"]`), `breedte`/`hoogte` (default 800, max 1600), `markering` (default `true`).
+- **Output**: image first, then `summary`, one record (`bbox`, `rd_x`/`rd_y`, size, `mime_type`, `bytes`, per-layer status and GetMap URL, `bronvermelding`), `provenance` with every GetMap URL in `query_params` and `access_note` with the attribution "© Kadaster / PDOK, Beeldmateriaal.nl" and any failed layer.
+- **Errors**: a failed layer is left out and named in `access_note`; no layer at all is an `http_error` without image; an unknown address or a point outside the Netherlands is an error with `suggestion`.
+- **Example**: `{ "adres": "Visstraat 19, 3311 KX Dordrecht" }` or `{ "rd_x": 105255.6, "rd_y": 425245.7, "straal_m": 40, "lagen": ["bgt", "kadastrale_kaart"] }`.
 
 ## bron_ongevallen_search
 
