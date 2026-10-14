@@ -18,7 +18,8 @@
     "test:questions": "tsx scripts/run-question-suite.ts --profile full",
     "test:live": "tsx scripts/run-question-suite.ts --profile live",
     "check": "tsc -p tsconfig.json --noEmit",
-    "test:new-sources": "tsx scripts/live-check-new.ts"
+    "test:new-sources": "tsx scripts/live-check-new.ts",
+    "update-local": "node scripts/update-local.mjs"
   },
   "repository": {
     "type": "git",
