@@ -61,10 +61,17 @@ Captured from operator guidance on 2026-03-02.
 
 ## Priority B (open but mixed/conditional)
 
-- **DSO / Omgevingswet APIs** (partially delivered)
-  - Adapter delivered: `dso_omgevingsdocumenten_search` — discovery-only metadata (titel, type, bevoegd gezag, geldigheidsdatums, viewer-link) via DSO Omgevingsdocumenten Presenteren API v8 (`https://service.omgevingswet.overheid.nl/publiek/omgevingsdocumenten/api/presenteren/v8`). Vereist `DSO_API_KEY` (header `x-api-key`).
+- **DSO / Omgevingswet APIs** (largely delivered)
+  - Adapter delivered: `dso_omgevingsdocumenten_search` via DSO Omgevingsdocumenten Presenteren API v8 (`https://service.omgevingswet.overheid.nl/publiek/omgevingsdocumenten/api/presenteren/v8`). Vereist `DSO_API_KEY` (header `x-api-key`).
+  - ✅ Locatie: `locatie` (adres/postcode/plaats → PDOK Locatieserver → RD-punt → `_zoek` met `geometrie` en `Content-Crs`), alle bestuurslagen op dat punt, geteld per bestuurslaag; geocodering binnen de genoemde plaats, met melding van een andere straat, het middelpunt van een straat of plaats en een andere woonplaats.
+  - ✅ Bevoegd gezag op naam (uit de DSO-catalogus, met afkortingen en `documentType`-voorkeur), volledige-catalogus-zoeken voor `query`/`documentType`, exacte `documentType`, `geldigOp`-tijdreis (met `inWerkingOp` op dezelfde dag), leesbare documentlinks per bestuurslaag, `eindGeldigheid` exclusief met `versieGeldigTotEnMet`.
+  - ✅ Provincie als gebied: `provincie` (de provincie en al haar gemeenten in één `_zoek`).
+  - ✅ Ontwerpregelingen: `soort: "ontwerpregelingen"` met inzagetermijn, `terInzage` (`null` zonder inzagetermijn in het DSO), `mogelijkTerInzage`, `eindeInzagetermijnSchatting` en `besluitTitel`; de bekendmaking van het ontwerpbesluit (`bekendmakingId`, en `onderwerp` als de DSO-titel geen onderwerp noemt); `alleen_ter_inzage`.
+  - ✅ Geen-regeldocumenten gemarkeerd (Omgevingswet als verwijzing, Aansluitdocument Rijk); voorbeschermingsregels bij `documentType: "omgevingsplan"` in `access_note`.
+  - ✅ Regeltekst: `dso_omgevingsdocument_tekst` (documentstructuur → platte tekst, ook van ontwerpen met verwerkte renvooi; `zoekterm` ook in de tijdelijke delen (voorbeschermingsregels), `onderdeel`, inhoudsopgave; `weergave: "wijzigingen"` voor alleen de wijzigingen van een ontwerp).
+  - ✅ `nl_gov_ask` routeert Omgevingswet-documentvragen naar het DSO (met `DSO_API_KEY`), precisie eerst: vragen die een andere route beantwoordde, houden die route.
   - PDOK Omgevingswet geometrieën (`api.pdok.nl/kadaster/omgevingswet-geometrieen/ogc/v2`) is vector-tiles only — geen OGC API Features `/items` — en daarom niet bruikbaar als open fallback voor documentmetadata.
-  - Geometrie-filtering via `_zoek` (Point/Polygon in EPSG:28992) en aanvullende velden (status, regelteksten, annotaties) zijn nog niet opgenomen; volgende iteratie kan `geometrie` body-filter en `geldigOp`/`inWerkingOp` tijdreis-parameters toevoegen.
+  - Nog open: annotaties (activiteiten, gebiedsaanwijzingen, omgevingsnormen via `regeltekstannotaties`/`onderwerpen/_zoek`), regels per locatie op artikelniveau, een `inWerkingOp` los van `geldigOp`, omgevingsvergunningen (`/omgevingsvergunningen`) en polygoon-zoeken.
   - Beheer-/aanbieden-API's (CPA aanbieden, Omgevingsdocument aanbieden, Behandeldienstconfiguratie beheren) blijven uit scope (PKIoverheid-cert vereist).
 
 - **Ruimtelijkeplannen.nl (Wro/Bro plans)** ✅
@@ -213,13 +220,14 @@ Vijf nieuwe connectors + twee dwarsdoorsnijdende capabilities (39 → 44 connect
   - De KOOP SRU-collectie `plooi` bestaat niet meer: een `scan` op `c.product-area` (`operation=scan&scanClause=c.product-area=a`) geeft exact zeven product areas — `datacollecties` (66k), `lokalebekendmakingen` (6k), `officielepublicaties` (6,6M), `samenwerkendecatalogi` (55k), `sgd` (455k), `tuchtrecht` (48k), `vd` (23k). `plooi`, `woo` en varianten geven 0 records.
   - De enige machine-leesbare route is de API achter de zoekportaal-SPA (`https://open.overheid.nl/overheid/openbaarmakingen/api/v0/zoeken`, gevonden in de front-end bundle). Die geeft **HTTP 401** op elke aanroep — met en zonder browser-UA, met Referer/Origin, met sessie-cookie, en zowel GET als POST. De front-end bundle bevat geen sleutel, dus het is een IP-/omgevingsgebonden blokkade, geen ontbrekende credential.
   - Conclusie: pas oppakken als KOOP een gedocumenteerde publieke API of een SRU-product-area voor Woo-openbaarmakingen levert. Een connector bouwen op een endpoint dat we niet kunnen aanroepen zou een tool opleveren die alleen `http_error` teruggeeft.
+  - **Correctie (11 okt 2026)**: deze conclusie berustte op het verkeerde pad. `/overheid/openbaarmakingen/api/v0/zoeken` geeft inderdaad 401, maar `/overheid/openbaarmakingen/api/v0/zoek?zoektekst=…` geeft zonder sleutel 200 met JSON. De bron is daarmee technisch bereikbaar, maar blijft een grensgeval; zie "Bronnenonderzoek oktober 2026" hieronder.
 - **Uitslagen per stembureau / voorkeurstemmen** — de Kiesraad-databank gaat tot gemeenteniveau; stembureau-EML's staan als bestanden op data.overheid.nl (geen query-API).
 - **Recentere VO-examencijfers per vestiging** — de CKAN-portal van DUO bevat exact één per-vestiging examendataset (`03_voex-v1`, t/m schooljaar 2017); nieuwere examencijfers publiceert DUO alleen als losse CSV-downloads op duo.nl zonder stabiele, ontdekbare URL's.
 
 ### EUR-Lex en LiDO (toegevoegd) — bewuste keuzes
 
 - **EUR-Lex** loopt via het keyless CELLAR SPARQL-endpoint. De EUR-Lex SOAP-webservice is niet gebruikt omdat die een account vereist; `eur-lex.europa.eu` zelf zit achter een WAF en is ongeschikt voor server-side calls (we linken er alleen naar). Alleen het Publicatieblad is authentiek; hergebruik met bronvermelding.
-- **LiDO** gebruikt alleen de publiek gedocumenteerde services (`get-id`, `get-aantal-per-informatietype`). `get-links`, `/sparql` en portal-scraping zijn officieel niet-publiek en bewust niet gebruikt; daarom levert de tool tellingen plus een portaallink in plaats van de volledige verwijzingslijst. Data CC0.
+- **LiDO**: tellingen (`lido_verwijzingen`) lopen via de publiek gedocumenteerde services (`get-id`, `get-aantal-per-informatietype`). De verwijzingslijst (`lido_verwijzingen_lijst`) gebruikt sinds sept. 2026 `get-links`. LiDO noemt die service niet-publiek (account vereist), maar dwingt dat niet af en valideert het ook niet; met `LIDO_USERNAME`/`LIDO_PASSWORD` gaat Basic auth mee op alleen `get-links`, en een 401/403 geeft een duidelijke fout. `/sparql` (weigert Basic auth) en portal-scraping blijven ongebruikt. Data CC0.
 
 ### Volgende kandidaten (uit hetzelfde bronnenonderzoek)
 
@@ -228,3 +236,51 @@ Vijf nieuwe connectors + twee dwarsdoorsnijdende capabilities (39 → 44 connect
 3. AHN / BGT / BRT via PDOK (staat sinds priority A in deze backlog, nog niet afgerond)
 4. TED (EU-aanbestedingen) als Europese tegenhanger van TenderNed
 5. Entity-resolutielaag: gemeentecode ↔ TOOI ↔ BAG ↔ kadastrale gemeente ↔ politie-regiocode
+6. Meer sites op het Rijksoverheid-RSS-platform: government.nl, ilent.nl, nvwa.nl (zie "Bronnenonderzoek oktober 2026")
+7. Woo-openbaarmakingen en Internetconsultatie, als de beheerder de grensgevallen goedkeurt of KOOP open data levert
+
+
+## Delivered in v0.4 (oktober 2026)
+
+Drie nieuwe connectors en vier verdiepende tools op bestaande bronnen (47 → 50 connectors; 78 → 85 tools). Alles keyless; elke bron is vóór het bouwen live geverifieerd.
+
+**Nieuwe connectors:**
+- `wodc_search` + `wodc_document_get` — onderzoeksrapporten van het WODC (DSpace REST-API van repository.wodc.nl; zoeken in metadata én volledige tekst, per rapport bestanden en tekst, de PDF als de repositorytekst tekortschiet)
+- `rekenkamer_publicaties_search` — publicaties van de Algemene Rekenkamer (RSS-platform van Rijksoverheid.nl, op rekenkamer.nl)
+- `scp_publicaties_search` — publicaties van het SCP (hetzelfde platform, op scp.nl)
+
+**Verdieping op bestaande bronnen:**
+- `wetten_bwb_tekst` — de tekst van een artikel, de artikelen met een zoekterm of de inhoudsopgave van een wet of regeling, zoals geldig op een peildatum, met status per artikel en de wijzigende publicatie
+- `wetten_bwb_search` — nu één versie per regeling (die van vandaag, of van `peildatum`), met `geldig_vanaf`/`geldig_tot`, `versie_url`, `xml_url` en `metadata_gewijzigd`; een ingetrokken regeling met precies de gezochte titel wordt genoemd
+- `rechtspraak_uitspraak_get` — één uitspraak of AG-conclusie op ECLI uit de open data van Rechtspraak: metadata, relaties, beslissing, overwegingen, secties, zoekterm
+- `ori_document_get` — de tekst van één raadsdocument uit ORI, per pagina of alleen de pagina's met een term
+
+**Overig:**
+- De server stuurt MCP-`instructions` mee bij `initialize`, en `nl_gov_ask` heeft `_meta: { "anthropic/alwaysLoad": true }`, zodat clients met een tool search (Claude Code) het startpunt altijd laden.
+- De oude router (`src/nlGovMcp.ts`) en de ongebruikte legacy-bronnen `cbsStatline`, `pdokBag`, `officieleBekendmakingen` en `dataOverheidCatalog` zijn verwijderd; `nl_gov_ask` is de enige router.
+
+### Bronnenonderzoek oktober 2026 (live geverifieerd 11 okt 2026)
+
+Beoordeeld met de vaste regel: alleen officiële, open bronnen. Een bron die een (gratis) account vraagt of geautomatiseerd zoeken uitsluit is een grensgeval: die wordt aan de beheerder voorgelegd, niet gebouwd.
+
+**Gebouwd:** WODC, Algemene Rekenkamer en SCP (zie hierboven).
+
+**Grensgevallen (wachten op een besluit van de beheerder, niet gebouwd):**
+- **Woo-openbaarmakingen / open.overheid.nl** — de conclusie van v0.3 berustte op het verkeerde pad: `/overheid/openbaarmakingen/api/v0/zoeken` geeft 401, maar `https://open.overheid.nl/overheid/openbaarmakingen/api/v0/zoek?zoektekst=…` geeft zonder sleutel 200 met JSON (totaal ~718.000 documenten; de parameter `q` wordt genegeerd, `zoektekst` werkt). Daartegenover: het is de ongedocumenteerde backend van de zoek-SPA, `robots.txt` zegt `User-agent: * Disallow: /`, en de toekomst van het centrale portaal is onderwerp van beleidsdiscussie. Dit is ook de enige gevonden route naar de documentbestanden van Rijksoverheid-publicaties: `rijksoverheid_search` levert alleen vindbaarheid (titel en teaser).
+- **Internetconsultatie** — een RSS-feed (`/rss/feed`, 45 items, alleen titel en link) plus gestructureerde detailpagina's; geen API, en `robots.txt` zegt `Disallow: /`. Route: KOOP vragen om open data.
+
+**Later (nu geen bruikbare open zoekroute):**
+- **PUC Uitvoeringscontent** — geen API (ASP.NET WebForms-postbacks), wel een sitemap; `Crawl-delay: 120`, en geen product-area in de KOOP SRU. Route: KOOP vragen (puc-od@koop.overheid.nl).
+- **CPB** — RSS-feeds bestaan (`publicaties.xml`, 10 items), maar zonder server-side zoeken: queryparameters geven 404 en `cpbsearch` is in `robots.txt` uitgesloten.
+- **Nationale ombudsman** — alleen een HTML-weergave (Drupal, `/publicaties?term=…`), geen feed; `robots.txt` blokkeert GPTBot.
+
+**Goedkope kandidaten op hetzelfde RSS-platform:** www.government.nl, www.ilent.nl en www.nvwa.nl beantwoorden dezelfde `/api/rss`-zoekvraag als rijksoverheid.nl, rekenkamer.nl en scp.nl (live geverifieerd). Een site toevoegen is één regel in `RSS_SITES` plus een tool, met dezelfde limieten (20 items, titel en teaser).
+
+### Open vervolgpunten (oktober 2026, niet gebouwd)
+
+- **Geheugen per HTTP-sessie**: `createServer()` bouwt per HTTP-sessie een eigen `McpServer` met alle tools (ongeveer 14 MB per sessie). Overwegen om de tooldefinities tussen sessies te delen.
+- **Jaartal in eigennamen**: een jaartal dat deel is van een naam ('omgevingsvisie 2040') kan `nl_gov_ask` als datumfilter lezen in plaats van als deel van de naam.
+- **ECLI zonder prefix**: een ECLI zonder 'ECLI:' ('NL:HR:2019:2006') wordt niet als ECLI herkend.
+- **`tweede_kamer_document_get`**: een onbekend document (HTTP 404) komt terug als `http_error`, niet als leeg resultaat met uitleg zoals bij de andere get-tools.
+- **`isError`**: fouten op toolniveau (`error`-vorm) komen terug zonder `isError: true`; de MCP-spec suggereert dat wel. Voorlopig bewust zo gelaten.
+- **LiDO-route in `nl_gov_ask`**: 'uitspraken die verwijzen naar <ECLI>' leest nu de uitspraak zelf en verwijst naar `lido_verwijzingen_lijst`; een eigen route die de verwijzingen direct ophaalt ontbreekt.

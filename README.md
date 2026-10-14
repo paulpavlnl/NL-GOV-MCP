@@ -21,6 +21,7 @@ Examples:
 - *"Wat is de luchtkwaliteit in Utrecht?"* → live Luchtmeetnet measurements from that city’s own stations
 - *"Geef me de rijksbegroting voor onderwijs"* → Rijksbegroting search + chapter navigation
 - *"Hoe is Richtlijn (EU) 2016/680 omgezet in Nederland?"* → EUR-Lex/CELLAR: the Dutch transposition measures with their Staatsblad reference
+- *"Welke regels gelden op Brennerbaan 150 in Utrecht?"* → DSO: the omgevingsdocumenten of gemeente, waterschap, provincie and Rijk at that address (with `DSO_API_KEY`)
 
 ## How is this different from data.overheid.nl?
 
@@ -28,26 +29,26 @@ Examples:
 
 `NL-GOV-MCP` actively retrieves and normalizes data across many sources, can combine cross-source results, and returns a consistent MCP response contract ready for assistants and automations.
 
-## Sources (46 connectors, 74 tools)
+## Sources (50 connectors, 85 tools)
 
 | Source | What it covers |
 |---|---|
 | CBS | Statistics Netherlands (demographics, economy, housing, labour; v4/v3 + fallback) |
-| Tweede Kamer | Parliamentary documents, search, voting records, member info; single-document retrieval can optionally resolve resource URLs and include capped text previews for text-like formats |
-| Officiële Bekendmakingen | Official publications (SRU/XML search + lookup) |
-| Rijksoverheid | National government news/document search via the Rijksoverheid.nl RSS platform (server-side keyword) + school holidays |
+| Tweede Kamer | Parliamentary documents (AND keyword search on title and subject), OData search on every entity, votes linked to their decision and zaak, member info, and what was said in plenary and committee debates (the verslagen: speaker, fractie, time and text per spreekbeurt); single-document retrieval can resolve resource URLs and extract text from PDF and Word files |
+| Officiële Bekendmakingen | Official publications (SRU/XML): search by topic, publisher, journal (publicatieblad) and date, sorted by relevance or date; lookup with PDF/HTML/XML links and optional text |
+| Rijksoverheid | National government news/document search via the Rijksoverheid.nl RSS platform (server-side keyword and date filter) + school holidays |
 | Rijksbegroting | National budget data + chapter helper |
 | DUO | Per-school records (po/vo/mbo/ho addresses), per-location exam results, education dataset catalogue + RIO adapter |
 | data.overheid.nl | National open data catalog (CKAN) |
 | Overheid API register | API directory (requires `OVERHEID_API_KEY`) |
 | KNMI | Weather datasets/files, warnings, earthquakes (requires `KNMI_API_KEY`) |
 | PDOK / BAG | Geospatial search, BAG address registry, and authoritative per-address detail (oppervlakte, bouwjaar, gebruiksdoelen) via Kadaster Individuele Bevragingen REST API |
-| Rechtspraak | Court rulings via official `uitspraken.rechtspraak.nl` search backend |
+| Rechtspraak | Court rulings via official `uitspraken.rechtspraak.nl` search backend; one ruling or AG-conclusie by ECLI from the open data service (metadata, relations, beslissing, overwegingen, sections or the paragraphs with a term) |
 | RDW | Vehicle open data |
 | Luchtmeetnet | Live air quality measurements per city/station (NO2, PM10, PM2.5, O3) |
 | Rijkswaterstaat | Water data catalog + real-time measurements |
 | NDW | Traffic discovery/metadata |
-| ORI | Open Raadsinformatie discovery |
+| ORI | Open Raadsinformatie: council documents, agenda items, meetings and decisions of municipalities, provinces and water boards; the text of one document, page by page or only the pages with a term |
 | NGR | National Geo Register (CSW metadata) |
 | Ruimtelijkeplannen.nl (Wro/Bro) | Vigerende, ontwerp en vervallen ruimtelijke plannen via PDOK WMS, met status- en gemeentefilter |
 | RIVM | Public-health discovery |
@@ -55,13 +56,13 @@ Examples:
 | RCE (Linked Data) | SPARQL access to cultural heritage linked data |
 | Eurostat | EU statistics search + preview |
 | data.europa.eu | EU open data catalog |
-| DSO Omgevingsdocumenten | Discovery van omgevingsplannen, omgevingsvisies, programma's en omgevingsverordeningen onder de Omgevingswet (read-only metadata, vereist `DSO_API_KEY`) |
+| DSO Omgevingsdocumenten | Omgevingsplannen, -visies, programma's, omgevingsverordeningen, waterschapsverordeningen, voorbereidingsbesluiten en projectbesluiten onder de Omgevingswet: per adres (alle bestuurslagen), per bevoegd gezag (code of naam), per provincie met haar gemeenten of in de hele catalogus, ook op een eerdere datum, en ontwerpen met inzagetermijn en bekendmaking; met links naar de leesbare tekst en de regeltekst zelf als platte tekst (zoekterm, ook in de voorbeschermingsregels; artikel; inhoudsopgave; wat een ontwerp wijzigt). Vereist `DSO_API_KEY` |
 | data.politie.nl | Registered crime & nuisance figures per municipality/district/neighbourhood (CBS dataderden OData) |
 | CBS Iv3 | Municipal & provincial finances — budgets, annual accounts, task fields (dataderden OData) |
 | PDOK Bestuurlijke Gebieden | Official municipality/province boundaries and codes (OGC API Features) |
 | PDOK Kadastrale Kaart (BRK) | Cadastral parcels, boundaries and designations (OGC API Features) |
-| wetten.overheid.nl (BWB) | Consolidated texts of all national laws, decrees and regulations (KOOP SRU) |
-| CVDR | Local & regional regulations of municipalities, provinces and water authorities (KOOP SRU) |
+| wetten.overheid.nl (BWB) | Consolidated national laws, decrees and regulations (KOOP SRU): one current version per regeling, or the version on a peildatum; the text of an artikel (or lid), the artikelen with a term or the table of contents, as geldig on any day |
+| CVDR | Local & regional regulations of municipalities, provinces and water authorities, filterable by issuing organisation (KOOP SRU) |
 | NED | National Energy Dashboard — generation/consumption per source + forecasts (requires `NED_API_KEY`) |
 | EP-Online | Building energy labels per address / BAG id (RVO, requires `EP_ONLINE_API_KEY`) |
 | BRO | Basisregistratie Ondergrond — groundwater, CPT soundings, borings (keyless REST) |
@@ -70,14 +71,18 @@ Examples:
 | BRON verkeersongevallen | Registered road-traffic accidents with location & severity (Rijkswaterstaat WFS) |
 | DNB Statistics | Interest rates, mortgages, pensions, insurers, balance of payments (requires `DNB_API_KEY`) |
 | NZa Zorgbeeld | Current waiting times for medical-specialist care per institution |
-| Register Overheidsorganisaties | All Dutch government organisations + TOOI identifiers (KOOP) |
-| TenderNed | Public procurement — tender notices, awards, market consultations; detail with CPV/NUTS codes and PDF text |
+| Register Overheidsorganisaties | All Dutch government organisations + TOOI identifiers, searchable by name or abbreviation (KOOP) |
+| TenderNed | Public procurement — tender notices, awards, market consultations, filterable by contracting authority; detail with CPV/NUTS codes, winners and award values, and PDF text |
 | Tuchtrecht | Disciplinary rulings for regulated professions (healthcare, bar, notaries, accountants, vets) — not on Rechtspraak.nl |
 | Samenwerkende Catalogi | National index of products/services offered by municipalities, provinces and water authorities (KOOP SRU) |
 | BRP Gewaspercelen (RVO) | Agricultural parcels with crop, category, area and polygon (PDOK WFS) |
 | Kiesraad Verkiezingsuitslagen | Election results per party, nationally and per province/municipality, incl. turnout |
-| EUR-Lex / CELLAR (EU) | EU legislation by CELEX or citation, title search, and Dutch national transposition measures per directive (keyless SPARQL; only the Official Journal is authentic, reuse with attribution) |
-| LiDO (Linked Data Overheid) | Reference counts per document type to a ruling (ECLI), law article (BWB), EU act (CELEX) or Staatsblad/Staatscourant publication, with portal link (CC0) |
+| EUR-Lex / CELLAR (EU) | EU legislation by CELEX or citation, title and document-number search, amending acts, and Dutch national transposition measures per directive (keyless SPARQL; only the Official Journal is authentic, reuse with attribution) |
+| LiDO (Linked Data Overheid) | References to and from a ruling (ECLI), law article (BWB), EU act (CELEX) or Staatsblad/Staatscourant publication: counts per document type, and the paged list of linked documents with direction and source URL (CC0) |
+| Algoritmeregister | Algorithms and AI systems published by government organisations (algoritmes.overheid.nl, BZK): search by keywords, organisation, status, publication category and theme |
+| WODC | Research reports of the Wetenschappelijk Onderzoek- en Datacentrum (Justitie en Veiligheid) since 1974: search in metadata and full text, filter by date, series, project number or author; per report its files and text (keyless DSpace REST API) |
+| Algemene Rekenkamer | Audit reports, verantwoordingsonderzoek and letters on rekenkamer.nl (the site's own RSS search; title and teaser, at most 20 per query) |
+| SCP | Rapporten, kerncijfers and Burgerperspectieven of the Sociaal en Cultureel Planbureau on scp.nl (the site's own RSS search; title and teaser, at most 20 per query) |
 
 ## Key features
 
@@ -93,8 +98,9 @@ Every tool returns the same shape:
 
 ### PDF text extraction
 Most Dutch government "data" is text inside a PDF. Tools that reach a PDF resource extract its text layer instead of handing back a link only:
-- `tweede_kamer_document_get` with `include_text: true` returns the text of a Kamerstuk PDF (`text_preview_source: "pdf_text_layer"`, plus page count)
+- `tweede_kamer_document_get` with `include_text: true` returns the text of a Kamerstuk PDF (`text_preview_source: "pdf_text_layer"`, plus page count), or of a Word (.docx) file
 - `tenderned_aanbesteding_get` with `include_text: true` returns the text of the official tender notice PDF
+- `wodc_document_get` reads the PDF of a WODC report when the repository's own text extraction (which stops after 100,000 characters) is missing or too short
 
 Extraction is capped (`max_chars`, default 12 000) and fails typed rather than hard: a scan without OCR reports `no_text_layer`, an encrypted file `encrypted`, an HTML error page `not_a_pdf`.
 
@@ -138,7 +144,9 @@ Available on `nl_gov_ask` and major individual tools: `cbs_tables_search`, `cbs_
 
 ### Smart routing + temporal parsing
 - `nl_gov_ask` routes by intent, and can run multi-source queries in parallel.
-- Natural date expressions in NL/EN are currently parsed in `nl_gov_ask` and mapped to source filters (`vorige week`, `sinds 2020`, `between 2018 and 2022`, etc.).
+- Natural date expressions in NL/EN are currently parsed in `nl_gov_ask` and mapped to source filters (`vorige week`, `sinds 2020`, `between 2018 and 2022`, etc.). Vaguer phrases such as `deze week` or `onlangs` are not turned into a date filter; they are left out of the search terms and `access_note` says so.
+- Organisation and policy questions ("Wat doet de Belastingdienst met de BTW?", "GGZ-beleid gemeente Utrecht") are answered from documents: the council records (ORI) of a named municipality, otherwise official publications, Tweede Kamer and Rijksoverheid in parallel. Case-law, API-register and budget questions keep their own routes.
+- Each route searches the topic keywords of the question, not the sentence; the terms used are reported in `access_note`. A journal named in the question ("in de Staatscourant") becomes the Officiële Bekendmakingen `publicatieblad` filter.
 - Temporal parsing is resolved server-side with a real reference timestamp, cross-platform via Node runtime APIs (Windows/macOS/Linux).
 - Default timezone: `Europe/Amsterdam`.
 - Override options for `nl_gov_ask`:
@@ -146,6 +154,9 @@ Available on `nl_gov_ask` and major individual tools: `cbs_tables_search`, `cbs_
   - tool input: `reference_now`
   - environment: `NL_GOV_TIMEZONE`
   - config: `config/default.json` → `temporal.defaultTimeZone`
+
+### Server instructions and tool search
+At `initialize` the server sends MCP `instructions`: which sources it covers, to start with `nl_gov_ask` when the right source is unclear and then use that source's own tools for detail or full text, to cite the records' canonical URLs, how to tell an `error`, partial `failures` and an empty result apart, and which tools need a free API key. `nl_gov_ask` carries `_meta: { "anthropic/alwaysLoad": true }`: a client that defers tools behind a tool search (Claude Code) still loads this entry point upfront. Tool descriptions and the instructions stay within 2,048 characters, where Claude Code cuts them.
 
 ### Cross-reference linking
 Post-processing adds `related_links[]` when records share key identifiers (e.g. `ECLI`, `BWBR`, municipality codes), and can enrich legal references with direct links to `wetten.overheid.nl`.
@@ -175,7 +186,7 @@ npm run test:live    # integration test suite (live API calls)
 
 ### Transport modes
 
-Three transport modes are supported. All expose the same 74 tools.
+Three transport modes are supported. All expose the same 85 tools.
 
 #### stdio (Claude Desktop, Claude Code)
 
@@ -214,6 +225,10 @@ npm run start:streamable-http  # production
 | `GET /health/sources` | Per-connector runtime health snapshot |
 
 Session management uses the `mcp-session-id` header.
+
+#### Security for the HTTP transports
+
+The SSE and Streamable HTTP transports have no authentication and listen on all interfaces by default, so Docker and network clients such as Open WebUI can reach them. For local use, bind to this machine only with `NL_GOV_HTTP_HOST=127.0.0.1`. When browsers can reach the server, set `NL_GOV_ALLOWED_ORIGINS` to the origins of your own clients so other websites cannot call it. Idle sessions are closed after `NL_GOV_SESSION_TTL_MS` and the number of sessions is capped by `NL_GOV_MAX_SESSIONS`; malformed or oversized request bodies (limit 1 MB) get a JSON-RPC error.
 
 #### Selecting transport via environment
 
@@ -267,16 +282,21 @@ Restart Claude Desktop after saving.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NL_GOV_HTTP_PORT` | `3333` | HTTP port for SSE transport |
+| `NL_GOV_HTTP_PORT` | `3333` | HTTP port for the SSE and Streamable HTTP transports |
+| `NL_GOV_HTTP_HOST` | all interfaces | Interface the HTTP transports bind to. Set `127.0.0.1` to accept connections from this machine only |
+| `NL_GOV_ALLOWED_ORIGINS` | — | Comma-separated allowlist of browser origins (e.g. `http://localhost:8080`) for the HTTP transports. When set, a request whose `Origin` header is not on the list gets `403`; requests without an `Origin` header are allowed |
+| `NL_GOV_SESSION_TTL_MS` | `1800000` (30 min) | HTTP sessions with no request and no open stream for this long are closed |
+| `NL_GOV_MAX_SESSIONS` | `100` | Most concurrent HTTP sessions per transport; when full, the least recently used session is closed. Each session holds roughly 14 MB, so lower this on small containers |
 | `NL_GOV_TIMEZONE` | `Europe/Amsterdam` | Default timezone used by `nl_gov_ask` for natural date parsing |
 | `KNMI_API_KEY` | — | Required for KNMI weather tools ([get a free token](https://developer.dataplatform.knmi.nl/open-data-api#token)) |
 | `OVERHEID_API_KEY` | — | Required for API register tool ([request a key](https://apis.developer.overheid.nl/apis/key-aanvragen)) |
 | `BAG_API_KEY` | — | Required for authoritative per-address detail via `bag_address_detail` (Kadaster Individuele Bevragingen REST). Without it the tool returns Locatieserver-only (`data_kwaliteit: "lookup_only"`). ([request access](https://www.kadaster.nl/zakelijk/producten/adressen-en-gebouwen/bag-api-individuele-bevragingen)) |
-| `DSO_API_KEY` | — | Required for `dso_omgevingsdocumenten_search` (DSO Omgevingsdocumenten Presenteren API v8). Without it the tool returns `not_configured`. ([request access](https://developer.omgevingswet.overheid.nl/formulieren/api-key-aanvragen-0/)) |
+| `DSO_API_KEY` | — | Required for `dso_omgevingsdocumenten_search` and `dso_omgevingsdocument_tekst` (DSO Omgevingsdocumenten Presenteren API v8), and for the DSO route of `nl_gov_ask`. Without it, or with characters an HTTP header cannot hold (the key is then not sent), the tools return `not_configured` and `nl_gov_ask` routes Omgevingswet questions as before. ([request access](https://developer.omgevingswet.overheid.nl/formulieren/api-key-aanvragen-0/)) |
 | `NED_API_KEY` | — | Required for `ned_energie_search` (Nationaal Energie Dashboard). Without it the tool returns `not_configured`. ([request a free key](https://ned.nl/nl/api)) |
 | `EP_ONLINE_API_KEY` | — | Required for `ep_online_energielabel` (RVO EP-Online energielabels). Without it the tool returns `not_configured`. ([request access](https://www.ep-online.nl/)) |
 | `NS_API_KEY` | — | Required for `ns_reisinformatie` (NS Reisinformatie API). Subscribe to the **"Ns-App"** product (free external tier ~300 req/5 min) — NOT the deprecated "Public-Travel-Information" product. Without it the tool returns `not_configured`. ([get a free key](https://apiportal.ns.nl/)) |
 | `DNB_API_KEY` | — | Required for `dnb_statistics_search` (DNB Statistics API, gateway `api.dnb.nl`). Subscribe to the free **"Public"** product on the portal and generate the key (self-service). Without it the tool returns `not_configured`. ([get a free key](https://api.portal.dnb.nl)) |
+| `LIDO_USERNAME` / `LIDO_PASSWORD` | — | Optional LiDO account for LiDO's non-public services, used by `lido_verwijzingen_lijst` (`get-links`). LiDO does not enforce it today, so the tool works without it. When both are set they are sent as HTTP Basic auth on `get-links` only. ([request via the LiDO feedback page](https://linkeddata.overheid.nl)) |
 | `MCP_TRANSPORT` | `stdio` | Transport mode: `stdio`, `sse`, or `streamable-http` (alternative to CLI flags) |
 | `LOG_LEVEL` | `info` | Pino log level (`debug`, `info`, `warn`, `error`, `silent`) |
 
@@ -302,6 +322,12 @@ Node ≥ 22 prints an "experimental" warning for this flag; it works. Symptom to
   - include a capped text preview for text-like resources
   - extract the text layer of PDF resources (`include_text: true`), reported as `text_preview_source: "pdf_text_layer"` with `resource_pages`
 - `nl_gov_ask` may automatically deepen the top Tweede Kamer match when the user explicitly asks for content/summary rather than only discovery.
+- Keyword search in `tweede_kamer_documents`, `tweede_kamer_search` and `tweede_kamer_votes` requires every keyword (AND) and looks in titles and subjects, not the full text. Keywords of up to three characters and "quoted phrases" match as whole words; longer keywords also match inside longer words. `tweede_kamer_documents` reports the real number of matches in `pagination.total`.
+- `tweede_kamer_debatten` searches what was said in debates: the verslagen in the Gegevensmagazijn, one record per spreekbeurt or interruptie. The API has no full-text search, so a call reads the verslagen of at most 20 vergaderingen in the period (default the last 7 days), newest first; `vergadering_offset` continues and `access_note` says how many there are. A verslag appears the same day, uncorrected; the official record is the Handelingen. `nl_gov_ask` sends questions about what was said in a debate ("Wat zei de VVD in het debat over stikstof?") to it first, and to its other routes when it finds nothing.
+
+### ORI council document text
+
+`ori_search` shows a short passage per record; `ori_document_get` reads the text of one document by the `data.index` and `data.id` of an `ori_search` record (or an `attachments[].id` in the same index). The text is ORI's own extraction, page by page (`--- pagina N ---`), as Markdown where ORI has it. `zoekterm` returns only the pages with the term (case and accents ignored), `pagina` (`3` or `"3-5"`) a page range, and `max_chars` (default 12,000, max 50,000) caps the text, with `next_pagina` to continue. Agenda items and meetings have no text of their own; their documents are in `attachment_ids`. A document ORI extracted no text from (a scan, audio) says so and links the file, which remains the source.
 
 ### Rechtspraak details
 
@@ -313,19 +339,46 @@ Uses structured parameters instead of natural-language parsing:
 
 The LLM interprets user intent and maps it to these parameters. A lightweight server-side query rewriter strips residual question framing as a safety net.
 
-Responses include facet-driven context in `access_note` when filters are applied.
+Responses include facet-driven context in `access_note` when filters are applied. For the text of a ruling, pass its ECLI to `rechtspraak_uitspraak_get` (below).
+
+### Law text and rulings (BWB, Rechtspraak)
+
+Two tools read the legal text itself instead of a link to it:
+
+- `wetten_bwb_tekst` reads a national law or regulation as it was geldig on a day (`peildatum`, default today in the Netherlands): one artikel, lid or onderdeel (`artikel: "3:4"`, `"3:4 lid 2"`, `"6:162 lid 2 sub b"`), the artikelen that contain every word of a `zoekterm`, or the table of contents with the beginning of the text. Name the regeling by `bwb_id` (`BWBR0005537`) or `wet`: a title or official afkorting (`Awb`, `Sr`, `Gemeentewet`, `BW boek 6`, or `BW` with `artikel: "6:162"`). An ambiguous `wet` (`Ow`), or one that only matches words of titles, returns candidates to choose from by `bwb_id`, never a guess. Each artikel comes with its status (geldend, vervallen, nog niet in werking), the date its text took effect, the publication that last changed it and a deep link on wetten.overheid.nl. An unknown law or id, a day without a geldige version or a missing artikel is an answer without records: `access_note` says why, with suggestions (`'3.4'` never silently becomes `'3:4'`), and `provenance.query_params.niet_gevonden` names what was missing (`wet`, `bwb_id`, `versie` or `artikel`). An upstream failure is a typed error such as `http_error` or `malformed_response` (a download that is not a BWB toestand is rejected and never cached); invalid input stays an error. Shortened text is always marked. The text is the consolidated text from the KOOP BWB repository; only the publication in Staatsblad or Staatscourant is authentic.
+- `wetten_bwb_search` now returns one record per regeling: the version (toestand) geldig today, or on an optional `peildatum`, with `geldig_vanaf`/`geldig_tot` (that version's validity), `versie_url`, `xml_url` and `metadata_gewijzigd` (the last change of the BWB metadata record, not of the law; `date` holds the same value for older clients). The regeling whose title is exactly the query comes first (the SRU does not rank); `query` is at most 500 characters. A regeling without a version geldig that day (repealed, or not yet in force) is left out; when the query is exactly its title, `access_note` names it and points to a `peildatum` inside its period.
+- `rechtspraak_uitspraak_get` reads one ruling or Advocaat-Generaal conclusie by ECLI from Rechtspraak's open data service (`data.rechtspraak.nl`): metadata (instantie, dates, zaaknummer, rechtsgebied, procedure), relations to other instances, inhoudsindicatie, a table of contents and text. `onderdeel` is `overzicht` (default, with the beslissing), `beslissing`, `overwegingen` or `volledig`; `sectie` reads one section or numbered paragraph (`"4.3"`, `"r.o. 4.3"`, `"beoordeling"`); `zoekterm` returns only the paragraphs with every word. `access_note` says how the beslissing or overwegingen were found and when text was cut at `max_chars`. A ruling registered without published text has `tekst_gepubliceerd: false`; a tuchtrecht ruling links to tuchtrecht.overheid.nl. An unknown ECLI is an empty result that says so, not an error.
 
 ### EUR-Lex and LiDO details
 
-`eurlex_search`, `eurlex_document` and `eurlex_nl_omzetting` query the keyless CELLAR SPARQL endpoint of the EU Publications Office. `id` accepts a CELEX number (`32016R0679`) or a citation (`Verordening (EU) 2016/679`, `Richtlijn 95/46/EG`); invalid input is rejected before any request. Search matches title words only. Only the electronic Official Journal of the EU is authentic; EUR-Lex content may be reused with attribution. `nl_gov_ask` routes a CELEX number or EU citation (and explicit terms such as "EU-richtlijn", "EUR-Lex") to these tools before the Officiële Bekendmakingen route.
+`eurlex_search`, `eurlex_document` and `eurlex_nl_omzetting` query the keyless CELLAR SPARQL endpoint of the EU Publications Office. `id` accepts a CELEX number (`32016R0679`) or a citation (`Verordening (EU) 2016/679`, `Richtlijn 95/46/EG`); invalid input is rejected before any request. Search matches title words only. `eurlex_search` also takes a document number (`2016/679`) and returns that act first; regulations before 2015 are read number/year, so `Verordening (EG) 1998/2006` (also without `nr.`) is 32006R1998. Only the electronic Official Journal of the EU is authentic; EUR-Lex content may be reused with attribution. `nl_gov_ask` routes a CELEX number or EU citation (and explicit terms such as "EU-richtlijn", "EUR-Lex") to these tools before the Officiële Bekendmakingen route.
 
 `lido_verwijzingen` returns how often a ruling, law (article), EU act or Staatsblad/Staatscourant publication is referenced in LiDO, per document type, plus a link to the full list on the LiDO portal. It uses only the services LiDO documents as public (`get-id`, `get-aantal-per-informatietype`); LiDO data is CC0.
 
+`lido_verwijzingen_lijst` returns that list itself: per linked document its title, type, direction (`uitgaand`: the item cites it, `inkomend`: it cites the item, `beide`), link labels and source URL. It pages upstream (`offset`/`limit`, at most 100 per call) and can filter on a LiDO document type (`type: "Wet"`, `"Jurisprudentie"`, ...), which is validated strictly before it goes into LiDO's filter. `total` counts references, as in `lido_verwijzingen`; a document linked more than once is listed once per page. The tool uses LiDO's `get-links` service, which LiDO lists under its non-public services but currently serves without login. If LiDO starts requiring an account, set `LIDO_USERNAME`/`LIDO_PASSWORD`; a 401/403 yields an error that names those variables.
+
 **Tuchtrecht is a separate source.** Disciplinary rulings against doctors, lawyers, notaries, accountants, vets and bailiffs are published on `tuchtrecht.overheid.nl`, not on Rechtspraak.nl. Use `tuchtrecht_search` for those; `nl_gov_ask` routes disciplinary questions there before it considers Rechtspraak.
+
+### Research and audit publications (WODC, Rekenkamer, SCP)
+
+- `wodc_search` searches the WODC Repository (`repository.wodc.nl`, a DSpace repository with an open REST API): the research reports of the Wetenschappelijk Onderzoek- en Datacentrum since 1974. Keywords are searched in the metadata and in the full text, all words required; `"quoted phrases"`, `OR` and `-word` work. Filters: `date_from`/`date_to` (YYYY, YYYY-MM or YYYY-MM-DD), `series` (`Cahier`, `WODC Rapport`, `Factsheet`, or one number such as `Cahier 2026-12`), `project` and `author`; `sort` is `relevance`, `newest` or `oldest`. At most 100 per call, paged upstream; a page of 100 takes the repository seconds.
+- `wodc_document_get` takes the uuid or handle URL from `wodc_search` and returns the full metadata, the item's files (rapport, samenvatting, summary, aanbiedingsbrief, ...) and the text: the repository's own extraction (which stops after 100,000 characters), or the PDF itself when that is missing or too short (`text_source: "auto"`, up to 200,000 characters). `zoekterm` returns the passages around the term (at most 20), `bestand` picks another file, `max_chars: 0` gives metadata and files only. Truncation is always stated. The WODC website is CC0; the reports carry no licence, so none is claimed for them.
+- `rekenkamer_publicaties_search` and `scp_publicaties_search` search the publications of the Algemene Rekenkamer (rekenkamer.nl) and the Sociaal en Cultureel Planbureau (scp.nl). Both sites run on the same platform as Rijksoverheid.nl, which does not index them, and answer the same RSS search on their own host. The limits are the platform's: at most 20 results per query, ranked by relevance, no pagination, title and teaser only (the report is on the publication page); when the feed is full the real number of matches is unknown and `total` is left empty. Without `query` they list the newest publications, so `date_from` alone answers "what did they publish recently"; `date_from`/`date_to` filter server-side before the 20-cap. Each site has its own connector, so a failing site does not open the circuit of another.
 
 ### TenderNed details
 
-`tenderned_aanbestedingen_search` sends only parameters that are verified to filter server-side (`search`, `typeOpdracht`, `procedure`, `publicatieDatumVanaf`, `publicatieDatumTot`, `page`, `size`). The upstream silently ignores unknown parameters, so an unsupported filter would look applied while returning everything — hence the deliberately small parameter surface. Page size is capped at 100 by the API; use `page` for more.
+`tenderned_aanbestedingen_search` sends only parameters that are verified to filter server-side (`search`, `typeOpdracht`, `procedure`, `publicatieDatumVanaf`, `publicatieDatumTot`, `aanbestedendeDienstId`, `sort`, `page`, `size`). The upstream silently ignores unknown parameters, so an unsupported filter would look applied while returning everything — hence the deliberately small parameter surface. `opdrachtgever` is resolved to `aanbestedendeDienstId` through TenderNed's register of contracting authorities; `sort` is `relevance` or `date_newest`. `offset`/`page` are translated to upstream pages of at most 100, up to the 10,000-result cap. `tenderned_aanbesteding_get` adds the winners, award values and contract dates of award notices.
+
+For a market consultation (MAC) the closing date comes from the notice itself ('Termijn ontvangst antwoorden', read from the notice's HTML rendering, else its PDF text, of the latest rectification when there is one), not from TenderNed's separately entered `sluitingsDatumMarktconsultatie`, which often differs, mostly later (checked 11 Oct 2026: in 24 of the 40 newest consultations, 19 of them later). `sluitings_datum_bron` is then `aankondiging`, TenderNed's field is kept in `sluitings_datum_oorspronkelijk`, `sluitings_datum_opmerking` explains a conflict, and `sluitings_datum_gecontroleerd` is `true` only when the notice confirmed the date. The search tool rechecks recent consultations the same way, within its existing caps.
+
+### DSO Omgevingsdocumenten details
+
+Both DSO tools use the DSO Omgevingsdocumenten Presenteren API v8 and need `DSO_API_KEY`; see `docs/TOOLS.md` for every parameter and `docs/SOURCES.md` for the requests.
+
+- `dso_omgevingsdocumenten_search` works at document level: it finds which documents apply at a point, not which articles (an article can have a smaller werkingsgebied). `locatie` is geocoded with the PDOK Locatieserver to one RD point, within the place the input names; an unknown or ambiguous address is an error, and a fallback to the centre of a street or place, or to another street than the one named, is stated in `access_note`. `summary` counts the documents at that point per bestuurslaag. `bevoegdGezag` is the body that adopted a document (code or name, "Utrecht" is the gemeente, "Limburg" the provincie); `provincie` is an area, the provincie and all its gemeenten. `geldigOp` sends `geldigOp` and `inWerkingOp`, so a past date gives the versions in force that day. `eindGeldigheid` is exclusive: a version holds through `versieGeldigTotEnMet`, the day before. Two Rijk records at every location are no rule document (the Omgevingswet is only a pointer, the Aansluitdocument Rijk a technical record) and are marked so. With `documentType: "omgevingsplan"`, `access_note` names the voorbeschermingsregels that are temporarily part of the plan. A search that takes longer than 45 s returns a `timeout` error.
+- `soort: "ontwerpregelingen"` and `alleen_ter_inzage` return drafts with their inzagetermijn and the publication of the ontwerpbesluit (`bekendmakingId`, `bekendmakingUrl`), which is leading for the exact termijn and how to respond. About a third of recent drafts have no inzagetermijn in the DSO: their `terInzage` is `null`, `eindeInzagetermijnSchatting` estimates the end, and those announced in the last 56 days are marked `mogelijkTerInzage`. A draft omgevingsplan whose title names no subject gets the publication's title as `onderwerp`.
+- `dso_omgevingsdocument_tekst` returns the rule text of one document as plain text, by `zoekterm`, by `onderdeel` (article, lid, chapter, eId) or as the beginning with a table of contents. A `zoekterm` also searches the voorbeschermingsregels that are a tijdelijk deel of an omgevingsplan, and every hit gets at least its heading and the passage with the term. A draft reads as the regeling would after the change; `weergave: "wijzigingen"` shows only what it changes, with added and deleted text marked. Parts from the toelichting are labelled as such. For the Omgevingswet the DSO holds only a pointer; the tool links wetten.overheid.nl instead.
+- `nl_gov_ask` sends Omgevingswet questions ("Welke regels gelden op <adres>?", "Mag ik een dakkapel plaatsen op <adres>?", "Welke ontwerpen liggen ter inzage in de provincie Utrecht?", "omgevingsplan Utrecht") to the DSO first and waits at most 20 s. Detection is precision-first: questions about permits, procedures, money, the council, parliament, publications, case law, the law itself or the other sources keep their other routes.
 
 ### DUO per-school data
 
@@ -343,7 +396,7 @@ See:
 - `docs/ARCHITECTURE.md` — technical internals, layer diagram, request lifecycle, resilience stack
 - `docs/SOURCES.md` — endpoint details per connector
 - `docs/TOOLS.md` — full tool catalog with behavior notes
-- `docs/BACKLOG-SOURCES.md` — planned integrations
+- `docs/BACKLOG-SOURCES.md` — planned integrations and sources checked but not built
 
 ## Contributing
 
