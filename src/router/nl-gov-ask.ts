@@ -967,7 +967,14 @@ export function registerNlGovAsk(server: McpServer, deps: NlGovAskDeps): void {
           if (candidate === "pdok_kaartbeeld" && kaartbeeldIntent) {
             return [
               { connector: "pdok_bag", method: "GET", url: LOCATIESERVER_FREE, params: { q: kaartbeeldIntent.adres, fq: "type:adres", rows: 1, question: decodedQuestion } },
-              ...kaartbeeldIntent.lagen.map((laag) => ({ connector: "pdok_wms", method: "GET", url: WMS_SERVICES[laag].url, params: { REQUEST: "GetMap", VERSION: "1.3.0", CRS: "EPSG:28992", laag, straal_m: 60, WIDTH: 800, HEIGHT: 800 } })),
+              ...kaartbeeldIntent.lagen.map((laag) => ({
+                connector: "pdok_wms",
+                method: "GET",
+                url: WMS_SERVICES[laag].url,
+                params: WMS_SERVICES[laag].kind === "wmts"
+                  ? { SERVICE: "WMTS", TILEMATRIXSET: "EPSG:28992", laag, straal_m: 60, WIDTH: 800, HEIGHT: 800 }
+                  : { REQUEST: "GetMap", VERSION: "1.3.0", CRS: "EPSG:28992", laag, straal_m: 60, WIDTH: 800, HEIGHT: 800 },
+              })),
             ];
           }
           if (candidate === "tweede_kamer_debatten" && debatArgs) {
