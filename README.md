@@ -281,6 +281,8 @@ Restart Claude Desktop after saving.
 
 ### Environment variables
 
+Keys can come from the client (the `env` block in `claude_desktop_config.json`, Render's environment) or from a `.env` file in the server's own folder (next to `package.json`). The server always reads that `.env`, also when the client starts it from another working directory, and **its values override what the client passes in**. For a local install that is the reliable place for keys: the Claude desktop app rewrites `claude_desktop_config.json` while it runs, so a key changed there can silently come back. `.env` is in `.gitignore`.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NL_GOV_HTTP_PORT` | `3333` | HTTP port for the SSE and Streamable HTTP transports |
