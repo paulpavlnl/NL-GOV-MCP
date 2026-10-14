@@ -51,6 +51,8 @@ function update({ name, root, build, entry }) {
   say(`\n== ${name} (${root})`);
   const branch = git(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
   if (branch === null) return say("   Overgeslagen: git werkt hier niet."), false;
+  // The version installed now, also when the switch to main below already moves HEAD.
+  const from = git(root, ["rev-parse", "HEAD"]);
   if (branch !== "main") {
     if (git(root, ["status", "--porcelain", "--untracked-files=no"]) !== "") return say(`   Overgeslagen: branch ${branch} met eigen wijzigingen.`), false;
     say(`   Op branch ${branch}; overstappen naar main.`);
@@ -61,7 +63,6 @@ function update({ name, root, build, entry }) {
   if (git(root, ["status", "--porcelain", "--untracked-files=no"]) !== "") return say("   Overgeslagen: er zijn lokale wijzigingen in bestanden van de repo."), false;
   if (git(root, ["fetch", "--quiet", "origin", "main"]) === null) return say("   Overgeslagen: GitHub niet bereikbaar."), false;
 
-  const from = git(root, ["rev-parse", "HEAD"]);
   const to = git(root, ["rev-parse", "origin/main"]);
   const changed = from === to ? [] : (git(root, ["diff", "--name-only", from, to]) ?? "").split("\n").filter(Boolean);
   const plan = updatePlan(changed, build);
@@ -70,7 +71,9 @@ function update({ name, root, build, entry }) {
   if (from === to && !plan.install && !plan.build) return say(`   Al bij (${from.slice(0, 7)}).`), true;
 
   if (from !== to) {
-    if (git(root, ["merge", "--ff-only", "--quiet", "origin/main"]) === null) return say("   git pull mislukt (lokale commits?)."), false;
+    if (git(root, ["rev-parse", "HEAD"]) !== to && git(root, ["merge", "--ff-only", "--quiet", "origin/main"]) === null) {
+      return say("   git pull mislukt (lokale commits?)."), false;
+    }
     say(`   ${from.slice(0, 7)} -> ${to.slice(0, 7)}, ${changed.length} bestand(en) gewijzigd.`);
   }
   const ok = (!plan.install || (say("   npm install..."), npm(root, ["install", "--no-audit", "--no-fund"])))
