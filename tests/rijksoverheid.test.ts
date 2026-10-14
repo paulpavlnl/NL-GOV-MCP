@@ -101,7 +101,12 @@ describe("RijksoverheidSource.search", () => {
     expect(first.title).toBe("Meer geld voor klimaat");
     expect(first.url).toBe("https://www.rijksoverheid.nl/actueel/nieuws/2026/07/03/meer-geld");
     expect(first.snippet).toBe("Het kabinet trekt extra geld uit voor klimaat.");
-    expect(first.date).toBe("2026-07-03T15:34:00.000Z");
+    // date is the date the site shows (the pubDate as an Amsterdam day); issued keeps the instant.
+    expect(first.date).toBe("2026-07-03");
+    expect(first.date_source).toBe("issued");
+    expect(first.issued).toBe("2026-07-03T15:34:00.000Z");
+    // News paths carry no url_date: their path date is when the item was drafted.
+    expect(first.url_date).toBeUndefined();
     expect(first.type).toBe("news");
     expect(out.total).toBe(3);
     expect(out.endpoint).toContain("www.rijksoverheid.nl/api/rss");
@@ -123,7 +128,9 @@ describe("RijksoverheidSource.search", () => {
     const out = await src.search({ query: "klimaat", top: 5, type: "all" });
     const allQuery = decodeQuery((allMock.mock.calls[0] as unknown as [string])[0]);
     expect(allQuery.filters).toEqual([]);
-    expect(out.items[0].type).toBe("all");
+    // type is the item's own kind (from its /actueel/nieuws/ path), not the echoed request value.
+    expect(out.items[0].type).toBe("news");
+    expect(out.params.type).toBe("all");
   });
 
   it("filters client-side on pubDate via date_from", async () => {
@@ -144,7 +151,7 @@ describe("RijksoverheidSource.search", () => {
 
     expect(out.items).toHaveLength(2);
     expect(out.total).toBe(3);
-    expect(out.access_note).toMatch(/max ~20 resultaten/i);
+    expect(out.access_note).toMatch(/max 20 resultaten/i);
   });
 
   it("returns an empty result with an explanatory access_note", async () => {
@@ -174,6 +181,28 @@ describe("RijksoverheidSource.search", () => {
 
     expect(out.items).toHaveLength(1);
     expect(out.items[0].id).toBe("doc-solo");
+  });
+
+  it("decodes XML entities in titles, links and descriptions", async () => {
+    mockFetchOnce(
+      rss(
+        `<item>
+          <title>Q&amp;A over de R&amp;D-regeling</title>
+          <link>https://www.rijksoverheid.nl/zoeken?trefwoord=wbso&amp;type=nieuws</link>
+          <description>Minister: &quot;Dit helpt&quot; &#8211; ook in &apos;s-Hertogenbosch.</description>
+          <pubDate>Fri, 03 Jul 2026 15:34:00 GMT</pubDate>
+          <guid isPermaLink="false">doc-entities</guid>
+        </item>`,
+      ),
+    );
+    const src = new RijksoverheidSource(config);
+    const out = await src.search({ query: "R&D", top: 20 });
+
+    expect(out.items[0]).toMatchObject({
+      title: "Q&A over de R&D-regeling",
+      url: "https://www.rijksoverheid.nl/zoeken?trefwoord=wbso&type=nieuws",
+      snippet: "Minister: \"Dit helpt\" – ook in 's-Hertogenbosch.",
+    });
   });
 });
 

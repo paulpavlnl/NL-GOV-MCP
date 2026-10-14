@@ -1,5 +1,6 @@
 import type { AppConfig } from "../types.js";
 import { getJson } from "../utils/http.js";
+import { parseRdPoint } from "../utils/geo.js";
 
 const PDOK_LOCATIESERVER = "https://api.pdok.nl/bzk/locatieserver/search/v3_1";
 const BAG_REST = "https://api.bag.kadaster.nl/lvbag/individuelebevragingen/v2";
@@ -73,6 +74,9 @@ export interface BagAddressDetail {
   bouwjaar: number | null;
   pand_status: string | null;
   data_kwaliteit: "hard" | "partial" | "lookup_only";
+  /** RD New (EPSG:28992) point of the address, from the Locatieserver centroide_rd. */
+  rd_x: number | null;
+  rd_y: number | null;
   notes: string[];
 }
 
@@ -178,6 +182,8 @@ export class BagDetailSource {
       pand_ids: normalizePandIds(resolved.doc?.pandid),
       oppervlakte_m2: null,
       gebruiksdoelen: [],
+      rd_x: parseRdPoint(resolved.doc?.centroide_rd)?.[0] ?? null,
+      rd_y: parseRdPoint(resolved.doc?.centroide_rd)?.[1] ?? null,
       verblijfsobject_status: null,
       bouwjaar: null,
       pand_status: null,
