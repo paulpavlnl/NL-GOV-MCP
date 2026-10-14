@@ -406,10 +406,10 @@ Search Dutch cadastral parcels and map objects (BRK Kadastrale Kaart) via PDOK O
 
 ## pdok_kaartbeeld
 
-Map image of an address or RD point, composed from PDOK WMS GetMap layers (WMS 1.3.0, EPSG:28992) and returned as MCP `image` content (PNG, JPEG only to stay under ~1 MB) plus a JSON text block.
+Map image of an address or RD point, composed from PDOK WMS GetMap layers (WMS 1.3.0, EPSG:28992; luchtfoto, kadastrale kaart) and PDOK WMTS tiles (EPSG:28992 tile matrix set; BRT Achtergrondkaart, BGT, which PDOK publishes only as tiles) and returned as MCP `image` content (PNG, JPEG only to stay under ~1 MB) plus a JSON text block.
 
 - **Input**: `adres` (free text, PDOK Locatieserver) or `rd_x` + `rd_y` (EPSG:28992); `straal_m` (default 60, max 500), `lagen` (`luchtfoto`, `kadastrale_kaart`, `bgt`, `brt`; default `["luchtfoto","kadastrale_kaart"]`), `breedte`/`hoogte` (default 800, max 1600), `markering` (default `true`).
-- **Output**: image first, then `summary`, one record (`bbox`, `rd_x`/`rd_y`, size, `mime_type`, `bytes`, per-layer status and GetMap URL, `bronvermelding`), `provenance` with every GetMap URL in `query_params` and `access_note` with the attribution "© Kadaster / PDOK, Beeldmateriaal.nl" and any failed layer.
+- **Output**: image first, then `summary`, one record (`bbox`, `rd_x`/`rd_y`, size, `mime_type`, `bytes`, per-layer status and GetMap URL (WMTS: the first tile URL, with `TILEMATRIX` and the tile range in `params`), `bronvermelding`), `provenance` with every GetMap URL in `query_params` and `access_note` with the attribution "© Kadaster / PDOK, Beeldmateriaal.nl" and any failed layer.
 - **Errors**: a failed layer is left out and named in `access_note`; no layer at all is an `http_error` without image; an unknown address or a point outside the Netherlands is an error with `suggestion`.
 - **Example**: `{ "adres": "Visstraat 19, 3311 KX Dordrecht" }` or `{ "rd_x": 105255.6, "rd_y": 425245.7, "straal_m": 40, "lagen": ["bgt", "kadastrale_kaart"] }`.
 

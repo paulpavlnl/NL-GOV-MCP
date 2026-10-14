@@ -12,6 +12,11 @@ import {
   pickLayerName,
   rdToPixel,
   KAARTBEELD_ATTRIBUTION,
+  MAX_TILES,
+  RD_TILES,
+  parseWmtsCapabilities,
+  planTiles,
+  wmtsTileUrl,
 } from "../src/sources/pdok-kaartbeeld.js";
 import { kaartbeeldPayload } from "../src/utils/kaartbeeld-payload.js";
 import { clearHttpCache } from "../src/utils/connector-runtime.js";
@@ -280,5 +285,111 @@ describe("nl_gov_ask: kaartbeeld route", () => {
     const facts: RouteFacts = { q: "luchtfoto van visstraat 19 dordrecht", place: undefined, eu: false, dso: false, kaartbeeld: true, ecli: false, foreignEcli: false, wetArtikel: false, research: undefined, debat: false, algoritme: false, multi: false, multiSources: [], budget: false, rechtspraak: false, rijk: false, oriGemeente: false, policy: undefined, policyMunicipal: false };
     expect(routeChain(facts)[0]).toBe("kaartbeeld");
     expect(routeChain({ ...facts, dso: true }).slice(0, 2)).toEqual(["dso", "kaartbeeld"]);
+  });
+});
+
+const WMTS_CAPS = (layers: string[], base: string, levels = 15) => `<?xml version="1.0" encoding="UTF-8"?>
+<Capabilities xmlns="http://www.opengis.net/wmts/1.0" xmlns:ows="http://www.opengis.net/ows/1.1" version="1.0.0">
+  <Contents>
+    ${layers.map((l) => `<Layer>
+      <ows:Title>${l}</ows:Title>
+      <ows:Identifier>${l}</ows:Identifier>
+      <Style isDefault="true"><ows:Identifier>default</ows:Identifier></Style>
+      <Format>image/png</Format>
+      <TileMatrixSetLink><TileMatrixSet>EPSG:28992</TileMatrixSet></TileMatrixSetLink>
+      <ResourceURL format="image/png" resourceType="tile" template="${base}/${l}/{TileMatrixSet}/{TileMatrix}/{TileCol}/{TileRow}.png"/>
+    </Layer>`).join("\n    ")}
+    <TileMatrixSet>
+      <ows:Identifier>EPSG:3857</ows:Identifier>
+      <TileMatrix><ows:Identifier>00</ows:Identifier></TileMatrix>
+    </TileMatrixSet>
+    <TileMatrixSet>
+      <ows:Identifier>EPSG:28992</ows:Identifier>
+      ${Array.from({ length: levels }, (_, i) => `<TileMatrix><ows:Identifier>${String(i).padStart(2, "0")}</ows:Identifier><ScaleDenominator>1</ScaleDenominator></TileMatrix>`).join("")}
+    </TileMatrixSet>
+  </Contents>
+</Capabilities>`;
+
+describe("pdok_kaartbeeld: WMTS tiles (BRT, BGT)", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    clearHttpCache();
+    clearKaartbeeldCapabilities();
+  });
+
+  it("reads layers, their tile template and the EPSG:28992 levels from WMTS GetCapabilities", () => {
+    const caps = parseWmtsCapabilities(WMTS_CAPS(["standaard", "grijs"], "https://service.pdok.nl/brt/achtergrondkaart/wmts/v2_0"));
+    expect(caps.layers).toEqual(["standaard", "grijs"]);
+    expect(caps.templates.standaard).toBe("https://service.pdok.nl/brt/achtergrondkaart/wmts/v2_0/standaard/{TileMatrixSet}/{TileMatrix}/{TileCol}/{TileRow}.png");
+    expect(caps.maxZoom).toBe(14);
+    expect(caps.matrixIds[3]).toBe("03");
+    expect(wmtsTileUrl(caps.templates.standaard, caps.matrixIds[14], 7, 9)).toBe("https://service.pdok.nl/brt/achtergrondkaart/wmts/v2_0/standaard/EPSG:28992/14/7/9.png");
+  });
+
+  it("picks the level just sharper than asked, within the service's levels, and puts the bbox in the mosaic", () => {
+    const bbox = kaartBbox(VISSTRAAT, 60, 800, 800);
+    const plan = planTiles(bbox, 800, 16);
+    expect(plan.zoom).toBe(15); // 0.105 m/px for the 0.15 m/px asked
+    expect(plan.res).toBeCloseTo(3440.64 / 2 ** 15, 9);
+    const span = 256 * plan.res;
+    // The mosaic's top-left corner plus the crop offset is the bbox's top-left corner.
+    expect(RD_TILES.originX + plan.colMin * span + plan.crop.left * plan.res).toBeCloseTo(bbox[0], 0);
+    expect(RD_TILES.originY - plan.rowMin * span - plan.crop.top * plan.res).toBeCloseTo(bbox[3], 0);
+    expect(plan.crop.width).toBe(Math.round(120 / plan.res));
+    expect(planTiles(bbox, 800, 14).zoom).toBe(14);
+  });
+
+  it("takes a coarser level rather than more than MAX_TILES tiles", () => {
+    const bbox = kaartBbox(VISSTRAAT, 500, 1600, 1600);
+    const plan = planTiles(bbox, 1600, 16);
+    expect((plan.colMax - plan.colMin + 1) * (plan.rowMax - plan.rowMin + 1)).toBeLessThanOrEqual(MAX_TILES);
+  });
+
+  it("stitches the tiles and cuts them to the bbox: the tile under the point lands in the image centre", async () => {
+    const base = "https://service.pdok.nl/lv/bgt/wmts/v1_0";
+    const bbox = kaartBbox(VISSTRAAT, 60, 400, 400);
+    const plan = planTiles(bbox, 400, 16);
+    const span = 256 * plan.res;
+    const pointCol = Math.floor((VISSTRAAT[0] - RD_TILES.originX) / span);
+    const pointRow = Math.floor((RD_TILES.originY - VISSTRAAT[1]) / span);
+    const red = await solid(256, 256, { r: 220, g: 0, b: 0 }, "png");
+    const grey = await solid(256, 256, { r: 200, g: 200, b: 200 }, "png");
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = new URL(String(input));
+      if (url.searchParams.get("REQUEST") === "GetCapabilities") return binary(WMTS_CAPS(["standaardvisualisatie"], base, 17), "text/xml");
+      const m = /\/standaardvisualisatie\/EPSG:28992\/(\d+)\/(\d+)\/(\d+)\.png$/.exec(url.pathname);
+      if (!m) return binary("", "text/plain", 404);
+      return binary(Number(m[2]) === pointCol && Number(m[3]) === pointRow ? red : grey, "image/png");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const out = await new PdokKaartbeeldSource(config).kaartbeeld({ rd_x: VISSTRAAT[0], rd_y: VISSTRAAT[1], lagen: ["bgt"], breedte: 400, hoogte: 400, markering: false });
+
+    expect(out.lagen[0]).toMatchObject({ laag: "bgt", status: "ok", layer_name: "standaardvisualisatie" });
+    expect(plan.zoom).toBe(14); // 0.105 m/px is not needed for 0.3 m/px
+    expect(out.lagen[0].params.TILEMATRIX).toBe("14");
+    expect(out.lagen[0].getmap_url).toMatch(/\/lv\/bgt\/wmts\/v1_0\/standaardvisualisatie\/EPSG:28992\/14\/\d+\/\d+\.png$/);
+    const [r, g] = await pixel(out.image!, 200, 200);
+    expect(r).toBeGreaterThan(180);
+    expect(g).toBeLessThan(60);
+    const tileCount = (plan.colMax - plan.colMin + 1) * (plan.rowMax - plan.rowMin + 1);
+    expect(fetchMock.mock.calls.filter((c) => String((c as unknown[])[0]).endsWith(".png"))).toHaveLength(tileCount);
+  });
+
+  it("tries the next coarser level once when the deepest has no tiles", async () => {
+    const tile = await solid(256, 256, { r: 240, g: 240, b: 200 }, "png");
+    vi.stubGlobal("fetch", vi.fn(async (input: unknown) => {
+      const url = new URL(String(input));
+      if (url.searchParams.get("REQUEST") === "GetCapabilities") return binary("unavailable", "text/plain", 404);
+      return /\/EPSG:28992\/14\//.test(url.pathname) ? binary("not found", "text/plain", 404) : binary(tile, "image/png");
+    }));
+
+    const out = await new PdokKaartbeeldSource(config).kaartbeeld({ rd_x: VISSTRAAT[0], rd_y: VISSTRAAT[1], lagen: ["brt"], breedte: 300, hoogte: 300 });
+
+    expect(out.lagen[0]).toMatchObject({ laag: "brt", status: "ok", layer_name: "standaard" });
+    expect(out.lagen[0].params.TILEMATRIX).toBe("13");
+    expect(out.lagen[0].getmap_url).toContain("https://service.pdok.nl/brt/achtergrondkaart/wmts/v2_0/standaard/EPSG:28992/13/");
+    expect(out.image).toBeDefined();
   });
 });
