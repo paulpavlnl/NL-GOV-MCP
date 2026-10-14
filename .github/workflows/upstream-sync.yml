@@ -1,0 +1,130 @@
+name: Upstream sync (WAINUTAI)
+
+# Signals new work in the original repo (WAINUTAI/NL-GOV-MCP) and prepares it
+# for this fork: once a week (and on demand) it merges upstream main into the
+# branch `upstream-sync`, runs type-check, build and tests, and opens or
+# updates a pull request listing the new upstream commits. When the merge
+# conflicts with this fork's own changes, it opens an issue instead. Nothing
+# reaches main without merging that pull request.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+env:
+  UPSTREAM: https://github.com/WAINUTAI/NL-GOV-MCP.git
+  BRANCH: upstream-sync
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Fetch upstream
+        id: fetch
+        run: |
+          git remote add upstream "$UPSTREAM"
+          git fetch --quiet upstream main
+          count=$(git rev-list --count HEAD..upstream/main)
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          git log --no-merges --format='- %s (%h, %as)' HEAD..upstream/main > /tmp/commits.md
+          echo "Nieuwe upstream-commits: $count"
+
+      - name: Merge upstream into ${{ env.BRANCH }}
+        id: merge
+        if: steps.fetch.outputs.count != '0'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          if git merge --no-edit upstream/main; then
+            echo "conflict=false" >> "$GITHUB_OUTPUT"
+          else
+            git diff --name-only --diff-filter=U > /tmp/conflicts.txt
+            git merge --abort
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Node
+        if: steps.merge.outputs.conflict == 'false'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.x"
+          cache: npm
+
+      - name: Type-check, build and test
+        id: test
+        if: steps.merge.outputs.conflict == 'false'
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          { npm ci && npm run check && npm run build && npm test; } 2>&1 | tail -n 60 > /tmp/test.log
+
+      - name: Push branch and open or update pull request
+        if: steps.merge.outputs.conflict == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TEST_OUTCOME: ${{ steps.test.outcome }}
+          COUNT: ${{ steps.fetch.outputs.count }}
+        run: |
+          git push --force origin "$BRANCH"
+          if [ "$TEST_OUTCOME" = "success" ]; then
+            status="Type-check, build en tests: **geslaagd**."
+          else
+            status="Type-check, build of tests: **mislukt**. Laatste regels:"$'\n\n```\n'"$(cat /tmp/test.log)"$'\n```'
+          fi
+          {
+            echo "WAINUTAI/NL-GOV-MCP heeft $COUNT nieuwe commit(s) die nog niet in deze fork staan. Deze PR voegt ze samen met main; de merge gaf geen conflicten."
+            echo
+            echo "$status"
+            echo
+            echo "## Nieuwe upstream-commits"
+            cat /tmp/commits.md
+            echo
+            echo "Na het mergen deployt Render automatisch."
+          } > /tmp/body.md
+          title="Upstream: $COUNT nieuwe commit(s) van WAINUTAI"
+          pr=$(gh pr list --head "$BRANCH" --base main --state open --json number --jq '.[0].number')
+          if [ -n "$pr" ]; then
+            gh pr edit "$pr" --title "$title" --body-file /tmp/body.md
+          else
+            gh pr create --head "$BRANCH" --base main --title "$title" --body-file /tmp/body.md
+          fi
+
+      - name: Open or update issue on merge conflict
+        if: steps.merge.outputs.conflict == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COUNT: ${{ steps.fetch.outputs.count }}
+        run: |
+          {
+            echo "WAINUTAI/NL-GOV-MCP heeft $COUNT nieuwe commit(s), maar die botsen met wijzigingen in deze fork. Ze moeten met de hand worden samengevoegd."
+            echo
+            echo "## Bestanden met conflicten"
+            sed 's/^/- /' /tmp/conflicts.txt
+            echo
+            echo "## Nieuwe upstream-commits"
+            cat /tmp/commits.md
+          } > /tmp/body.md
+          title="Upstream-wijzigingen met conflicten ($COUNT commits)"
+          issue=$(gh issue list --state open --search "Upstream-wijzigingen met conflicten in:title" --json number --jq '.[0].number')
+          if [ -n "$issue" ]; then
+            gh issue edit "$issue" --title "$title" --body-file /tmp/body.md
+          else
+            gh issue create --title "$title" --body-file /tmp/body.md
+          fi
