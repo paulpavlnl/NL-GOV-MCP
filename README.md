@@ -279,6 +279,12 @@ Build the project, then add an entry to your Claude Desktop config.
 
 Restart Claude Desktop after saving.
 
+### Updating a local install
+
+`npm run update-local` (on Windows: double-click `update-lokaal.cmd` in the repo folder) updates the local servers on that machine in one go: this repo and, when it sits in the same parent folder, `verwijzingscontrole`. Per repo it switches to `main`, pulls from GitHub (fast-forward only), runs `npm install` when `package.json` changed and rebuilds when code changed. If npm fails it puts the previous version back. It leaves a repo alone when it has local changes to tracked files. Restart Claude afterwards; close Claude first when dependencies changed, because on Windows a running server keeps sharp's native file locked.
+
+A weekly GitHub Action (`upstream-sync.yml`) merges new work from WAINUTAI/NL-GOV-MCP into the branch `upstream-sync` and opens a pull request with the test results, or an issue when it conflicts with this fork.
+
 ### Environment variables
 
 Keys can come from the client (the `env` block in `claude_desktop_config.json`, Render's environment) or from a `.env` file in the server's own folder (next to `package.json`). The server always reads that `.env`, also when the client starts it from another working directory, and **its values override what the client passes in**. For a local install that is the reliable place for keys: the Claude desktop app rewrites `claude_desktop_config.json` while it runs, so a key changed there can silently come back. `.env` is in `.gitignore`.
