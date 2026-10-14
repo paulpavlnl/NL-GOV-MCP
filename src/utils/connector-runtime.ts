@@ -27,6 +27,8 @@ const CONNECTOR_CATEGORY: Record<string, ConnectorCategory> = {
   rijksoverheid: "semi_live",
   data_overheid: "semi_live",
   pdok_bag: "semi_live",
+  // PDOK WMS GetCapabilities and GetMap for pdok_kaartbeeld (GetMap images are never cached).
+  pdok_wms: "static",
   data_europa: "semi_live",
 
   luchtmeetnet: "live",
