@@ -30,7 +30,7 @@ Examples:
 
 `NL-GOV-MCP` actively retrieves and normalizes data across many sources, can combine cross-source results, and returns a consistent MCP response contract ready for assistants and automations.
 
-## Sources (50 connectors, 90 tools)
+## Sources (50 connectors, 90 tools upstream; 106 with this fork's additions)
 
 | Source | What it covers |
 |---|---|
@@ -84,6 +84,28 @@ Examples:
 | WODC | Research reports of the Wetenschappelijk Onderzoek- en Datacentrum (Justitie en Veiligheid) since 1974: search in metadata and full text, filter by date, series, project number or author; per report its files and text (keyless DSpace REST API) |
 | Algemene Rekenkamer | Audit reports, verantwoordingsonderzoek and letters on rekenkamer.nl (the site's own RSS search; title and teaser, at most 20 per query) |
 | SCP | Rapporten, kerncijfers and Burgerperspectieven of the Sociaal en Cultureel Planbureau on scp.nl (the site's own RSS search; title and teaser, at most 20 per query) |
+
+### Additions in this fork (16 tools)
+
+Legal sources added by this fork (paulpavlnl), kept in their own files under `src/fork/` so upstream syncs stay clean. Details, upstream hooks and tests: [docs/FORK.md](docs/FORK.md).
+
+| Source | Tools | What it covers |
+|---|---|---|
+| EUR-Lex (text) | `eurlex_tekst_get` | Dutch text of a CJEU judgment, AG opinion or EU act by ECLI, CELEX, case number or citation: paragraphs, operative part, articles and recitals, quote check |
+| LiDO (per document) | `lido_relaties` | All LiDO relations of a ruling, law, single article (`wet` + `artikel`), EU act or Staatsblad publication, grouped by type with direction, court and year filters |
+| Woo (open.overheid.nl) | `woo_zoeken`, `woo_document_get`, `woo_index` | Documents published under the Woo: search with DiWoo facets, text of a document, and the Woo-index of a body (where it publishes, followed to its own site) |
+| PUC Open Data | `puc_zoeken`, `puc_document_get` | Implementation policy: SVB beleidsregels, IND werkinstructies, RSJ rulings, NZa beleidsregels; version valid on a date, Juriconnect relations |
+| ACOI Woo-jurisprudentie | `woo_jurisprudentie_zoeken` | Woo/Wob case law per ground for refusal (art. 5.1–5.3 Woo) |
+| ANBI register | `anbi_zoeken` | ANBI status (also cultural ANBI) on a date |
+| Raad van State | `raadvanstate_zoeken` | The Council of State's own search with its filters (field of law, Grand Chamber, AG opinion, overview rulings); all rulings are also on rechtspraak.nl, read them by ECLI |
+| College voor de Rechten van de Mens | `crm_oordelen_zoeken` | Equal-treatment opinions by ground, field, outcome, year or number (not on rechtspraak.nl; not binding) |
+| Onderwijsgeschillen | `onderwijsgeschillen_zoeken` | Rulings of the education dispute committees |
+| De Geschillencommissie | `geschillencommissie_zoeken` | Consumer and trade dispute committees (binding advice or arbitral award) |
+| Raad van Arbitrage in bouwgeschillen | `raad_van_arbitrage_zoeken` | Construction arbitration awards (an arbitration institute, not a court; hardly any on rechtspraak.nl) |
+| MfN Tuchtrecht Updates | `mfn_tuchtrecht_zoeken` | Disciplinary rulings on mediators (MfN register) |
+| All of the above | `geschil_uitspraak_get` | Full text of one ruling from these sites (HTML or PDF) |
+
+**Research and checking.** This server is the research side: it finds and reads sources and their relations. The separate reference checker (`verwijzingscontrole-en-uitbreiding`, tool `verify_legal_reference`) checks every reference that comes out of it: does it exist, is the cited paragraph right, is the quote literal and from the court's own reasoning (not the facts or a party's position), and does it support the claim.
 
 ## Key features
 
@@ -187,7 +209,7 @@ npm run test:live    # integration test suite (live API calls)
 
 ### Transport modes
 
-Three transport modes are supported. All expose the same 90 tools.
+Three transport modes are supported. All expose the same 106 tools.
 
 #### stdio (Claude Desktop, Claude Code)
 
