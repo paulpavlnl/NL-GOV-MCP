@@ -28,4 +28,21 @@ describe("load-env", () => {
     ], { cwd: elsewhere, env: { ...process.env, BAG_API_KEY: "oud-uit-config" } }).toString();
     expect(out).toBe("uit-env-bestand");
   });
+
+  it("fills missing keys from bronsleutels.env in the private sibling repo, without overriding", () => {
+    mkdirSync(join(process.cwd(), "node_modules", ".cache"), { recursive: true });
+    const parent = mkdtempSync(join(process.cwd(), "node_modules", ".cache", "nlgov-sib-"));
+    const root = join(parent, "nl-gov-mcp");
+    mkdirSync(join(root, "src"), { recursive: true });
+    writeFileSync(join(root, "package.json"), '{"type":"module"}');
+    writeFileSync(join(root, ".env"), "CORE_API_KEY=eigen\n");
+    copyFileSync(join(process.cwd(), "src", "load-env.ts"), join(root, "src", "load-env.ts"));
+    mkdirSync(join(parent, "verwijzingscontrole-en-uitbreiding"));
+    writeFileSync(join(parent, "verwijzingscontrole-en-uitbreiding", "bronsleutels.env"), "OPENALEX_API_KEY=uit-prive-repo\nCORE_API_KEY=uit-prive-repo\n");
+    const out = execFileSync(process.execPath, [
+      "--import", import.meta.resolve("tsx"), "--input-type=module", "-e",
+      `await import(${JSON.stringify(join(root, "src", "load-env.ts"))}); process.stdout.write([process.env.OPENALEX_API_KEY, process.env.CORE_API_KEY].join(","))`,
+    ], { cwd: tmpdir(), env: { ...process.env, OPENALEX_API_KEY: "", CORE_API_KEY: "" } }).toString();
+    expect(out).toBe("uit-prive-repo,eigen");
+  });
 });
