@@ -75,11 +75,23 @@ jobs:
           set -o pipefail
           { npm ci && npm run check && npm run build && npm test; } 2>&1 | tail -n 60 > /tmp/test.log
 
+      - name: Check fork hooks (EU module, docs/FORK.md)
+        id: fork
+        if: steps.merge.outputs.conflict == 'false'
+        run: |
+          missing=""
+          grep -q 'registerEuForkTools(server' src/tools.ts || missing="$missing src/tools.ts(registerEuForkTools)"
+          grep -q 'registerNlGovAsk(server, { euTekstResult,' src/tools.ts || missing="$missing src/tools.ts(euTekstResult)"
+          grep -q 'const { euTekstResult } = deps;' src/router/nl-gov-ask.ts || missing="$missing src/router/nl-gov-ask.ts(euTekstResult)"
+          for f in src/fork/eu-tekst.ts src/fork/eu-bron.ts src/fork/eu-tools.ts; do [ -f "$f" ] || missing="$missing $f"; done
+          echo "missing=$missing" >> "$GITHUB_OUTPUT"
+
       - name: Push branch and open or update pull request
         if: steps.merge.outputs.conflict == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
           TEST_OUTCOME: ${{ steps.test.outcome }}
+          FORK_MISSING: ${{ steps.fork.outputs.missing }}
           COUNT: ${{ steps.fetch.outputs.count }}
         run: |
           git push --force origin "$BRANCH"
@@ -93,6 +105,10 @@ jobs:
             echo
             echo "$status"
             echo
+            if [ -n "$FORK_MISSING" ]; then
+              echo "**Let op: koppelingen van de eigen EU-module ontbreken na de merge:**$FORK_MISSING. Zet ze terug volgens docs/FORK.md voordat je merget."
+              echo
+            fi
             echo "## Nieuwe upstream-commits"
             cat /tmp/commits.md
             echo
