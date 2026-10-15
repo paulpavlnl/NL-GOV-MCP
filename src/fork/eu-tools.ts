@@ -10,7 +10,10 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AppConfig, MCPRecord, ToolResult } from "../types.js";
 import type { LidoSource } from "../sources/lido.js";
 import { errorResponse, mapSourceError, nowIso, successResponse, toMcpToolPayload } from "../utils/response.js";
-import { installLidoArtikelFallback } from "./lido-artikel.js";
+import { installLidoArtikelFallback, lidoObjectFromArtikel } from "./lido-artikel.js";
+import { groepeerPerType, lidoLookups, lidoRelaties } from "./lido-relaties.js";
+import { WettenBwbSource } from "../sources/wetten-bwb.js";
+import { BwbArtikelSource } from "../sources/bwb-artikel.js";
 import { CELLAR_CELEX, CELLAR_SPARQL, EURLEX_NL, EuTekstSource, type EuMetadata, type EuTekst } from "./eu-bron.js";
 import {
   analyseUitspraak,
@@ -244,5 +247,100 @@ export function registerEuForkTools(server: McpServer, deps: EuForkDeps): (args:
     },
     annotations: deps.TOOL_ANNOTATIONS,
   }, async (args) => toMcpToolPayload(await result(args)));
+  registerLidoRelaties(server, deps);
   return result;
+}
+
+/**
+ * lido_relaties: every relation LiDO holds for any kind of government document,
+ * through LiDO's services (src/fork/lido-relaties.ts), grouped per document type
+ * and filterable on type, issuing body and year.
+ */
+function registerLidoRelaties(server: McpServer, deps: EuForkDeps): void {
+  const wettenBwb = new WettenBwbSource(deps.config);
+  const bwbArtikel = new BwbArtikelSource(deps.config);
+
+  /** An article's LiDO object from the BWB toestand (get-id does not know "6:162" BW or "3:4" Awb). */
+  async function artikelObject(id: string | undefined, wet: string | undefined, artikel: string): Promise<{ object: string; regeling: string } | { error: string }> {
+    let bwbId = id && /^BWBR\d{7}$/i.test(id.trim()) ? id.trim().toUpperCase() : undefined;
+    let regeling = bwbId ?? "";
+    if (!bwbId) {
+      if (!wet) return { error: "Geef bij een artikel ook de wet (wet: 'BW', 'Awb', 'Wet op de ondernemingsraden') of het BWB-id (id: 'BWBR0005537')." };
+      const bw = /^(?:bw|burgerlijk\s+wetboek)$/i.test(wet.trim()) ? artikel.match(/^(\d+[a-z]?):/i) : null;
+      const r = await wettenBwb.tekst({ wet: bw ? `BW boek ${bw[1]}` : wet, artikel, max_chars: 500 });
+      if (r.kind !== "tekst") return { error: `'${wet}' wijst niet eenduidig naar één regeling (${r.candidates.slice(0, 5).map((c) => `${c.title} [${c.identifier}]`).join("; ")}); geef het BWB-id.` };
+      bwbId = r.regeling.identifier;
+      regeling = r.doc.citeertitel ?? r.regeling.title ?? bwbId;
+    }
+    const a = await bwbArtikel.getArtikel({ bwbId, artikel });
+    if (a.items.length !== 1) return { error: a.items.length ? `Artikel ${artikel} komt meer dan eens voor in ${bwbId}; geef het BWB-id van het juiste boek of deel.` : `Artikel ${artikel} niet gevonden in ${regeling} (${bwbId}).` };
+    const object = lidoObjectFromArtikel(a.items[0]);
+    return object ? { object, regeling: `${a.items[0].titel_regeling ?? regeling}, artikel ${a.items[0].artikel}` } : { error: `Geen LiDO-kenmerk (label-id) voor artikel ${artikel} in ${bwbId}.` };
+  }
+
+  server.registerTool("lido_relaties", {
+    description:
+      "Every relation LiDO (Linked Data Overheid) holds for one government document, of any kind: a ruling (ECLI:NL or ECLI:EU), a law or regulation (BWBR: wet, AMvB, ministeriële regeling, beleidsregel, verdrag), one article (id or wet plus artikel: wet 'BW' artikel '6:162', wet 'Awb' artikel '3:4'), a local regulation (CVDR), EU legislation (CELEX) or a Staatsblad/Staatscourant publication (stb-2018-401). " +
+      "Use it to find the rulings and regulations that cite a provision or ruling (direction 'inkomend') and what it cites itself ('uitgaand'). Returns counts per document type, a breakdown per issuing body and year, and the documents grouped per type, newest first. " +
+      "Filters: type ('Jurisprudentie', 'Wet', 'Amvb', 'Ministeriële-regeling', 'BWB Beleidsregel', 'Verdrag', ...), instantie (an issuing body as listed in per_instantie, e.g. 'Hoge Raad') and jaar ('2024'). For the leading case law on an article: type 'Jurisprudentie' with instantie the highest court of the field.",
+    inputSchema: {
+      id: z.string().max(300).optional().describe("ECLI, BWBR, CVDR, CELEX, stb-/stcrt-publication or LiDO URI. With artikel: the BWBR of the law."),
+      wet: z.string().max(200).optional().describe("Law name or abbreviation for an article ('BW', 'Awb', 'Sr', 'Wet op de ondernemingsraden'), instead of id."),
+      artikel: z.string().max(60).optional().describe("Article number: '6:162' (BW, with book), '3:4' (Awb), '7:658', '350'."),
+      type: z.string().max(80).optional(),
+      instantie: z.string().max(120).optional(),
+      jaar: z.string().regex(/^\d{4}$/).optional(),
+      max: z.number().int().min(1).max(500).default(100).describe("Max documents listed (counts always cover everything)."),
+    },
+    annotations: deps.TOOL_ANNOTATIONS,
+  }, async ({ id, wet, artikel, type, instantie, jaar, max }) => {
+    const label = [id, wet, artikel ? `artikel ${artikel}` : undefined].filter(Boolean).join(" ") || "(leeg)";
+    const params: Record<string, string> = Object.fromEntries(Object.entries({ id, wet, artikel, type, instantie, jaar, max: String(max) }).filter(([, v]) => v)) as Record<string, string>;
+    try {
+      let lidoObject: string | null = null;
+      let naam: string | undefined;
+      if (artikel) {
+        const a = await artikelObject(id, wet, artikel);
+        if ("error" in a) return toMcpToolPayload(errorResponse({ error: "unexpected", message: a.error, suggestion: "Zoek het BWB-id met wetten_bwb_search." }));
+        lidoObject = a.object;
+        naam = a.regeling;
+      } else if (!id || !lidoLookups(id).length) {
+        return toMcpToolPayload(errorResponse({ error: "unexpected", message: `Geen LiDO-identificatie in '${label.slice(0, 100)}'.`, suggestion: "Geef id (ECLI, BWBR, CVDR, CELEX of stb-2018-401), of wet plus artikel." }));
+      }
+      const r = await lidoRelaties(id ?? "", { type, instantie, jaar, max, lidoObject });
+      const prov = { tool: "lido_relaties", endpoint: r.endpoint, query_params: params, timestamp: nowIso(), returned_results: r.items.length, total_results: r.totaalMetFilter ?? r.totaal ?? 0 };
+      if (!r.bekend) return toMcpToolPayload(successResponse({ summary: `${label}: niet bekend in LiDO`, records: [], provenance: prov, access_note: `${r.opmerking ?? ""}${r.geprobeerd ? ` Geprobeerd: ${r.geprobeerd.join(", ")}.` : ""}` }));
+      const shown = r.filter ? r.totaalMetFilter : r.totaal;
+      const data = {
+        identifier: label,
+        ...(naam ? { regeling: naam } : {}),
+        lido_id: r.lidoId,
+        titel: r.titel,
+        portal_url: r.portalUrl,
+        totaal: r.totaal,
+        per_type: r.perType,
+        ...(r.filter ? { filter: r.filter, totaal_met_filter: r.totaalMetFilter } : {}),
+        per_instantie: r.perInstantie?.slice(0, 20),
+        per_jaar: r.perJaar?.slice(0, 15),
+        getoond: r.items.length,
+        volledig: r.volledig,
+        documenten: groepeerPerType(r.items),
+        ...(r.rechtspraak ? { rechtspraak_nieuwste: groepeerPerType(r.rechtspraak).Jurisprudentie ?? [] } : {}),
+      };
+      return toMcpToolPayload(successResponse({
+        summary: `${naam ?? label}: ${r.totaal} LiDO-relaties${r.filter ? `, ${shown ?? "?"} met filter ${Object.values(r.filter).join(", ")}` : ""}; ${r.items.length} getoond`,
+        records: [{ source_name: "lido", title: `LiDO-relaties: ${naam ?? r.titel ?? label}`, canonical_url: r.portalUrl ?? "https://linkeddata.overheid.nl", data, snippet: r.perType?.slice(0, 5).map((t) => `${t.type}: ${t.aantal}`).join(", ") }],
+        provenance: prov,
+        access_note:
+          "Bron: LiDO-services (get-aantal-per-informatietype, get-links) van KOOP, CC0. richting: 'inkomend' = dat document verwijst naar het opgevraagde, 'uitgaand' = het opgevraagde verwijst ernaar. " +
+          "Verwijzingen zijn grotendeels door de computer herkend ('Door computer herkende referentie'): een relatie zegt dát een document het noemt, niet hoe; open het document voor de inhoud. " +
+          (r.volledig === false ? `Niet alles getoond: verhoog max (tot 500) of filter op type, instantie of jaar. ` : "") +
+          "per_instantie en per_jaar tellen alle relaties (zonder het eigen filter); de Hoge Raad heet daar 'Hoge Raad der Nederlanden', A-G-conclusies 'Parket bij de Hoge Raad'. " +
+          (r.rechtspraak ? "rechtspraak_nieuwste: de nieuwste uitspraken apart, omdat de gemengde lijst met wetten en regelingen kan beginnen. " : "") +
+          (/^BWB[RV]\d{7}$/i.test(id ?? "") && !artikel ? "Bij een hele wet koppelt LiDO weinig: de relaties hangen aan de artikelen; vraag een artikel op (wet + artikel). " : ""),
+      }));
+    } catch (e) {
+      return toMcpToolPayload(mapSourceError(e, "LiDO", "https://linkeddata.overheid.nl"));
+    }
+  });
 }
