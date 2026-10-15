@@ -7,7 +7,7 @@
  * so woo_index follows those links: list APIs, HTML pages and the Staatscourant/
  * Gemeenteblad searches the index points to.
  */
-import { getJson, getText, postJson } from "../utils/http.js";
+import { getJson, getText } from "../utils/http.js";
 import { extractSruRecords, parseXml } from "../utils/xml-parser.js";
 
 export const ROO_API = "https://api-organisaties.overheid.nl/v1/overheidsorganisaties";
@@ -53,7 +53,8 @@ const clean = (s: string) => decode(s.replace(/<[^>]+>/g, " ")).replace(/\s+/g, 
  */
 export function extractLinks(html: string, pageUrl: string): WooLink[] {
   const base = new URL(pageUrl);
-  const section = base.pathname.replace(/[^/]*$/, "").replace(/[^/]+\/$/, "");
+  // The page's own folder: /…/Wet_open_overheid/ for /…/Wet_open_overheid/Afgehandelde_Woo_verzoeken.
+  const section = base.pathname.replace(/[^/]*$/, "");
   const out = new Map<string, WooLink>();
   const add = (href: string, label: string) => {
     let u: URL;
@@ -149,9 +150,54 @@ type Fetchers = {
   text: (url: string) => Promise<string>;
   postJson: (url: string, body: unknown) => Promise<unknown>;
 };
+const SITE_MAX_BYTES = 5 * 1024 * 1024;
+const UA = "Mozilla/5.0 (compatible; NL-GOV-MCP; +https://github.com/paulpavlnl/NL-GOV-MCP)";
+
+/**
+ * Fetch from a body's own website. Redirects are followed by hand: every hop must be a public
+ * address (no redirect into an internal network), and a Location with stray spaces, which
+ * Node's fetch rejects (uwv.nl sends one), still works. One retry on a network error or 5xx.
+ */
+export async function siteFetch(url: string, init: { method?: "GET" | "POST"; body?: string; accept: string; contentType?: string }): Promise<string> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      let current = url;
+      let method = init.method ?? "GET";
+      for (let hop = 0; hop <= 5; hop++) {
+        if (!isVeiligeUrl(current)) throw new Error(`Geen openbaar webadres: ${current.slice(0, 120)}`);
+        const res = await fetch(current, {
+          method,
+          redirect: "manual",
+          headers: { "User-Agent": UA, Accept: init.accept, ...(method === "POST" && init.contentType ? { "Content-Type": init.contentType } : {}) },
+          ...(method === "POST" ? { body: init.body } : {}),
+          signal: AbortSignal.timeout(TIMEOUT_MS),
+        });
+        if (res.status >= 300 && res.status < 400 && res.headers.get("location")) {
+          current = new URL(res.headers.get("location")!.trim(), current).toString();
+          if (res.status === 303 || ((res.status === 301 || res.status === 302) && method === "POST")) method = "GET";
+          continue;
+        }
+        if (res.status >= 500) throw new Error(`HTTP ${res.status} van ${new URL(current).hostname}`);
+        if (!res.ok) throw Object.assign(new Error(`HTTP ${res.status} van ${new URL(current).hostname}`), { definitief: true });
+        const buf = await res.arrayBuffer();
+        if (buf.byteLength > SITE_MAX_BYTES) throw Object.assign(new Error("Pagina te groot"), { definitief: true });
+        return new TextDecoder().decode(buf);
+      }
+      throw Object.assign(new Error("Te veel doorverwijzingen"), { definitief: true });
+    } catch (e) {
+      lastError = e;
+      if ((e as { definitief?: boolean }).definitief) break;
+    }
+  }
+  throw lastError;
+}
+
 export const defaultFetchers: Fetchers = {
-  text: async (url) => (await getText(url, { connector: SITE_CONNECTOR, timeoutMs: TIMEOUT_MS, retries: 1, headers: { Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" } })).data,
-  postJson: async (url, body) => (await postJson<unknown>(url, body, { connector: SITE_CONNECTOR, timeoutMs: TIMEOUT_MS, retries: 1, headers: { Accept: "application/json" } })).data,
+  text: (url) => (/^https:\/\/repository\.overheid\.nl\//.test(url)
+    ? getText(url, { connector: SITE_CONNECTOR, timeoutMs: TIMEOUT_MS, retries: 1, headers: { Accept: "application/xml" } }).then((r) => r.data)
+    : siteFetch(url, { accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" })),
+  postJson: async (url, body) => JSON.parse(await siteFetch(url, { method: "POST", body: JSON.stringify(body), accept: "application/json", contentType: "application/json" })),
 };
 
 /** Follow one location of the index and list what it holds (filtered on the search term). */

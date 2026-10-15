@@ -10,7 +10,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer } from "../src/server.js";
 import { clearHttpCache } from "../src/utils/connector-runtime.js";
 import { wooDatum, wooDocumentId, wooPassages, wooRecords, wooZoekUrl, wooOrganisatieNamen } from "../src/fork/woo.js";
-import { bekendmakingenCql, extractLinks, isVeiligeUrl, listEndpoints, matchesZoekterm, parseListPage, sruItems, volgLocatie } from "../src/fork/woo-index.js";
+import { bekendmakingenCql, extractLinks, isVeiligeUrl, listEndpoints, matchesZoekterm, parseListPage, siteFetch, sruItems, volgLocatie } from "../src/fork/woo-index.js";
 import { groepeerPerType, lidoRelaties, parseJci, schoneTitel, type LidoDocument } from "../src/fork/lido-relaties.js";
 import { htmlResponse, jsonResponse, xmlResponse } from "./helpers/config.js";
 
@@ -81,6 +81,17 @@ describe("woo_index", () => {
   it("only follows public web addresses", () => {
     expect(isVeiligeUrl("https://www.uwv.nl/x")).toBe(true);
     for (const u of ["http://localhost/x", "http://127.0.0.1/", "http://[::1]/", "http://169.254.169.254/latest", "file:///etc/passwd", "http://intranet/", "http://svc.internal/", "https://u:p@www.uwv.nl/"]) expect(isVeiligeUrl(u)).toBe(false);
+  });
+
+  it("follows redirects by hand: stray spaces in Location work, a hop to an internal host is refused", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const href = String(input);
+      if (href.endsWith("/oud")) return new Response(null, { status: 301, headers: { Location: "/nieuw " } });
+      if (href.endsWith("/lek")) return new Response(null, { status: 302, headers: { Location: "http://169.254.169.254/latest/meta-data" } });
+      return htmlResponse("<p>ok</p>");
+    }));
+    await expect(siteFetch("https://www.uwv.nl/oud", { accept: "text/html" })).resolves.toBe("<p>ok</p>");
+    await expect(siteFetch("https://www.uwv.nl/lek", { accept: "text/html" })).rejects.toThrow(/Geen openbaar webadres/);
   });
 
   it("reads link lists, web-component attachment links and list endpoints", () => {
