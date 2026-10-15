@@ -191,11 +191,12 @@ describe("HTTP transports", () => {
   });
 
   it("closes streamable-http sessions that stay idle past the TTL", async () => {
-    const base = await start("streamable-http", { sessionTtlMs: 100, sweepIntervalMs: 25 });
+    // FORK: ruimere TTL; createServer duurt met de fork-tools ~50 ms, op een trage runner meer.
+    const base = await start("streamable-http", { sessionTtlMs: 1000, sweepIntervalMs: 50 });
     await initialize(base);
     await initialize(base);
     expect(handle!.sessionCount!()).toBe(2);
-    await wait(250);
+    await wait(1600);
     expect(handle!.sessionCount!()).toBe(0);
   });
 
