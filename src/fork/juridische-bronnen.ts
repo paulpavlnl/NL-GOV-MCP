@@ -69,7 +69,8 @@ export const PUC_PORTALEN: Record<string, string> = {
 export function pucZoekUrl(a: { portaal?: string; zoekterm: string; pagina?: number; geldigVandaag?: boolean; sorteer?: "relevantie" | "datum" }): string {
   const term = a.zoekterm.replace(/[^\p{L}\p{N}:.\- ]+/gu, " ").trim().split(/\s+/).map(encodeURIComponent).join("-wt_");
   const parts = [a.portaal ? `/${a.portaal}` : "", "/zoeken/resultaat/q/", term, `/p/${a.pagina ?? 1}`];
-  if (a.geldigVandaag) parts.push("/gdlv/1");
+  // PUC shows only versions valid today by default; "gdlv/1" switches that filter off (verified live: 78 vs 125 hits).
+  if (a.geldigVandaag === false) parts.push("/gdlv/1");
   if (a.sorteer === "datum") parts.push("/s/datumdocument-wt_desc");
   return `${PUC_BASE}${parts.join("")}/`;
 }
@@ -111,13 +112,20 @@ export function parsePucZoek(html: string): { totaal: number | null; treffers: P
 }
 
 export interface PucDocument {
-  id: string; titel: string; tekst: string; versie?: string; geldigheid?: string; documentsoort?: string; organisatie?: string; kenmerk?: string;
+  id: string; titel: string; tekst: string; versie?: string; geldigheid?: string; status?: string; documentsoort?: string; organisatie?: string; kenmerk?: string;
+  versies?: Array<{ versie: number; van: string; tot?: string }>;
   relaties: Array<{ titel: string; url: string; soort: "wet" | "rechtspraak" | "bekendmaking" | "puc" }>;
 }
 
 /** A PUC document page: the text between the title and the metadata block, plus metadata and relations. */
 export function parsePucDocument(html: string, id: string): PucDocument {
-  const titel = inline(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i.exec(html)?.[1] ?? id);
+  // The h1 also holds the version bar: "Geldigheid: 01-04-2026 t/m Versie: 4/4 … versie 3: 03-12-2025 t/m 31-03-2026 … Status: Geldig vandaag".
+  const kop = inline(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i.exec(html)?.[1] ?? id);
+  const titel = kop.split(/\s+Geldigheid:/)[0].trim() || id;
+  const versies = [...kop.matchAll(/versie\s+(\d+):\s*(\d{2}-\d{2}-\d{4})\s*t\/m\s*(\d{2}-\d{2}-\d{4})?/gi)].map((m) => ({ versie: Number(m[1]), van: m[2], ...(m[3] ? { tot: m[3] } : {}) }));
+  const huidig = /Geldigheid:\s*(\d{2}-\d{2}-\d{4})\s*t\/m\s*(\d{2}-\d{2}-\d{4})?\s*Versie:\D*(\d+)\s*\/\s*\d+/i.exec(kop);
+  if (huidig && !versies.some((v) => v.versie === Number(huidig[3]))) versies.unshift({ versie: Number(huidig[3]), van: huidig[1], ...(huidig[2] ? { tot: huidig[2] } : {}) });
+  const status = /Status:\s*(.+)$/i.exec(kop)?.[1]?.trim();
   const h1 = html.search(/<h1\b/i);
   const body = h1 >= 0 ? html.slice(h1) : html;
   const full = htmlNaarTekst(body);
@@ -142,6 +150,8 @@ export function parsePucDocument(html: string, id: string): PucDocument {
   }
   return {
     id, titel, tekst, relaties,
+    ...(versies.length ? { versies: versies.sort((a, b) => b.versie - a.versie) } : {}),
+    ...(status ? { status } : {}),
     ...(get(/Identificatie\s+PUC_\d+_\d+\s+Versie\s+(\d+)/) ? { versie: get(/Identificatie\s+PUC_\d+_\d+\s+Versie\s+(\d+)/) } : {}),
     ...(get(/Geldigheid\s+(van\s+\d{2}-\d{2}-\d{4}\s+tot\s+en\s+met(?:\s+\d{2}-\d{2}-\d{4})?)/) ? { geldigheid: get(/Geldigheid\s+(van\s+\d{2}-\d{2}-\d{4}\s+tot\s+en\s+met(?:\s+\d{2}-\d{2}-\d{4})?)/) } : {}),
     ...(get(/Documentsoort\s+(.+?)\s+(?:Toegangsrechten|Identificatie)/) ? { documentsoort: get(/Documentsoort\s+(.+?)\s+(?:Toegangsrechten|Identificatie)/) } : {}),
@@ -300,7 +310,7 @@ export function registerJuridischeBronnen(server: McpServer, deps: { TOOL_ANNOTA
     inputSchema: {
       zoekterm: z.string().min(2).max(200).describe("Search words, e.g. 'terugvordering dringende reden', 'gezinshereniging inkomenseis'."),
       portaal: z.string().regex(/^[a-z0-9-]{2,30}$/).optional().describe(`Portal: ${Object.entries(PUC_PORTALEN).map(([k, v]) => `'${k}' = ${v}`).join("; ")}. Without: all of PUC.`),
-      alleen_geldig: z.boolean().default(true).describe("Only versions valid today (true) or also older versions (false, for a past peildatum)."),
+      alleen_geldig: z.boolean().default(true).describe("Only versions valid today (true, PUC's default) or also older versions (false, for a past peildatum; then pick the version with puc_document_get)."),
       sorteer: z.enum(["relevantie", "datum"]).default("relevantie"),
       pagina: z.number().int().min(1).max(50).default(1).describe("Result page (20 per page)."),
     },
