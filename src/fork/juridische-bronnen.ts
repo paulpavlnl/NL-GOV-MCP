@@ -237,7 +237,7 @@ export function unzipEersteXml(buf: Uint8Array): Uint8Array {
 }
 
 export function parseAnbiXml(xml: string): { aangemaakt?: string; instellingen: AnbiInstelling[] } {
-  const tag = (blok: string, t: string) => { const m = new RegExp(`<${t}>([\\s\\S]*?)</${t}>`).exec(blok); return m ? decodeEntities(m[1]).trim() || undefined : undefined; };
+  const tag = (blok: string, t: string) => { const m = new RegExp(`<${t}>([\\s\\S]*?)</${t}>`).exec(blok); return m ? decodeEntities(m[1]).replace(/\s+/g, " ").trim() || undefined : undefined; };
   const instellingen: AnbiInstelling[] = [];
   for (const m of xml.matchAll(/<beschikking>([\s\S]*?)<\/beschikking>/g)) {
     const x = m[1];

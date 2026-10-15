@@ -37,7 +37,7 @@ const ACOI_HTML = `<article class="mediamonitor-item" data-filterdata="{&#34;id&
 
 const ANBI_XML = `<?xml version="1.0" encoding="ISO-8859-1"?><publicatieAnbiInstellingen><header><aanmaakDatum>2026-10-12</aanmaakDatum></header>
 <beschikking><dossierNummer>10</dossierNummer><naam>Stichting Muziek &amp; Zorg</naam><vestigingsPlaats>DORDRECHT</vestigingsPlaats><fiscaalNummer>812345678</fiscaalNummer><ingangsDatum>2015-01-01</ingangsDatum><ingangsDatumCultuur>2016-01-01</ingangsDatumCultuur></beschikking>
-<beschikking><dossierNummer>11</dossierNummer><naam>Stichting Oud Goed</naam><vestigingsPlaats>Utrecht</vestigingsPlaats><fiscaalNummer>001234567</fiscaalNummer><ingangsDatum>2008-01-01</ingangsDatum><eindDatum>2020-12-31</eindDatum><intrekkingsDatum>2020-12-31</intrekkingsDatum></beschikking>
+<beschikking><dossierNummer>11</dossierNummer><naam>Stichting   Oud Goed</naam><vestigingsPlaats>Utrecht</vestigingsPlaats><fiscaalNummer>001234567</fiscaalNummer><ingangsDatum>2008-01-01</ingangsDatum><eindDatum>2020-12-31</eindDatum><intrekkingsDatum>2020-12-31</intrekkingsDatum></beschikking>
 </publicatieAnbiInstellingen>`;
 
 /** A minimal zip with one deflated entry. */
@@ -114,6 +114,7 @@ describe("ANBI register", () => {
     const reg = parseAnbiXml(xml);
     expect(reg.aangemaakt).toBe("2026-10-12");
     expect(reg.instellingen[0].naam).toBe("Stichting Muziek & Zorg");
+    expect(reg.instellingen[1].naam).toBe("Stichting Oud Goed");
     expect(zoekAnbi(reg.instellingen, { naam: "muziek zorg", peildatum: "2026-01-01" }, 5).items[0].status).toBe("ANBI op 2026-01-01; culturele ANBI");
     expect(zoekAnbi(reg.instellingen, { rsin: "1234567", peildatum: "2024-06-01" }, 5).items[0].status).toBe("geen ANBI meer (sinds 2020-12-31)");
     expect(zoekAnbi(reg.instellingen, { rsin: "1234567", peildatum: "2019-06-01" }, 5).items[0].status).toBe("ANBI op 2019-06-01");
