@@ -36,7 +36,7 @@ beforeEach(() => {
 
 describe("fork EU module survives upstream merges", () => {
   it("keeps its own files", () => {
-    for (const f of ["src/fork/eu-tekst.ts", "src/fork/eu-bron.ts", "src/fork/eu-tools.ts", "src/fork/lido-artikel.ts", "docs/FORK.md"]) expect(existsSync(new URL(f, root)), f).toBe(true);
+    for (const f of ["src/fork/eu-tekst.ts", "src/fork/eu-bron.ts", "src/fork/eu-tools.ts", "src/fork/lido-artikel.ts", "src/fork/lido-relaties.ts", "docs/FORK.md"]) expect(existsSync(new URL(f, root)), f).toBe(true);
   });
 
   it("keeps the hooks in upstream files", () => {
@@ -55,7 +55,7 @@ describe("fork EU module survives upstream merges", () => {
 
   it("registers eurlex_tekst_get next to the upstream EU tools", async () => {
     const names = await withClient(async (c) => (await c.listTools()).tools.map((t) => t.name));
-    expect(names).toEqual(expect.arrayContaining(["eurlex_tekst_get", "eurlex_document", "eurlex_search", "lido_verwijzingen"]));
+    expect(names).toEqual(expect.arrayContaining(["eurlex_tekst_get", "lido_relaties", "eurlex_document", "eurlex_search", "lido_verwijzingen"]));
   });
 
   it("nl_gov_ask reads an EU ECLI through CELLAR instead of refusing it", async () => {

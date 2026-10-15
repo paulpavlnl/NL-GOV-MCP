@@ -29,3 +29,7 @@ De workflow *Upstream sync (WAINUTAI)* voert de tests uit, dus ook `tests/fork-e
 ## LiDO: artikelen die get-id niet kent (`src/fork/lido-artikel.ts`)
 
 LiDO's get-id vindt geen object voor "6:162" in BW Boek 6 (LiDO kent daar "162") en voor artikelen met hoofdstuknummering zoals "3:4" Awb. `lido_verwijzingen` en `lido_verwijzingen_lijst` gaven daardoor 0 verwijzingen voor de meest geciteerde artikelen. De terugval leest label-id en inwerkingtreding uit de BWB-toestand en bouwt daarmee het LiDO-object. Koppeling in upstream-code: het statische veld `artikelFallback` en het blok in `resolveBwb` van `src/sources/lido.ts` (gemarkeerd `FORK`); geïnstalleerd vanuit `registerEuForkTools`.
+
+## LiDO-relaties van elk soort document (`lido_relaties`, `src/fork/lido-relaties.ts`)
+
+Alle relaties die LiDO heeft voor één overheidsdocument: rechtspraak (ECLI:NL/EU), wet of regeling (BWBR: wet, AMvB, ministeriële regeling, beleidsregel, verdrag), één artikel (`wet` + `artikel`, bijv. BW 6:162, Awb 3:4), EU-wetgeving (CELEX) of Staatsblad/Staatscourant. Via LiDO's services (`get-links`), per documenttype gegroepeerd, met richting, verdeling per instantie en jaar, en filters `type`, `instantie`, `jaar`; zonder typefilter apart de nieuwste rechtspraak. Decentrale regelgeving (CVDR) zit niet in LiDO; de tool zegt dat. Geregistreerd vanuit `registerEuForkTools`, dus zonder extra koppeling in upstream-bestanden.
