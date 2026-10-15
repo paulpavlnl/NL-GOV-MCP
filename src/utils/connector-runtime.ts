@@ -90,6 +90,9 @@ const CONNECTOR_CATEGORY: Record<string, ConnectorCategory> = {
   acoi: "static",
   anbi: "static",
   geschillen: "static",
+  // FORK: AP-documenten (PDF-besluiten) en open vakliteratuur veranderen niet meer na publicatie.
+  ap: "static",
+  literatuur: "static",
   lido: "semi_live",
   // A register organisations publish to themselves, a few entries a day: searched
   // like the API register and NGR catalogues.

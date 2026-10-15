@@ -20,7 +20,8 @@ import { decodeEntities, htmlNaarTekst } from "./juridische-bronnen.js";
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 const TIMEOUT_MS = 30_000;
-export const GESCHIL_HOSTS = ["www.raadvanstate.nl", "oordelen.mensenrechten.nl", "www.onderwijsgeschillen.nl", "www.degeschillencommissie.nl", "www.raadvanarbitrage.info", "www.mfn-tuchtrechtupdates.nl", "wordpress.onderwijsgeschillen.nl"];
+export const GESCHIL_HOSTS = ["www.raadvanstate.nl", "oordelen.mensenrechten.nl", "www.onderwijsgeschillen.nl", "www.degeschillencommissie.nl", "www.raadvanarbitrage.info", "www.mfn-tuchtrechtupdates.nl", "wordpress.onderwijsgeschillen.nl", "www.kifid.nl"];
+export const KIFID_API = "https://www.kifid.nl/api/Search/SearchDecision/";
 const ALGOLIA = { app: "WZZZ9YGZMQ", key: "2c1b53e1dd0676f10fa8a06a7df2c0d1", index: "posts" }; // public search-only key from the site itself
 
 type Fetcher = (url: string, init?: { method?: "GET" | "POST"; body?: string; headers?: Record<string, string> }) => Promise<{ status: number; url: string; text: string; cookies: string[] }>;
@@ -149,6 +150,25 @@ export function documentTekst(html: string): { titel?: string; tekst: string } {
   const titel = inline(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i.exec(html)?.[1] ?? "") || undefined;
   const main = /<main\b[\s\S]*<\/main>/i.exec(html)?.[0] ?? /<article\b[\s\S]*<\/article>/i.exec(html)?.[0] ?? html;
   return { titel, tekst: decodeEntities(htmlNaarTekst(main.replace(/<(nav|header|form|aside)\b[\s\S]*?<\/\1>/gi, " "))) };
+}
+
+/** Kifid: datum als .NET-ticks → JJJJ-MM-DD. */
+export const kifidDatum = (ticks: unknown): string | undefined => { const n = Number(ticks); return n > 6e17 ? new Date((n - 621355968000000000) / 10000).toISOString().slice(0, 10) : undefined; };
+
+/** Kifid-zoekresultaat → items (nummer, aard, instantie, categorie, samenvatting, links, tekst). */
+export function parseKifid(json: unknown) {
+  const lijst = ((json as { decision?: { decisionItemsList?: Array<Record<string, unknown>> } })?.decision?.decisionItemsList) ?? [];
+  return lijst.map((x) => {
+    const titel = String(x.title ?? x.name ?? "").trim();
+    const tekst = String(x.pdfContent ?? "");
+    return {
+      titel, nummer: /(\d{4}-\d{3,4})/.exec(titel)?.[1], instantie: x.authority as string | undefined, categorie: x.category as string | undefined,
+      aard: /bindend/i.test(titel) ? "bindend advies" : /niet[- ]bindend/i.test(titel) || /niet-bindend/i.test(tekst.slice(0, 600)) ? "niet-bindend advies" : /Aard uitspraak\s+([A-Za-z -]+?)\s+(?:Uitkomst|Onderwerp)/.exec(tekst)?.[1]?.toLowerCase(),
+      uitkomst: /Uitkomst\s+(.+?)\s+(?:Bijlage|1\.\s)/.exec(tekst)?.[1]?.slice(0, 120),
+      tegen: x.defendant as string | undefined, datum: kifidDatum(x.date), trefwoorden: String(x.judgementTags ?? "").split(/[;,]/).map((t) => t.trim()).filter(Boolean),
+      samenvatting: inline(String(x.summary ?? "")), url: x.url as string | undefined, pdf: x.statementLink as string | undefined, tekst,
+    };
+  });
 }
 
 export function passages(text: string, term: string, max = 25): string[] {
@@ -319,8 +339,33 @@ export function registerGeschilbeslechting(server: McpServer, deps: { TOOL_ANNOT
     } catch (e) { return toMcpToolPayload(mapSourceError(e, "MfN Tuchtrecht Updates", MFN_BASE)); }
   });
 
+  server.registerTool("kifid_zoeken", {
+    description: "Search rulings of Kifid (Klachteninstituut Financiële Dienstverlening): the Geschillencommissie and the Commissie van Beroep, on complaints about banks, insurers, mortgages, investments, BKR registrations and debt collection. Free text or a ruling number ('2026-1003'), category (Bank, Beleggen, Hypotheek, Verzekeringen, BKR, Kleinzakelijk, Incassodienstverlening), instance and page. Returns number, binding or non-binding, outcome, financial institution, date, summary, PDF and (with tekst=true) the full text or the passages with the search term. Not on rechtspraak.nl.",
+    inputSchema: {
+      zoekterm: z.string().max(200).optional(), categorie: z.enum(["Bank", "Beleggen", "Hypotheek", "Verzekeringen", "BKR", "Kleinzakelijk", "Incassodienstverlening", "Anders"]).optional(),
+      instantie: z.enum(["Geschillencommissie", "Commissie van Beroep"]).optional(), sortering: z.enum(["nieuwste", "relevantie"]).default("nieuwste"),
+      pagina: z.number().int().min(1).max(500).default(1), aantal: z.number().int().min(1).max(25).default(10),
+      tekst: z.boolean().default(false), max_chars: z.number().int().min(1000).max(60_000).default(8_000),
+    },
+    annotations: deps.TOOL_ANNOTATIONS,
+  }, async (a) => {
+    const u = new URL(KIFID_API);
+    for (const [k, v] of Object.entries({ searchTerm: a.zoekterm ?? "", category: a.categorie ?? "", authority: a.instantie ?? "", targetGroup: "", startDate: "0", endDate: "0", page: String(a.pagina), pageSize: String(a.aantal) })) u.searchParams.set(k, v);
+    if (a.sortering === "nieuwste") u.searchParams.set("sort", "newest");
+    try {
+      const r = await f(u.toString(), { headers: { Accept: "application/json" } });
+      const items = parseKifid(JSON.parse(r.text));
+      const records = items.map(({ tekst, ...i }) => {
+        const body = a.tekst ? (a.zoekterm && !/^\d{4}-\d{3,4}$/.test(a.zoekterm.trim()) ? passages(tekst.replace(/\s(?=\d{1,2}\.\d{1,2}\s)/g, "\n"), a.zoekterm).join("\n…\n") || tekst : tekst) : undefined;
+        return rec("kifid.nl", `Kifid ${i.instantie ?? ""} ${i.nummer ?? i.titel}`.replace(/\s+/g, " ").trim(), i.url ?? i.pdf ?? KIFID_API, i.datum, i.samenvatting, { ...i, ...(body !== undefined ? { tekst: body.length > a.max_chars ? `${body.slice(0, a.max_chars)}…` : body } : {}) });
+      });
+      return toMcpToolPayload(successResponse({ summary: `Kifid: ${records.length} uitspraken (pagina ${a.pagina})`, records, provenance: prov("kifid_zoeken", u.toString(), params(a), records.length, records.length),
+        access_note: `Bron: kifid.nl. De Geschillencommissie geeft een bindend of niet-bindend advies (geen rechtspraak); de Commissie van Beroep oordeelt in hoger beroep. Volledige tekst met tekst=true, of de PDF met geschil_uitspraak_get. ${NOTE_ROL}` }));
+    } catch (e) { return toMcpToolPayload(mapSourceError(e, "Kifid", KIFID_API)); }
+  });
+
   server.registerTool("geschil_uitspraak_get", {
-    description: "Read one ruling from these sites: oordelen.mensenrechten.nl, onderwijsgeschillen.nl, degeschillencommissie.nl, raadvanarbitrage.info (PDF), mfn-tuchtrechtupdates.nl (incl. the source PDF). Returns the text, optionally only the passages with a search term. For Raad van State use rechtspraak_get_by_ecli.",
+    description: "Read one ruling from these sites: oordelen.mensenrechten.nl, onderwijsgeschillen.nl, degeschillencommissie.nl, raadvanarbitrage.info (PDF), mfn-tuchtrechtupdates.nl (incl. the source PDF), kifid.nl (PDF). Returns the text, optionally only the passages with a search term. For Raad van State use rechtspraak_get_by_ecli.",
     inputSchema: { url: z.string().url().max(600), zoekterm: z.string().max(120).optional(), max_chars: z.number().int().min(1000).max(100_000).default(20_000) },
     annotations: deps.TOOL_ANNOTATIONS,
   }, async ({ url, zoekterm, max_chars }) => {
