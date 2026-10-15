@@ -190,7 +190,7 @@ export function registerWetsgeschiedenis(server: McpServer, deps: { config: AppC
                 const { data: html } = await getText(k.html ?? k.url, { connector: "officiele_bekendmakingen", timeoutMs: 30_000, maxResponseBytes: 15_000_000 });
                 const tekst = decodeEntities(htmlNaarTekst(html));
                 const p = passagesMet(tekst, re);
-                gelezen.push({ soort: k.soort, vindplaats: vindplaats(k, dossier), datum: k.datum, link: k.url, passages: p.map((x) => ({ tekst: x, pagina: paginaVoor(tekst, x) })), ...(p.length ? {} : { opmerking: `Geen passage met ${a.zoekterm ? `'${a.zoekterm}'` : `artikel ${a.artikel}`} gevonden; het stuk kan het artikel anders noemen (onderdeel van artikel I).` }) });
+                gelezen.push({ soort: k.soort, vindplaats: vindplaats(k, dossier), datum: k.datum, link: k.url, passages: p.map((x) => ({ tekst: x, pagina: paginaVoor(tekst, x) })), ...(p.length ? {} : { opmerking: `Geen passage met ${a.zoekterm ? `'${a.zoekterm}'` : `artikel ${a.artikel}`} gevonden; het stuk kan het artikel anders noemen (onderdeel van artikel I, of de nummering van het wetsvoorstel); zoek dan met zoekterm.` }) });
               } catch (e) { gelezen.push({ soort: k.soort, vindplaats: vindplaats(k, dossier), link: k.url, fout: e instanceof Error ? e.message : String(e) }); }
             }
           }
@@ -200,7 +200,8 @@ export function registerWetsgeschiedenis(server: McpServer, deps: { config: AppC
             staatsblad: w.staatsblad.map((s) => ({ id: s, link: `https://zoek.officielebekendmakingen.nl/${s}.html` })),
             stukken_per_soort: Object.fromEntries([...new Set(eigen.map((k) => k.soort))].map((s) => [s, eigen.filter((k) => k.soort === s).map((k) => ({ vindplaats: vindplaats(k, dossier), datum: k.datum, link: k.url }))])),
             ...(a.passages ? { gelezen } : {}),
-            ...(eigen.length ? {} : { opmerking: `Geen Kamerstukken van dossier ${dossier} in de KOOP-repository (vóór 1995 niet digitaal daar): zoek op ${SGD} met het dossiernummer.` }),
+            ...(!eigen.length ? { opmerking: `Geen Kamerstukken van dossier ${dossier} in de KOOP-repository (vóór 1995 niet digitaal daar): zoek op ${SGD} met het dossiernummer.` }
+              : !eigen.some((k) => k.soort === "memorie van toelichting") ? { opmerking: `De memorie van toelichting van dossier ${dossier} staat niet in de KOOP-repository (stukken van vóór 1995 ontbreken daar): zoek haar op ${SGD} (nr. 3 van het dossier).` } : {}),
           }));
         }
       }
