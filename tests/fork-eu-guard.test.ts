@@ -55,7 +55,7 @@ describe("fork EU module survives upstream merges", () => {
 
   it("registers eurlex_tekst_get next to the upstream EU tools", async () => {
     const names = await withClient(async (c) => (await c.listTools()).tools.map((t) => t.name));
-    expect(names).toEqual(expect.arrayContaining(["eurlex_tekst_get", "lido_relaties", "woo_zoeken", "woo_document_get", "woo_index", "puc_zoeken", "puc_document_get", "woo_jurisprudentie_zoeken", "anbi_zoeken", "eurlex_document", "eurlex_search", "lido_verwijzingen"]));
+    expect(names).toEqual(expect.arrayContaining(["eurlex_tekst_get", "lido_relaties", "woo_zoeken", "woo_document_get", "woo_index", "puc_zoeken", "puc_document_get", "woo_jurisprudentie_zoeken", "anbi_zoeken", "raadvanstate_zoeken", "crm_oordelen_zoeken", "onderwijsgeschillen_zoeken", "geschillencommissie_zoeken", "raad_van_arbitrage_zoeken", "mfn_tuchtrecht_zoeken", "geschil_uitspraak_get", "eurlex_document", "eurlex_search", "lido_verwijzingen"]));
   });
 
   it("nl_gov_ask reads an EU ECLI through CELLAR instead of refusing it", async () => {

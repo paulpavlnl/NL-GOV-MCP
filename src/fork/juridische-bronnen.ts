@@ -20,12 +20,16 @@ import { errorResponse, mapSourceError, nowIso, successResponse, toMcpToolPayloa
 
 // ---------- shared HTML helpers ----------
 
-const ENT: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+const ENT: Record<string, string> = {
+  amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", hellip: "…", ndash: "–", mdash: "—", lsquo: "‘", rsquo: "’", ldquo: "“", rdquo: "”", laquo: "«", raquo: "»", euro: "€", sect: "§", deg: "°", middot: "·", bull: "•", shy: "",
+  ...Object.fromEntries(["a", "e", "i", "o", "u", "A", "E", "I", "O", "U"].flatMap((v) => [["uml", "\u0308"], ["acute", "\u0301"], ["grave", "\u0300"], ["circ", "\u0302"]].map(([n, mark]) => [`${v}${n}`, (v + mark).normalize("NFC")]))),
+  ccedil: "ç", Ccedil: "Ç", ntilde: "ñ", szlig: "ß",
+};
 export function decodeEntities(s: string): string {
   return s
     .replace(/&#(\d+);/g, (_m, n) => String.fromCodePoint(Number(n)))
     .replace(/&#x([0-9a-f]+);/gi, (_m, n) => String.fromCodePoint(parseInt(n, 16)))
-    .replace(/&([a-z]+);/gi, (m, n) => ENT[n.toLowerCase()] ?? m);
+    .replace(/&([a-z]+);/gi, (m, n) => ENT[n] ?? ENT[n.toLowerCase()] ?? m);
 }
 const BLOCK = /<\/?(p|div|h[1-6]|li|ul|ol|tr|table|section|article|blockquote|br|dd|dt|dl|header|footer)\b[^>]*>/gi;
 /** HTML to text with one line per block element. */

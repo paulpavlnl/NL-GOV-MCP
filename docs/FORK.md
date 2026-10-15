@@ -51,3 +51,15 @@ Gevonden bij een scan van data.overheid.nl op bronnen voor juristen die de upstr
 - `anbi_zoeken`: het ANBI-register van de Belastingdienst (open data, `anbi.zip` met XML), 12 uur gecachet; status (ook culturele ANBI) op een peildatum.
 
 Niet gebouwd: het openbaar register van de Huurcommissie (portaal zonder open koppelvlak) en de toevoegingscijfers van de Raad voor Rechtsbijstand (alleen statistiek). Connectorcategorieën `puc`, `acoi`, `anbi` in het FORK-blok van `src/utils/connector-runtime.ts`. Tests: `tests/fork-juridische-bronnen.test.ts`.
+
+## Uitspraken buiten rechtspraak.nl (`src/fork/geschilbeslechting.ts`)
+
+- `raadvanstate_zoeken`: de zoekfunctie van raadvanstate.nl met haar eigen filters (rechtsgebied, proceduresoort zoals grote kamer, conclusie staatsraad A-G en overzichtsuitspraak, type, jaar). Alle uitspraken staan ook op rechtspraak.nl (steekproef oktober 2026: 18/18; per jaar heeft rechtspraak.nl evenveel of meer ECLI:NL:RVS); de tool geeft de ECLI, de tekst lees je via rechtspraak.nl.
+- `crm_oordelen_zoeken`: oordelen van het College voor de Rechten van de Mens (filters discriminatiegrond, terrein, uitkomst, jaar; namen worden op het formulier van de site opgezocht).
+- `onderwijsgeschillen_zoeken`: onderwijsgeschillen.nl via de publieke Algolia-zoeksleutel van de site zelf (commissie, onderwerp, jaar; facetten in de access_note).
+- `geschillencommissie_zoeken`: De Geschillencommissie (commissie, jaar).
+- `raad_van_arbitrage_zoeken`: Raad van Arbitrage in bouwgeschillen, een arbitrage-instituut (geen rechter): zoekformulier met sessiecookie, resultaten met PDF-link. Vrijwel niet op rechtspraak.nl (2025: ca. 9 van 193 vonnissen met ECLI:NL:RVAB).
+- `mfn_tuchtrecht_zoeken`: MfN-register Tuchtrecht Updates (mediators; Tuchtcommissie M-…, College van Beroep B-…, annotaties).
+- `geschil_uitspraak_get`: leest één uitspraak van deze sites (HTML of PDF, bij MfN ook de bron-PDF), optioneel alleen passages met een zoekterm.
+
+Rolverdeling: NL-GOV-MCP vindt en leest; de verwijzingscontroleur (verify_legal_reference) controleert bestaan, r.o., citaat en bewering. Connectorcategorie `geschillen` in het FORK-blok van `src/utils/connector-runtime.ts`. Tests: `tests/fork-geschilbeslechting.test.ts`.
