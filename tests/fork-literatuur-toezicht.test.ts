@@ -6,7 +6,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer } from "../src/server.js";
 import { clearHttpCache } from "../src/utils/connector-runtime.js";
-import { coreWerk, pdfUitPagina, samenvatting, status, werk, werkId, zonderSleutel, zoekUrl } from "../src/fork/literatuur.js";
+import { coreWerk, openaireUrl, openaireWerk, pdfUitPagina, samenvatting, status, werk, werkId, zonderSleutel, zoekUrl } from "../src/fork/literatuur.js";
 import { kifidDatum, parseKifid } from "../src/fork/geschilbeslechting.js";
 import { parseApDocument, parseApLijst } from "../src/fork/toezicht.js";
 import { htmlResponse, jsonResponse } from "./helpers/config.js";
@@ -65,6 +65,59 @@ describe("literatuur", () => {
     expect(JSON.stringify(d)).not.toContain("GEHEIM");
     expect(d.records[0].data.open_in_browser).toBe("https://repository.tudelft.nl/record/uuid:1");
     expect(d.records[0].data.pogingen.length).toBeGreaterThan(0);
+  });
+
+  it("searches law first and broadens only when that finds too little", async () => {
+    const urls: string[] = [];
+    const ANDER = { ...WERK, id: "https://openalex.org/W7654321", doi: "https://doi.org/10.1/ander", display_name: "Werkgeversaansprakelijkheid in de praktijk", primary_topic: { subfield: { display_name: "Political Science" } } };
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const u = String(input instanceof Request ? input.url : input); urls.push(u);
+      return jsonResponse(u.includes("3308") ? { meta: { count: 1 }, results: [WERK] } : { meta: { count: 2 }, results: [WERK, ANDER] });
+    }));
+    const r = await call("literatuur_zoeken", { zoekterm: "aansprakelijkheid" });
+    expect(urls[0]).toContain("primary_topic.subfield.id%3A3308");
+    expect(urls[1]).not.toContain("3308");
+    expect(r.records.map((x: { data: { vakgebied: string } }) => x.data.vakgebied)).toEqual(["Recht", "buiten Recht geclassificeerd"]);
+    urls.length = 0;
+    await call("literatuur_zoeken", { zoekterm: "aansprakelijkheid", vakgebied: "alle" });
+    expect(urls).toHaveLength(1);
+    expect(urls[0]).not.toContain("3308");
+  });
+
+  const OAIRE = {
+    id: "doi_dedup___::abc", mainTitle: "De zorgplicht van de bank", publicationDate: "2019-03-01", language: { code: "dut" },
+    authors: [{ fullName: "C. de Bruin" }], bestAccessRight: { label: "OPEN" }, descriptions: ["<p>Over de zorgplicht.</p>"],
+    container: { name: "Ondernemingsrecht", vol: "12", iss: "3", sp: "45", ep: "52", issnPrinted: "1381-8295" },
+    instances: [{ type: "Article", refereed: "peerReviewed", urls: ["https://repository.ubn.ru.nl/handle/2066/1"] }],
+    pids: [{ scheme: "doi", value: "10.5117/or.2019.3" }], subjects: [{ subject: { value: "Bankrecht" } }],
+  };
+  it("reads OpenAIRE records and builds OpenAIRE queries", () => {
+    expect(openaireWerk(OAIRE)).toMatchObject({ id: "openaire:doi_dedup___::abc", titel: "De zorgplicht van de bank", jaar: 2019, betrouwbaarheid: "door vakgenoten beoordeeld (peer reviewed)", bron: "Ondernemingsrecht", jaargang: "12", paginas: "45-52", doi: "https://doi.org/10.5117/or.2019.3", open_access: true, oa_link: "https://repository.ubn.ru.nl/handle/2066/1", samenvatting: " Over de zorgplicht. " });
+    expect(openaireWerk({ ...OAIRE, container: undefined, instances: [{ type: "Doctoral thesis", refereed: "nonPeerReviewed", urls: [] }] }).betrouwbaarheid).toBe("proefschrift (openbaar verdedigd)");
+    const u = new URL(openaireUrl({ zoekterm: "zorgplicht bank", soort: "proefschrift", land: "NL+BE", alleen_open_access: true, recht: true, van: 2010, sortering: "nieuwste" }));
+    expect(Object.fromEntries(u.searchParams)).toMatchObject({ search: "zorgplicht bank", countryCode: "NL,BE", fos: "0505 law", bestOpenAccessRightLabel: "OPEN", instanceType: "Doctoral thesis", fromPublicationDate: "2010-01-01", sortBy: "publicationDate DESC" });
+  });
+
+  it("literatuur_zoeken via OpenAIRE uses a client-credentials token and reports the limit", async () => {
+    vi.stubEnv("OPENAIRE_CLIENT_ID", "id"); vi.stubEnv("OPENAIRE_CLIENT_SECRET", "geheim");
+    const calls: Array<{ url: string; auth?: string }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const u = String(input instanceof Request ? input.url : input);
+      calls.push({ url: u, auth: (init?.headers as Record<string, string> | undefined)?.Authorization });
+      if (u.includes("aai.openaire.eu")) return jsonResponse({ access_token: "TOKEN" });
+      return jsonResponse({ header: { numFound: 1 }, results: Array.from({ length: 6 }, (_, i) => ({ ...OAIRE, id: `x${i}`, pids: [{ scheme: "doi", value: `10.1/${i}` }] })) });
+    }));
+    const r = await call("literatuur_zoeken", { zoekterm: "zorgplicht", bron: "openaire" });
+    expect(calls[0].auth).toBe(`Basic ${Buffer.from("id:geheim").toString("base64")}`);
+    expect(calls[1].auth).toBe("Bearer TOKEN");
+    expect(calls[1].url).toContain("fos=0505+law");
+    expect(calls).toHaveLength(2); // 6 resultaten binnen Recht: niet verbreed
+    expect(r.records[0].data.betrouwbaarheid).toMatch(/peer reviewed/);
+    expect(JSON.stringify(r)).not.toContain("TOKEN");
+    vi.unstubAllEnvs(); vi.stubEnv("OPENAIRE_CLIENT_ID", "");
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({}, 429)));
+    const t = await call("literatuur_zoeken", { zoekterm: "zorgplicht", bron: "openaire" });
+    expect(JSON.stringify(t)).toMatch(/limiet bereikt/);
   });
 });
 

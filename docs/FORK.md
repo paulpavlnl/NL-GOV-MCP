@@ -79,3 +79,16 @@ Geen koppeling in upstream-code behalve de registratie in `eu-tools.ts`. Tests: 
 - HUDOC weigert een volledige browser-user-agent (en eigen user-agents) met 403; deze module stuurt `User-Agent: Mozilla/5.0`.
 
 Geen koppeling in upstream-code behalve de registratie in `eu-tools.ts`. Tests: `tests/fork-ehrm.test.ts`.
+
+## Kifid, AP en open vakliteratuur (`src/fork/geschilbeslechting.ts`, `src/fork/toezicht.ts`, `src/fork/literatuur.ts`)
+
+- `kifid_zoeken`: de zoek-API van kifid.nl (`/api/Search/SearchDecision/`, met slash, anders een 301). Datum in .NET-ticks; `pdfContent` bevat de volledige tekst, waaruit nummer, aard (bindend/niet-bindend advies), uitkomst en passages komen. De PDF is ook te lezen met `geschil_uitspraak_get`.
+- `ap_documenten_zoeken` / `ap_document_get`: autoriteitpersoonsgegevens.nl (Drupal): `/documenten?keys=…&document_type[N]=N&page=` (0-based), kaarten `article.node-publication-card`, besluit als PDF onder `/system/files?file=…`. Een F5-firewall weigert sommige servers ("The requested URL was rejected"); de tools melden dat en verwijzen naar `officiele_bekendmakingen_search`, `woo_zoeken` en `rechtspraak_search_ecli`. De firewall wordt niet omzeild.
+- `literatuur_zoeken`:
+  - OpenAlex: `title_and_abstract.search` tenzij `zoeken_in: alles`; `type:!dataset`; OAPEN/DOAB als `locations.source.id`. Een eventuele `api_key` wordt nooit in de uitvoer opgenomen (`zonderSleutel`).
+  - OpenAIRE Graph API v1 (`researchProducts`): `fos=0505 law`, `countryCode`, `instanceType=Doctoral thesis`, `bestOpenAccessRightLabel=OPEN`. Peer review staat in `instances[].refereed`. Zonder token 60 verzoeken per uur, met token 7200. Het token komt via client credentials (`OPENAIRE_CLIENT_ID`/`_SECRET`, aai.openaire.eu) of een refresh token (`OPENAIRE_REFRESH_TOKEN`, een maand geldig) en wordt 55 minuten bewaard.
+  - CORE v3: de volledige tekst staat per output (`/outputs/{id}`).
+  - `vakgebied: recht_eerst` (standaard): eerst binnen Recht (OpenAlex-subveld 3308, OpenAIRE fos 0505). Geeft dat minder dan 5 resultaten, dan wordt aangevuld met werken buiten Recht, gemarkeerd `vakgebied: "buiten Recht geclassificeerd"`.
+- `literatuur_document_get`: probeert alle open vindplaatsen (PDF, `citation_pdf_url` op de repositoriumpagina) en valt op DOI terug op CORE. Een OpenAIRE-id met DOI gaat via OpenAlex.
+
+Geen koppeling in upstream-code behalve de registratie in `eu-tools.ts` en de cachecategorieën `ap` en `literatuur`. Tests: `tests/fork-literatuur-toezicht.test.ts`.

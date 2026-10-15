@@ -1,6 +1,7 @@
 /**
  * FORK MODULE (paulpavlnl) — see docs/FORK.md. Legal literature from open scholarly sources:
- * - literatuur_zoeken: OpenAlex (api.openalex.org, free and open, CC0 metadata) — dissertations, articles in
+ * - literatuur_zoeken: OpenAlex (api.openalex.org, free and open, CC0 metadata), OpenAIRE Graph (European
+ *   repositories with peer review status) and CORE (repository full texts) — dissertations, articles in
  *   journals, books and reports, with author, institution, journal or repository, DOI, citations and the
  *   open access location. Filters for type, language, country of the institution (NL, BE), open access,
  *   field of law and years.
@@ -21,10 +22,13 @@ type PdfLezer = (url: string) => Promise<{ ok: true; text: string } | { ok: fals
 
 export const OPENALEX = "https://api.openalex.org";
 export const CORE_API = "https://api.core.ac.uk/v3";
+export const OPENAIRE_API = "https://api.openaire.eu/graph/v1/researchProducts";
+const OPENAIRE_TOKEN_URL = "https://aai.openaire.eu/oidc/token";
+const OPENAIRE_REFRESH_URL = "https://services.openaire.eu/uoa-user-management/api/users/getAccessToken";
 /** OAPEN Library en Directory of Open Access Books, als bron in OpenAlex. */
 const OAPEN_BRONNEN = "S4306402535|S4306400539";
 /** Gratis sleutels: zonder sleutel delen OpenAlex en CORE een klein budget per IP-adres. */
-const sleutel = (naam: "OPENALEX_API_KEY" | "CORE_API_KEY") => process.env[naam]?.trim() || undefined;
+const sleutel = (naam: "OPENALEX_API_KEY" | "CORE_API_KEY" | "OPENAIRE_REFRESH_TOKEN" | "OPENAIRE_CLIENT_ID" | "OPENAIRE_CLIENT_SECRET") => process.env[naam]?.trim() || undefined;
 /** Een sleutel hoort nooit in de uitvoer. */
 export const zonderSleutel = (url: string) => url.replace(/([?&])api_key=[^&]*&?/, "$1").replace(/[?&]$/, "");
 const VELDEN = "id,doi,title,display_name,publication_year,publication_date,type,language,authorships,primary_location,best_oa_location,locations,open_access,cited_by_count,abstract_inverted_index,primary_topic,biblio";
@@ -73,7 +77,7 @@ export function werk(w: W) {
   };
 }
 
-export function zoekUrl(a: { zoekterm: string; zoeken_in?: string; bron?: string; soort?: string; taal?: string; land?: string; alleen_open_access?: boolean; alleen_recht?: boolean; van?: number; tot?: number; sortering?: string; pagina?: number; aantal?: number }): string {
+export function zoekUrl(a: { zoekterm: string; zoeken_in?: string; bron?: string; soort?: string; taal?: string; land?: string; alleen_open_access?: boolean; recht?: boolean; van?: number; tot?: number; sortering?: string; pagina?: number; aantal?: number }): string {
   const f: string[] = [];
   // Standaard alleen in titel en samenvatting: zoeken in de volledige tekst geeft veel ruis.
   const precies = a.zoeken_in !== "alles";
@@ -83,7 +87,7 @@ export function zoekUrl(a: { zoekterm: string; zoeken_in?: string; bron?: string
   if (a.taal && a.taal !== "alle") f.push(`language:${a.taal}`);
   if (a.land && a.land !== "alle") f.push(`authorships.institutions.country_code:${a.land === "NL+BE" ? "NL|BE" : a.land}`);
   if (a.alleen_open_access) f.push("is_oa:true");
-  if (a.alleen_recht) f.push("primary_topic.subfield.id:3308");
+  if (a.recht) f.push("primary_topic.subfield.id:3308");
   if (a.bron === "oa_boeken") f.push(`locations.source.id:${OAPEN_BRONNEN}`);
   if (a.van || a.tot) f.push(`publication_year:${a.van ?? 1800}-${a.tot ?? 2100}`);
   const u = new URL(`${OPENALEX}/works`);
@@ -96,6 +100,46 @@ export function zoekUrl(a: { zoekterm: string; zoeken_in?: string; bron?: string
   u.searchParams.set("select", VELDEN);
   const k = sleutel("OPENALEX_API_KEY");
   if (k) u.searchParams.set("api_key", k);
+  return u.toString();
+}
+
+/** OpenAIRE-resultaat → dezelfde velden; met of een vindplaats door vakgenoten is beoordeeld. */
+export function openaireWerk(r: W) {
+  const inst = (r.instances ?? []) as W[];
+  const urls = [...new Set(inst.flatMap((i) => i.urls ?? []).filter((u: string) => /^https?:\/\//.test(u) && !/^https?:\/\/(10|127|192\.168|172\.(1[6-9]|2\d|3[01]))\./.test(u)))] as string[];
+  const doi = ((r.pids ?? []) as W[]).find((p) => /doi/i.test(p.scheme ?? p.id?.scheme ?? ""))?.value ?? ((r.pids ?? []) as W[]).find((p) => /doi/i.test(p.id?.scheme ?? ""))?.id?.value ?? urls.map((u) => /doi\.org\/(10\..+)$/.exec(u)?.[1]).find(Boolean);
+  const peer = inst.some((i) => i.refereed === "peerReviewed");
+  const soorten = inst.map((i) => String(i.type ?? "")).filter(Boolean);
+  const proefschrift = soorten.some((t) => /doctoral thesis/i.test(t));
+  const c = r.container ?? {};
+  const oa = String(r.bestAccessRight?.label ?? "").toUpperCase() === "OPEN";
+  return {
+    id: `openaire:${r.id}`, titel: String(r.mainTitle ?? "").replace(/\s+/g, " ").trim(), jaar: Number(String(r.publicationDate ?? "").slice(0, 4)) || undefined, datum: r.publicationDate,
+    soort: proefschrift ? "proefschrift" : soorten[0]?.toLowerCase(),
+    betrouwbaarheid: proefschrift ? "proefschrift (openbaar verdedigd)" : peer ? "door vakgenoten beoordeeld (peer reviewed)" : "niet als peer reviewed geregistreerd",
+    auteurs: ((r.authors ?? []) as W[]).slice(0, 8).map((a) => a.fullName).filter(Boolean),
+    bron: c.name ?? r.publisher ?? undefined, ...(c.name ? { jaargang: c.vol ?? undefined, nummer: c.iss ?? undefined, paginas: [c.sp, c.ep].filter(Boolean).join("-") || undefined, issn: c.issnPrinted ?? c.issnOnline ?? undefined } : {}),
+    taal: r.language?.code && r.language.code !== "und" ? r.language.code : undefined, doi: doi ? `https://doi.org/${String(doi).replace(/^https?:\/\/doi\.org\//, "")}` : undefined,
+    open_access: oa, ...(oa && urls[0] ? { oa_link: urls[0] } : {}), pagina: urls[0], vindplaatsen: urls.slice(0, 5),
+    onderwerpen: ((r.subjects ?? []) as W[]).map((s) => s.subject?.value).filter(Boolean).slice(0, 8),
+    samenvatting: (Array.isArray(r.descriptions) ? r.descriptions.join(" ") : undefined)?.replace(/<[^>]+>/g, " ").slice(0, 1500),
+  };
+}
+
+export function openaireUrl(a: { zoekterm: string; soort?: string; land?: string; alleen_open_access?: boolean; recht?: boolean; van?: number; tot?: number; sortering?: string; pagina?: number; aantal?: number }): string {
+  const u = new URL(OPENAIRE_API);
+  u.searchParams.set("search", a.zoekterm);
+  u.searchParams.set("type", "publication");
+  if (a.land && a.land !== "alle") u.searchParams.set("countryCode", a.land === "NL+BE" ? "NL,BE" : a.land);
+  if (a.recht) u.searchParams.set("fos", "0505 law");
+  if (a.alleen_open_access) u.searchParams.set("bestOpenAccessRightLabel", "OPEN");
+  if (a.soort === "proefschrift") u.searchParams.set("instanceType", "Doctoral thesis");
+  if (a.van) u.searchParams.set("fromPublicationDate", `${a.van}-01-01`);
+  if (a.tot) u.searchParams.set("toPublicationDate", `${a.tot}-12-31`);
+  if (a.sortering === "nieuwste") u.searchParams.set("sortBy", "publicationDate DESC");
+  else if (a.sortering === "meest_geciteerd") u.searchParams.set("sortBy", "citationCount DESC");
+  u.searchParams.set("page", String(a.pagina ?? 1));
+  u.searchParams.set("pageSize", String(a.aantal ?? 15));
   return u.toString();
 }
 
@@ -178,15 +222,54 @@ export function registerLiteratuur(server: McpServer, deps: { TOOL_ANNOTATIONS: 
     } catch (e) { return toMcpToolPayload(mapSourceError(e, "CORE", CORE_API)); }
   };
 
+  // OpenAIRE: zonder token 60 verzoeken per uur, met token 7200. Een token geldt een uur; we bewaren het 55 minuten.
+  let openaireToken: { token: string; tot: number } | undefined;
+  const haalOpenaireToken = async (): Promise<string | undefined> => {
+    if (openaireToken && openaireToken.tot > Date.now()) return openaireToken.token;
+    const id = sleutel("OPENAIRE_CLIENT_ID"), geheim = sleutel("OPENAIRE_CLIENT_SECRET"), refresh = sleutel("OPENAIRE_REFRESH_TOKEN");
+    try {
+      let r;
+      if (id && geheim) r = await f(OPENAIRE_TOKEN_URL, { method: "POST", headers: { Authorization: `Basic ${Buffer.from(`${id}:${geheim}`).toString("base64")}`, "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" }, body: "grant_type=client_credentials" });
+      else if (refresh) r = await f(`${OPENAIRE_REFRESH_URL}?refreshToken=${encodeURIComponent(refresh)}`, { headers: { Accept: "application/json" } });
+      else return undefined;
+      const token = r.status === 200 ? (JSON.parse(r.text) as W)?.access_token : undefined;
+      if (!token) return undefined;
+      openaireToken = { token, tot: Date.now() + 55 * 60_000 };
+      return token;
+    } catch { return undefined; }
+  };
+  const openaire = async (url: string) => {
+    const token = await haalOpenaireToken();
+    const r = await f(url, { headers: { Accept: "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) } });
+    if (r.status === 404) return null;
+    if (r.status === 429) throw new Error(`OpenAIRE: limiet bereikt (${token ? "7200" : "60"} verzoeken per uur${token ? "" : "; met OPENAIRE_CLIENT_ID/OPENAIRE_CLIENT_SECRET of OPENAIRE_REFRESH_TOKEN 7200"}). Zoek zolang via OpenAlex.`);
+    if (r.status !== 200) throw new Error(`OpenAIRE antwoordde met HTTP ${r.status}`);
+    return JSON.parse(r.text) as W;
+  };
+
+  type Gevonden = { items: Array<ReturnType<typeof werk> | ReturnType<typeof openaireWerk>>; totaal: number; url: string };
+  const zoekOpenalex = async (a: Parameters<typeof zoekUrl>[0], recht: boolean): Promise<Gevonden> => {
+    const url = zoekUrl({ ...a, recht });
+    const r = await json(url);
+    return { items: ((r?.results ?? []) as W[]).map(werk), totaal: Number(r?.meta?.count ?? 0), url: zonderSleutel(url) };
+  };
+  const zoekOpenaire = async (a: Parameters<typeof openaireUrl>[0], recht: boolean): Promise<Gevonden> => {
+    const url = openaireUrl({ ...a, recht });
+    const r = await openaire(url);
+    return { items: ((r?.results ?? []) as W[]).map(openaireWerk), totaal: Number(r?.header?.numFound ?? 0), url };
+  };
+  const sleutelVan = (w: { doi?: string; titel: string }) => (w.doi ?? w.titel).toLowerCase().replace(/\W+/g, "");
+
   server.registerTool("literatuur_zoeken", {
-    description: "Search legal literature in open scholarly sources (OpenAlex): dissertations (proefschriften), journal articles, books and reports, with author, institution, journal or university repository, DOI, number of citations, abstract and the open access link. Filters: soort (proefschrift, artikel, boek, rapport, alle), taal ('nl', 'en'), land of the authors' institution ('NL', 'BE', 'NL+BE'), alleen_open_access (default true), alleen_recht (only works classified under Law; the classification is automatic, so it can miss relevant works), years and sort order. Each result says how reliable the type is (defended dissertation, peer-reviewed open access journal, repository, preprint). Read the text with literatuur_document_get.",
+    description: "Search legal literature in open scholarly sources (OpenAlex, OpenAIRE, CORE): dissertations (proefschriften), journal articles, books and reports, with author, institution, journal or university repository, DOI, number of citations, abstract and the open access link. Filters: soort (proefschrift, artikel, boek, rapport, alle), taal ('nl', 'en'), land of the authors' institution ('NL', 'BE', 'NL+BE'), alleen_open_access (default true), vakgebied (default recht_eerst: first works classified under Law, and only when that gives fewer than 5 results the broader search added, marked 'buiten Recht geclassificeerd'; alleen_recht; alle), years and sort order. bron openaire searches the European OpenAIRE Graph (all Dutch university repositories via NARCIS, with peer review status and the full journal citation). Each result says how reliable the type is (defended dissertation, peer-reviewed open access journal, repository, preprint). Read the text with literatuur_document_get.",
     inputSchema: {
       zoekterm: z.string().min(2).max(300),
       zoeken_in: z.enum(["titel_samenvatting", "alles"]).default("titel_samenvatting").describe("titel_samenvatting: precise (title and abstract); alles: also the full text, broader but noisier. Use alles when the precise search finds too little."),
-      bron: z.enum(["openalex", "oa_boeken", "core"]).default("openalex").describe("openalex: the broad catalogue; oa_boeken: only open access books from OAPEN and DOAB; core: CORE, repository full texts (needs CORE_API_KEY for the text)."),
+      bron: z.enum(["openalex", "openaire", "oa_boeken", "core"]).default("openalex").describe("openalex: the broad catalogue; openaire: the European OpenAIRE Graph, strong for Dutch repositories, dissertations and peer review status (60 requests/hour without token); oa_boeken: only open access books from OAPEN and DOAB; core: CORE, repository full texts (needs CORE_API_KEY for the text)."),
       soort: z.enum(["proefschrift", "artikel", "boek", "rapport", "alle"]).default("alle"),
       taal: z.enum(["nl", "en", "alle"]).default("alle"), land: z.enum(["NL", "BE", "NL+BE", "alle"]).default("alle"),
-      alleen_open_access: z.boolean().default(true), alleen_recht: z.boolean().default(false),
+      alleen_open_access: z.boolean().default(true),
+      vakgebied: z.enum(["recht_eerst", "alleen_recht", "alle"]).default("recht_eerst").describe("recht_eerst: works classified under Law first, broadened only when that finds fewer than 5; alleen_recht; alle. The classification is automatic and misses some legal works (CORE has none)."),
       van: z.number().int().min(1800).max(2100).optional(), tot: z.number().int().min(1800).max(2100).optional(),
       sortering: z.enum(["relevantie", "nieuwste", "meest_geciteerd"]).default("relevantie"),
       pagina: z.number().int().min(1).max(50).default(1), aantal: z.number().int().min(1).max(50).default(15),
@@ -194,17 +277,27 @@ export function registerLiteratuur(server: McpServer, deps: { TOOL_ANNOTATIONS: 
     annotations: deps.TOOL_ANNOTATIONS,
   }, async (a) => {
     if (a.bron === "core") return coreZoeken(a);
-    const url = zoekUrl(a);
+    const naam = a.bron === "openaire" ? "OpenAIRE" : "OpenAlex";
+    const zoek = (recht: boolean) => (a.bron === "openaire" ? zoekOpenaire(a, recht) : zoekOpenalex(a, recht));
     try {
-      const r = await json(url);
-      const items = ((r?.results ?? []) as W[]).map(werk);
-      const records = items.map((w) => rec(w.titel, w.pagina ?? w.oa_link ?? `https://openalex.org/${w.id}`, w.datum, w.samenvatting, w));
-      const totaal = Number(r?.meta?.count ?? records.length);
+      const eerst = await zoek(a.vakgebied !== "alle");
+      let items: Array<Record<string, unknown> & { titel: string; doi?: string }> = eerst.items;
+      let verbreed = false;
+      if (a.vakgebied === "recht_eerst" && a.pagina === 1 && items.length < 5) {
+        const breed = await zoek(false);
+        const al = new Set(items.map(sleutelVan));
+        const extra = breed.items.filter((w) => !al.has(sleutelVan(w))).slice(0, a.aantal - items.length).map((w) => ({ ...w, vakgebied: "buiten Recht geclassificeerd" }));
+        verbreed = extra.length > 0;
+        items = [...items.map((w) => ({ ...w, vakgebied: "Recht" })), ...extra];
+      }
+      const records = items.map((w) => rec(w.titel, String(w.pagina ?? w.oa_link ?? (a.bron === "openaire" ? OPENAIRE_API : `https://openalex.org/${w.id}`)), (w.datum as string | undefined), (w.samenvatting as string | undefined), w));
+      const totaal = eerst.totaal || records.length;
+      const vakNote = a.vakgebied === "alle" ? "Gezocht in alle vakgebieden." : `Eerst gezocht binnen Recht (${naam === "OpenAIRE" ? "fos 0505 law" : "OpenAlex-subveld Law"})${verbreed ? `; dat gaf ${eerst.items.length} resultaten, daarom aangevuld met werken buiten Recht (gemarkeerd; beoordeel ze zelf)` : ""}. De indeling is automatisch en mist soms juridische werken: zoek bij twijfel met vakgebied 'alle'.`;
       return toMcpToolPayload(successResponse({
-        summary: `OpenAlex: ${totaal} publicaties voor '${a.zoekterm}'; ${records.length} getoond (pagina ${a.pagina})`, records, provenance: prov("literatuur_zoeken", zonderSleutel(url), a, records.length, totaal),
-        access_note: `${NOTE} ${a.zoeken_in === "alles" ? "Breed gezocht (ook in de volledige tekst): beoordeel de relevantie per titel." : "Gezocht in titel en samenvatting; vind je te weinig, zoek dan met zoeken_in 'alles'."} Zoek ook met Engelse termen en synoniemen; een Nederlandse titel kan onder een Engelse samenvatting staan. Gesloten literatuur (handboeken, Asser-serie, annotaties, tijdschriften als NJB en WPNR) staat hier niet of zonder tekst in.`,
+        summary: `${naam}: ${totaal} publicaties voor '${a.zoekterm}'; ${records.length} getoond (pagina ${a.pagina})${verbreed ? ", aangevuld buiten Recht" : ""}`, records, provenance: prov("literatuur_zoeken", eerst.url, a, records.length, totaal),
+        access_note: `${NOTE} ${vakNote} ${a.bron === "openaire" ? "OpenAIRE zoekt in titel, samenvatting en trefwoorden; 'betrouwbaarheid' volgt de peer-reviewregistratie van de vindplaats." : a.zoeken_in === "alles" ? "Breed gezocht (ook in de volledige tekst): beoordeel de relevantie per titel." : "Gezocht in titel en samenvatting; vind je te weinig, zoek dan met zoeken_in 'alles'."} Zoek ook met Engelse termen en synoniemen; een Nederlandse titel kan onder een Engelse samenvatting staan. Gesloten literatuur (handboeken, Asser-serie, annotaties, tijdschriften als NJB en WPNR) staat hier niet of zonder tekst in.`,
       }));
-    } catch (e) { return toMcpToolPayload(mapSourceError(e, "OpenAlex", OPENALEX)); }
+    } catch (e) { return toMcpToolPayload(mapSourceError(e, naam, a.bron === "openaire" ? OPENAIRE_API : OPENALEX)); }
   });
 
   const coreDocument = async (id: string, a: { zoekterm?: string; max_chars: number }) => {
@@ -220,13 +313,56 @@ export function registerLiteratuur(server: McpServer, deps: { TOOL_ANNOTATIONS: 
     } catch (e) { return toMcpToolPayload(mapSourceError(e, "CORE", CORE_API)); }
   };
 
+  /** Probeert de open vindplaatsen op volgorde: PDF, of de repositoriumpagina en de PDF waarnaar die verwijst. */
+  const haalTekst = async (plekken: string[]) => {
+    const pogingen: Array<{ url: string; resultaat: string }> = [];
+    let tekst: string | undefined, bron: string | undefined;
+    for (const u of plekken.slice(0, 6)) {
+      try {
+        const r = await f(u, { headers: { "User-Agent": "Mozilla/5.0" } });
+        if (r.status !== 200) { pogingen.push({ url: u, resultaat: `HTTP ${r.status}${/just a moment|cloudflare/i.test(r.text) ? " (browsercontrole)" : ""}` }); continue; }
+        const pdfLink = /%PDF-/.test(r.text.slice(0, 1024)) ? u : pdfUitPagina(r.text, r.url);
+        if (pdfLink) {
+          const p = await leesPdf(pdfLink);
+          if (p.ok && p.text.trim().length > 500) { tekst = p.text; bron = pdfLink; break; }
+          pogingen.push({ url: pdfLink, resultaat: p.ok ? "pdf zonder tekst (scan?)" : p.message });
+          continue;
+        }
+        const t = decodeEntities(htmlNaarTekst(r.text));
+        if (t.length > 5000 && !/just a moment|cloudflare/i.test(r.text)) { tekst = t; bron = r.url; break; }
+        pogingen.push({ url: u, resultaat: "pagina zonder volledige tekst" });
+      } catch (e) { pogingen.push({ url: u, resultaat: e instanceof Error ? e.message : String(e) }); }
+    }
+    return { tekst, bron, pogingen };
+  };
+
   server.registerTool("literatuur_document_get", {
-    description: "The text of one open access publication found with literatuur_zoeken: by OpenAlex id (W…), CORE id (core:…), DOI or DOI link. Tries every open access location (PDF, or the repository page and the PDF it points to) and returns the text, or only the passages with a search term. Many university portals (Pure) sit behind a browser check; then the tool says so and gives the link to open in a browser.",
+    description: "The text of one open access publication found with literatuur_zoeken: by OpenAlex id (W…), OpenAIRE id (openaire:…), CORE id (core:…), DOI or DOI link. Tries every open access location (PDF, or the repository page and the PDF it points to) and returns the text, or only the passages with a search term. Many university portals (Pure) sit behind a browser check; then the tool says so and gives the link to open in a browser.",
     inputSchema: { werk: z.string().min(4).max(400), zoekterm: z.string().max(200).optional(), max_chars: z.number().int().min(1000).max(120_000).default(30_000) },
     annotations: deps.TOOL_ANNOTATIONS,
   }, async (a) => {
     const coreId = /^core:(\d+)$/i.exec(a.werk.trim())?.[1];
     if (coreId) return coreDocument(coreId, a);
+    const oaireId = /^openaire:(.+)$/i.exec(a.werk.trim())?.[1];
+    if (oaireId) {
+      try {
+        const r = await openaire(`${OPENAIRE_API}/${encodeURIComponent(oaireId)}`);
+        if (!r) return toMcpToolPayload(errorResponse({ error: "unexpected", message: `OpenAIRE kent ${oaireId} niet.`, suggestion: "Zoek opnieuw met literatuur_zoeken (bron openaire)." }));
+        const meta = openaireWerk(r);
+        // Met een DOI weet OpenAlex meestal meer open vindplaatsen (en valt CORE terug): ga via de DOI.
+        if (meta.doi) a = { ...a, werk: meta.doi };
+        else {
+          const { tekst, bron, pogingen } = await haalTekst(meta.vindplaatsen);
+          const body = tekst ? (a.zoekterm ? passages(tekst, a.zoekterm).join("\n…\n") : tekst) : undefined;
+          return toMcpToolPayload(successResponse({
+            summary: tekst ? `${meta.titel}: ${tekst.length} tekens uit ${bron}` : `${meta.titel}: geen open tekst automatisch op te halen`,
+            records: [rec(meta.titel, meta.pagina ?? OPENAIRE_API, meta.datum, meta.samenvatting, { ...meta, ...(bron ? { tekst_bron: bron } : {}), ...(body !== undefined ? { tekst: body.length > a.max_chars ? `${body.slice(0, a.max_chars)}…` : body, ingekort: body.length > a.max_chars } : { pogingen, open_in_browser: meta.oa_link ?? meta.pagina }) })],
+            provenance: prov("literatuur_document_get", `${OPENAIRE_API}/${oaireId}`, { werk: a.werk, zoekterm: a.zoekterm }, 1, 1),
+            access_note: tekst ? NOTE : `${NOTE} De tekst kon niet automatisch worden opgehaald (zie pogingen). Open de link in een browser en citeer pas na lezing.`,
+          }));
+        }
+      } catch (e) { return toMcpToolPayload(mapSourceError(e, "OpenAIRE", OPENAIRE_API)); }
+    }
     const id = werkId(a.werk);
     if (!id) return toMcpToolPayload(errorResponse({ error: "unexpected", message: `Geen OpenAlex-id of DOI in '${a.werk.slice(0, 80)}'.`, suggestion: "Gebruik het id of de DOI uit literatuur_zoeken." }));
     const url = `${OPENALEX}/works/${id}?select=${VELDEN}${sleutel("OPENALEX_API_KEY") ? `&api_key=${sleutel("OPENALEX_API_KEY")}` : ""}`;
@@ -239,24 +375,8 @@ export function registerLiteratuur(server: McpServer, deps: { TOOL_ANNOTATIONS: 
         if (!l?.is_oa) continue;
         for (const u of [l.pdf_url, l.landing_page_url]) if (u && !plekken.includes(u)) plekken.push(u);
       }
-      const pogingen: Array<{ url: string; resultaat: string }> = [];
-      let tekst: string | undefined, bron: string | undefined;
-      for (const u of plekken.slice(0, 6)) {
-        try {
-          const r = await f(u, { headers: { "User-Agent": "Mozilla/5.0" } });
-          if (r.status !== 200) { pogingen.push({ url: u, resultaat: `HTTP ${r.status}${/just a moment|cloudflare/i.test(r.text) ? " (browsercontrole)" : ""}` }); continue; }
-          const pdfLink = /%PDF-/.test(r.text.slice(0, 1024)) ? u : pdfUitPagina(r.text, r.url);
-          if (pdfLink) {
-            const p = await leesPdf(pdfLink);
-            if (p.ok && p.text.trim().length > 500) { tekst = p.text; bron = pdfLink; break; }
-            pogingen.push({ url: pdfLink, resultaat: p.ok ? "pdf zonder tekst (scan?)" : p.message });
-            continue;
-          }
-          const t = decodeEntities(htmlNaarTekst(r.text));
-          if (t.length > 5000 && !/just a moment|cloudflare/i.test(r.text)) { tekst = t; bron = r.url; break; }
-          pogingen.push({ url: u, resultaat: "pagina zonder volledige tekst" });
-        } catch (e) { pogingen.push({ url: u, resultaat: e instanceof Error ? e.message : String(e) }); }
-      }
+      const { pogingen, ...gevonden } = await haalTekst(plekken);
+      let { tekst, bron } = gevonden;
       // Geen tekst bij de bron zelf: CORE heeft vaak een eigen kopie (op DOI), mits er een sleutel is.
       if (!tekst && meta.doi && sleutel("CORE_API_KEY")) {
         try {
