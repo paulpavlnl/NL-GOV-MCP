@@ -174,7 +174,8 @@ export function pdfUitPagina(html: string, base: string): string | undefined {
   try { return m ? new URL(decodeEntities(m[1]), base).toString() : undefined; } catch { return undefined; }
 }
 
-const rec = (title: string, url: string, date: string | undefined, snippet: string | undefined, data: Record<string, unknown>): MCPRecord => ({ source_name: "openalex.org", title, canonical_url: url, ...(date ? { date } : {}), ...(snippet ? { snippet: snippet.slice(0, 400) } : {}), data });
+const bronNaam = (id: string) => (id.startsWith("openaire:") ? "openaire.eu" : id.startsWith("core:") ? "core.ac.uk" : "openalex.org");
+const rec = (title: string, url: string, date: string | undefined, snippet: string | undefined, data: Record<string, unknown>): MCPRecord => ({ source_name: bronNaam(String(data.id ?? "")), title, canonical_url: url, ...(date ? { date } : {}), ...(snippet ? { snippet: snippet.slice(0, 400) } : {}), data });
 const NOTE = "Bron: OpenAlex (open catalogus van wetenschappelijke publicaties, CC0), met de vindplaats in tijdschrift of universiteitsrepositorium. Literatuur is geen recht: gebruik haar voor uitleg, onderbouwing en de stand van de discussie, en noem auteur, titel, vindplaats, jaar en pagina. Citeer alleen uit tekst die je hebt gelezen (literatuur_document_get).";
 
 const defaultPdf: PdfLezer = async (url) => {
@@ -294,7 +295,7 @@ export function registerLiteratuur(server: McpServer, deps: { TOOL_ANNOTATIONS: 
       const totaal = eerst.totaal || records.length;
       const vakNote = a.vakgebied === "alle" ? "Gezocht in alle vakgebieden." : `Eerst gezocht binnen Recht (${naam === "OpenAIRE" ? "fos 0505 law" : "OpenAlex-subveld Law"})${verbreed ? `; dat gaf ${eerst.items.length} resultaten, daarom aangevuld met werken buiten Recht (gemarkeerd; beoordeel ze zelf)` : ""}. De indeling is automatisch en mist soms juridische werken: zoek bij twijfel met vakgebied 'alle'.`;
       return toMcpToolPayload(successResponse({
-        summary: `${naam}: ${totaal} publicaties voor '${a.zoekterm}'; ${records.length} getoond (pagina ${a.pagina})${verbreed ? ", aangevuld buiten Recht" : ""}`, records, provenance: prov("literatuur_zoeken", eerst.url, a, records.length, totaal),
+        summary: verbreed ? `${naam}: ${eerst.items.length} publicaties binnen Recht voor '${a.zoekterm}', aangevuld met ${records.length - eerst.items.length} buiten Recht (gemarkeerd)` : `${naam}: ${totaal} publicaties voor '${a.zoekterm}'${a.vakgebied === "alle" ? "" : " binnen Recht"}; ${records.length} getoond (pagina ${a.pagina})`, records, provenance: prov("literatuur_zoeken", eerst.url, a, records.length, totaal),
         access_note: `${NOTE} ${vakNote} ${a.bron === "openaire" ? "OpenAIRE zoekt in titel, samenvatting en trefwoorden; 'betrouwbaarheid' volgt de peer-reviewregistratie van de vindplaats." : a.zoeken_in === "alles" ? "Breed gezocht (ook in de volledige tekst): beoordeel de relevantie per titel." : "Gezocht in titel en samenvatting; vind je te weinig, zoek dan met zoeken_in 'alles'."} Zoek ook met Engelse termen en synoniemen; een Nederlandse titel kan onder een Engelse samenvatting staan. Gesloten literatuur (handboeken, Asser-serie, annotaties, tijdschriften als NJB en WPNR) staat hier niet of zonder tekst in.`,
       }));
     } catch (e) { return toMcpToolPayload(mapSourceError(e, naam, a.bron === "openaire" ? OPENAIRE_API : OPENALEX)); }

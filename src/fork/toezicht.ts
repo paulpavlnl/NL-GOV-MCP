@@ -86,7 +86,7 @@ export function registerToezicht(server: McpServer, deps: { TOOL_ANNOTATIONS: Re
     if (a.pagina > 1) u.searchParams.set("page", String(a.pagina - 1));
     try {
       const r = await f(u.toString());
-      if (geweigerd(r.status, r.text)) return toMcpToolPayload(errorResponse({ error: "unexpected", message: `De AP-site weigerde de aanvraag (HTTP ${r.status}).`, suggestion: WEIGERING }));
+      if (geweigerd(r.status, r.text)) return toMcpToolPayload(errorResponse({ error: "unexpected", message: `De AP-site weigerde de aanvraag van deze server (firewall${r.status !== 200 ? `, HTTP ${r.status}` : ""}).`, suggestion: WEIGERING }));
       const { items, volgende } = parseApLijst(r.text);
       const records = items.map((i) => rec(i.titel, i.url, i.datum, undefined, { ...i }));
       return toMcpToolPayload(successResponse({ summary: `Autoriteit Persoonsgegevens: ${records.length} documenten (pagina ${a.pagina})${volgende !== undefined ? "; er zijn meer pagina's" : ""}`, records, provenance: prov("ap_documenten_zoeken", u.toString(), { zoekterm: a.zoekterm, soort: a.soort?.join(","), pagina: a.pagina }, records.length, records.length), access_note: NOTE }));
@@ -105,7 +105,7 @@ export function registerToezicht(server: McpServer, deps: { TOOL_ANNOTATIONS: Re
       if (/\.pdf/i.test(u.pathname + u.search)) pdfUrl = a.url;
       else {
         const r = await f(a.url);
-        if (geweigerd(r.status, r.text)) return toMcpToolPayload(errorResponse({ error: "unexpected", message: `De AP-site weigerde de aanvraag (HTTP ${r.status}).`, suggestion: WEIGERING }));
+        if (geweigerd(r.status, r.text)) return toMcpToolPayload(errorResponse({ error: "unexpected", message: `De AP-site weigerde de aanvraag van deze server (firewall${r.status !== 200 ? `, HTTP ${r.status}` : ""}).`, suggestion: WEIGERING }));
         if (r.status !== 200) return toMcpToolPayload(errorResponse({ error: "unexpected", message: `AP-document niet gevonden (HTTP ${r.status}).`, suggestion: "Zoek het opnieuw met ap_documenten_zoeken." }));
         d = parseApDocument(r.text);
         pdfUrl = d.pdf;
