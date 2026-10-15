@@ -38,7 +38,8 @@ export const httpFetch: Fetcher = async (url, init = {}) => {
   throw lastError;
 };
 
-const inline = (html: string) => htmlNaarTekst(html).replace(/\s*\n\s*/g, " ").trim();
+// Some sites encode entities twice ("&amp;euml;"): decode the result once more.
+const inline = (html: string) => decodeEntities(htmlNaarTekst(html)).replace(/\s*\n\s*/g, " ").trim();
 const fold = (s: string) => s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/\s+/g, " ").trim();
 const rec = (source: string, title: string, url: string, date: string | undefined, snippet: string | undefined, data: Record<string, unknown>): MCPRecord => ({ source_name: source, title, canonical_url: url, ...(date ? { date } : {}), ...(snippet ? { snippet: snippet.slice(0, 400) } : {}), data });
 
@@ -147,7 +148,7 @@ export function parseMfnLijst(html: string) {
 export function documentTekst(html: string): { titel?: string; tekst: string } {
   const titel = inline(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i.exec(html)?.[1] ?? "") || undefined;
   const main = /<main\b[\s\S]*<\/main>/i.exec(html)?.[0] ?? /<article\b[\s\S]*<\/article>/i.exec(html)?.[0] ?? html;
-  return { titel, tekst: htmlNaarTekst(main.replace(/<(nav|header|form|aside)\b[\s\S]*?<\/\1>/gi, " ")) };
+  return { titel, tekst: decodeEntities(htmlNaarTekst(main.replace(/<(nav|header|form|aside)\b[\s\S]*?<\/\1>/gi, " "))) };
 }
 
 function passages(text: string, term: string, max = 25): string[] {
