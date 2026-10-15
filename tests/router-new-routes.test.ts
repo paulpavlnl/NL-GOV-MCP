@@ -243,14 +243,16 @@ describe("nl_gov_ask: a ruling named by its ECLI", () => {
     expect(plan.planned_requests).toEqual([]);
     mockFetch(() => undefined);
     const res = await ask({ question: "ECLI:EU:C:2014:317" });
-    expect(requests).toEqual([]);
+    // FORK (docs/FORK.md): an EU ECLI is first looked up in CELLAR; when CELLAR fails, the answer below stands.
+    const notCellar = () => requests.filter((r) => r.url.hostname !== "publications.europa.eu");
+    expect(notCellar()).toEqual([]);
     expect(res.error).toBeUndefined();
     expect(res.records).toEqual([]);
     expect(res.summary).toBe("Router: ECLI:EU:C:2014:317 is geen Nederlandse ECLI (0 resultaten)");
     expect(res.access_note).toContain("https://eur-lex.europa.eu/legal-content/NL/TXT/?uri=ecli:ECLI%3AEU%3AC%3A2014%3A317");
 
     const german = await ask({ question: "Wat zegt ECLI:DE:BGH:2019:123?" });
-    expect(requests).toEqual([]);
+    expect(notCellar()).toEqual([]);
     expect(german.access_note).toContain("e-justice.europa.eu");
     expect(german.access_note).not.toContain("eur-lex");
 

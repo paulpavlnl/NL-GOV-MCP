@@ -49,6 +49,7 @@ import { VerkiezingsuitslagenSource } from "./sources/verkiezingsuitslagen.js";
 import { EuCellarSource, normalizeCelex } from "./sources/eu-cellar.js";
 import { LidoSource, parseLidoId, normalizeLidoType, clampLidoRows } from "./sources/lido.js";
 import { LidoRelationsSource } from "./sources/lido-relations.js";
+import { registerEuForkTools } from "./fork/eu-tools.js"; // FORK: EU-rechtspraak en -wetgeving (docs/FORK.md)
 import { BwbArtikelSource } from "./sources/bwb-artikel.js";
 import { DsoOmgevingsdocumentenSource, DsoInputError, DSO_DOCUMENT_TYPES, DSO_PRESENTEREN_BASE, DSO_RODK_URL, dsoApiKeyProblem, type DsoSearchItem } from "./sources/dso-omgevingsdocumenten.js";
 import { DSO_TEXT_DEFAULT_CHARS, DSO_TEXT_MAX_CHARS, selectDsoText, zoektermWords, type DsoTextPart } from "./sources/dso-regeltekst.js";
@@ -2198,7 +2199,8 @@ export function registerTools(server: McpServer): void {
     }
   };
 
-  registerNlGovAsk(server, { config, TOOL_ANNOTATIONS, dataOverheid, cbs, tk, debatten, bekend, rijksoverheid, rijksbegroting, duo, ori, luchtmeetnet, rechtspraak, tenderned, tuchtrecht, samenwerkendeCatalogi, brpGewaspercelen, verkiezingsuitslagen, euCellar, algoritmeregister, record, algoritmeRecord, wodc, wodcRecord, uitspraakResult, wettenTekstResult, debatRecords, debatSummary, debatNotes, dsoRecord, kaartbeeldAnswer, prov, outputFormatSchema, paginationInputSchema });
+  const euTekstResult = registerEuForkTools(server, { config, TOOL_ANNOTATIONS, lido }); // FORK (docs/FORK.md)
+  registerNlGovAsk(server, { euTekstResult, config, TOOL_ANNOTATIONS, dataOverheid, cbs, tk, debatten, bekend, rijksoverheid, rijksbegroting, duo, ori, luchtmeetnet, rechtspraak, tenderned, tuchtrecht, samenwerkendeCatalogi, brpGewaspercelen, verkiezingsuitslagen, euCellar, algoritmeregister, record, algoritmeRecord, wodc, wodcRecord, uitspraakResult, wettenTekstResult, debatRecords, debatSummary, debatNotes, dsoRecord, kaartbeeldAnswer, prov, outputFormatSchema, paginationInputSchema });
 
   server.registerTool("data_politie_search", {
     description: "Search Dutch registered crime statistics (data.politie.nl / CBS dataderden OData). Filter by region (RegioS gemeente/wijk/buurt code or name), crime type (SoortMisdrijf code or name) and period. Set 'dimension' to explore valid filter values.",

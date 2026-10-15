@@ -345,6 +345,8 @@ export interface NlGovAskDeps {
   wodcRecord: (x: WodcItem) => MCPRecord;
   /** rechtspraak_uitspraak_get: a ruling by ECLI. */
   uitspraakResult: (args: { ecli: string; onderdeel: "overzicht" | "beslissing" | "overwegingen" | "volledig"; sectie?: string; zoekterm?: string; max_chars: number }) => Promise<ToolResult>;
+  /** FORK (docs/FORK.md): eurlex_tekst_get, for an EU ECLI in the question. Optional so upstream callers still compile. */
+  euTekstResult?: (args: { id: string; max_chars: number }) => Promise<ToolResult>;
   /** wetten_bwb_tekst: the text of a national law or one of its artikelen. */
   wettenTekstResult: (args: { bwb_id?: string; wet?: string; artikel?: string; peildatum?: string; zoekterm?: string; max_chars: number }) => Promise<ToolResult>;
   debatRecords: (hits: DebatHit[], maxChars: number) => Promise<MCPRecord[]>;
@@ -359,6 +361,7 @@ export interface NlGovAskDeps {
 }
 
 export function registerNlGovAsk(server: McpServer, deps: NlGovAskDeps): void {
+  const { euTekstResult } = deps; // FORK (docs/FORK.md)
   const { config, TOOL_ANNOTATIONS, dataOverheid, cbs, tk, debatten, bekend, rijksoverheid, rijksbegroting, duo, ori, luchtmeetnet, rechtspraak, tenderned, tuchtrecht, samenwerkendeCatalogi, brpGewaspercelen, verkiezingsuitslagen, euCellar, algoritmeregister, record, algoritmeRecord, wodc, wodcRecord, uitspraakResult, wettenTekstResult, debatRecords, debatSummary, debatNotes, dsoRecord, kaartbeeldAnswer, prov, outputFormatSchema, paginationInputSchema } = deps;
 
   /**
@@ -1338,6 +1341,21 @@ export function registerNlGovAsk(server: McpServer, deps: NlGovAskDeps): void {
       }
 
       if (takes("ecli_buitenland") && foreignEclis) {
+        // FORK (docs/FORK.md): an EU ECLI is read through CELLAR by eurlex_tekst_get.
+        const euEclis = foreignEclis.filter((e) => e.startsWith("ECLI:EU:"));
+        const outs = euTekstResult && euEclis.length ? await Promise.all(euEclis.slice(0, 5).map((ecli) => euTekstResult({ id: ecli, max_chars: 4_000 }))) : [];
+        // CELLAR unreachable for every ECLI: the upstream answer below (with the EUR-Lex link) stands.
+        if (outs.some((o) => "records" in o)) {
+          const records = outs.flatMap((o) => ("records" in o ? o.records : []));
+          const said = outs.map((o) => ("records" in o ? o.access_note : o.message)).filter((n): n is string => Boolean(n));
+          return askSuccess({
+            summary: `Router: EUR-Lex/CELLAR — ${euEclis.length === 1 ? euEclis[0] : `${euEclis.length} EU-uitspraken`} gelezen (${records.length} gevonden)`,
+            records,
+            provenance: prov("nl_gov_ask", "https://publications.europa.eu/webapi/rdf/sparql", { ecli: euEclis.join(",") }, records.length, records.length),
+            access_note: mergeAccessNotes(...said, foreignEclis.length > euEclis.length ? "ECLI's van andere landen zijn niet gelezen: Rechtspraak.nl en CELLAR publiceren die niet." : undefined),
+            total: records.length,
+          });
+        }
         // No request: Rechtspraak.nl has ECLI:NL only, and eurlex_document reads legislation, not rulings.
         const eu = foreignEclis.filter((e) => e.startsWith("ECLI:EU:"));
         const other = foreignEclis.filter((e) => !e.startsWith("ECLI:EU:"));
