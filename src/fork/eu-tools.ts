@@ -11,7 +11,8 @@ import type { AppConfig, MCPRecord, ToolResult } from "../types.js";
 import type { LidoSource } from "../sources/lido.js";
 import { errorResponse, mapSourceError, nowIso, successResponse, toMcpToolPayload } from "../utils/response.js";
 import { installLidoArtikelFallback, lidoObjectFromArtikel } from "./lido-artikel.js";
-import { groepeerPerType, lidoLookups, lidoRelaties } from "./lido-relaties.js";
+import { groepeerPerType, lidoLookups, lidoRelaties, parseJci } from "./lido-relaties.js";
+import { registerWooTools } from "./woo.js";
 import { WettenBwbSource } from "../sources/wetten-bwb.js";
 import { BwbArtikelSource } from "../sources/bwb-artikel.js";
 import { CELLAR_CELEX, CELLAR_SPARQL, EURLEX_NL, EuTekstSource, type EuMetadata, type EuTekst } from "./eu-bron.js";
@@ -228,6 +229,8 @@ export interface EuForkDeps {
 export function registerEuForkTools(server: McpServer, deps: EuForkDeps): (args: EuTekstArgs) => Promise<ToolResult> {
   // Also the fork's LiDO article fallback (src/fork/lido-artikel.ts): one hook in tools.ts for both.
   installLidoArtikelFallback(deps.config);
+  // And the Woo tools (src/fork/woo.ts, woo-index.ts): woo_zoeken, woo_document_get, woo_index.
+  registerWooTools(server, deps);
   const source = new EuTekstSource(deps.config);
   const result = (args: EuTekstArgs) => euTekstResult(source, deps.lido, args);
   server.registerTool("eurlex_tekst_get", {
@@ -284,7 +287,7 @@ function registerLidoRelaties(server: McpServer, deps: EuForkDeps): void {
       "Use it to find the rulings and regulations that cite a provision or ruling (direction 'inkomend') and what it cites itself ('uitgaand'). Returns counts per document type, a breakdown per issuing body and year, and the documents grouped per type, newest first. " +
       "Filters: type ('Jurisprudentie', 'Wet', 'Amvb', 'Ministeriële-regeling', 'BWB Beleidsregel', 'Verdrag', ...), instantie (an issuing body as listed in per_instantie, e.g. 'Hoge Raad') and jaar ('2024'). For the leading case law on an article: type 'Jurisprudentie' with instantie the highest court of the field.",
     inputSchema: {
-      id: z.string().max(300).optional().describe("ECLI, BWBR, CVDR, CELEX, stb-/stcrt-publication or LiDO URI. With artikel: the BWBR of the law."),
+      id: z.string().max(300).optional().describe("ECLI, BWBR, CVDR, CELEX, stb-/stcrt-publication, LiDO URI or Juriconnect reference ('jci1.3:c:BWBR0005537&artikel=3:4'). With artikel: the BWBR of the law."),
       wet: z.string().max(200).optional().describe("Law name or abbreviation for an article ('BW', 'Awb', 'Sr', 'Wet op de ondernemingsraden'), instead of id."),
       artikel: z.string().max(60).optional().describe("Article number: '6:162' (BW, with book), '3:4' (Awb), '7:658', '350'."),
       type: z.string().max(80).optional(),
@@ -293,7 +296,11 @@ function registerLidoRelaties(server: McpServer, deps: EuForkDeps): void {
       max: z.number().int().min(1).max(500).default(100).describe("Max documents listed (counts always cover everything)."),
     },
     annotations: deps.TOOL_ANNOTATIONS,
-  }, async ({ id, wet, artikel, type, instantie, jaar, max }) => {
+  }, async ({ id: idIn, wet, artikel: artikelIn, type, instantie, jaar, max }) => {
+    // Juriconnect (jci) references name a regulation and, often, an article.
+    const jci = idIn ? parseJci(idIn) : null;
+    const id = jci ? jci.bwb : idIn;
+    const artikel = artikelIn ?? jci?.artikel;
     const label = [id, wet, artikel ? `artikel ${artikel}` : undefined].filter(Boolean).join(" ") || "(leeg)";
     const params: Record<string, string> = Object.fromEntries(Object.entries({ id, wet, artikel, type, instantie, jaar, max: String(max) }).filter(([, v]) => v)) as Record<string, string>;
     try {
@@ -324,8 +331,7 @@ function registerLidoRelaties(server: McpServer, deps: EuForkDeps): void {
         per_jaar: r.perJaar?.slice(0, 15),
         getoond: r.items.length,
         volledig: r.volledig,
-        documenten: groepeerPerType(r.items),
-        ...(r.rechtspraak ? { rechtspraak_nieuwste: groepeerPerType(r.rechtspraak).Jurisprudentie ?? [] } : {}),
+        documenten: groepeerPerType(r.items, r.rechtspraak),
       };
       return toMcpToolPayload(successResponse({
         summary: `${naam ?? label}: ${r.totaal} LiDO-relaties${r.filter ? `, ${shown ?? "?"} met filter ${Object.values(r.filter).join(", ")}` : ""}; ${r.items.length} getoond`,
@@ -335,8 +341,8 @@ function registerLidoRelaties(server: McpServer, deps: EuForkDeps): void {
           "Bron: LiDO-services (get-aantal-per-informatietype, get-links) van KOOP, CC0. richting: 'inkomend' = dat document verwijst naar het opgevraagde, 'uitgaand' = het opgevraagde verwijst ernaar. " +
           "Verwijzingen zijn grotendeels door de computer herkend ('Door computer herkende referentie'): een relatie zegt dát een document het noemt, niet hoe; open het document voor de inhoud. " +
           (r.volledig === false ? `Niet alles getoond: verhoog max (tot 500) of filter op type, instantie of jaar. ` : "") +
-          "per_instantie en per_jaar tellen alle relaties (zonder het eigen filter); de Hoge Raad heet daar 'Hoge Raad der Nederlanden', A-G-conclusies 'Parket bij de Hoge Raad'. " +
-          (r.rechtspraak ? "rechtspraak_nieuwste: de nieuwste uitspraken apart, omdat de gemengde lijst met wetten en regelingen kan beginnen. " : "") +
+          "per_instantie en per_jaar tellen zonder hun eigen filter maar met de andere filters; de Hoge Raad heet daar 'Hoge Raad der Nederlanden', A-G-conclusies 'Parket bij de Hoge Raad'. " +
+          (r.rechtspraak ? "documenten.Jurisprudentie begint met de nieuwste uitspraken, apart opgehaald omdat de gemengde lijst met wetten en regelingen kan beginnen. " : "") +
           (/^BWB[RV]\d{7}$/i.test(id ?? "") && !artikel ? "Bij een hele wet koppelt LiDO weinig: de relaties hangen aan de artikelen; vraag een artikel op (wet + artikel). " : ""),
       }));
     } catch (e) {

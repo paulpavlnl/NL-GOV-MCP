@@ -80,6 +80,11 @@ const CONNECTOR_CATEGORY: Record<string, ConnectorCategory> = {
   brp_gewaspercelen: "static",
   verkiezingsuitslagen: "static",
   eu_cellar: "static",
+  // FORK (docs/FORK.md): Woo documents. open.overheid.nl and the Woo-index register change daily;
+  // the bodies' own Woo pages (woo_index_sites) as well.
+  open_overheid: "semi_live",
+  woo_index: "semi_live",
+  woo_index_sites: "semi_live",
   lido: "semi_live",
   // A register organisations publish to themselves, a few entries a day: searched
   // like the API register and NGR catalogues.
