@@ -1,6 +1,6 @@
 # NL-GOV-MCP
 
-> **This is a fork** of [WAINUTAI/NL-GOV-MCP](https://github.com/WAINUTAI/NL-GOV-MCP), maintained by [paulpavlnl](https://github.com/paulpavlnl) for Dutch legal research. Many thanks to WAINUT for building and open-sourcing NL-GOV-MCP: this fork stands entirely on their work and follows it through a weekly upstream sync. The additions are listed under [Additions in this fork](#additions-in-this-fork-19-tools) and in [docs/FORK.md](docs/FORK.md). This fork is independent and not endorsed by WAINUT; licence and NOTICE are unchanged (Apache 2.0).
+> **This is a fork** of [WAINUTAI/NL-GOV-MCP](https://github.com/WAINUTAI/NL-GOV-MCP), maintained by [paulpavlnl](https://github.com/paulpavlnl) for Dutch legal research. Many thanks to WAINUT for building and open-sourcing NL-GOV-MCP: this fork stands entirely on their work and follows it through a weekly upstream sync. The additions are listed under [Additions in this fork](#additions-in-this-fork-28-tools) and in [docs/FORK.md](docs/FORK.md). This fork is independent and not endorsed by WAINUT; licence and NOTICE are unchanged (Apache 2.0).
 
 Dutch public-sector data is scattered across many sources that do not natively work together. CBS does not know what Tweede Kamer publishes. BAG does not know what DUO knows. Rechtspraak is disconnected from Rijksbegroting.
 
@@ -87,7 +87,7 @@ Examples:
 | Algemene Rekenkamer | Audit reports, verantwoordingsonderzoek and letters on rekenkamer.nl (the site's own RSS search; title and teaser, at most 20 per query) |
 | SCP | Rapporten, kerncijfers and Burgerperspectieven of the Sociaal en Cultureel Planbureau on scp.nl (the site's own RSS search; title and teaser, at most 20 per query) |
 
-### Additions in this fork (21 tools)
+### Additions in this fork (28 tools)
 
 Legal sources added by this fork (paulpavlnl), kept in their own files under `src/fork/` so upstream syncs stay clean. Details, upstream hooks and tests: [docs/FORK.md](docs/FORK.md).
 
@@ -337,6 +337,9 @@ Keys can come from the client (the `env` block in `claude_desktop_config.json`, 
 | `EP_ONLINE_API_KEY` | — | Required for `ep_online_energielabel` (RVO EP-Online energielabels). Without it the tool returns `not_configured`. ([request access](https://www.ep-online.nl/)) |
 | `NS_API_KEY` | — | Required for `ns_reisinformatie` (NS Reisinformatie API). Subscribe to the **"Ns-App"** product (free external tier ~300 req/5 min) — NOT the deprecated "Public-Travel-Information" product. Without it the tool returns `not_configured`. ([get a free key](https://apiportal.ns.nl/)) |
 | `DNB_API_KEY` | — | Required for `dnb_statistics_search` (DNB Statistics API, gateway `api.dnb.nl`). Subscribe to the free **"Public"** product on the portal and generate the key (self-service). Without it the tool returns `not_configured`. ([get a free key](https://api.portal.dnb.nl)) |
+| `OPENALEX_API_KEY` | — | Optional, for `literatuur_zoeken` / `literatuur_document_get` (OpenAlex). Without it OpenAlex works with a smaller daily budget. The key never appears in tool output. ([free key](https://openalex.org/settings/api)) |
+| `CORE_API_KEY` | — | Optional, for `literatuur_zoeken` with `bron: "core"` and the CORE fallback of `literatuur_document_get` (repository full texts). Without it CORE gives no full text and a tight limit. ([free key](https://core.ac.uk/services/api)) |
+| `OPENAIRE_CLIENT_ID` / `OPENAIRE_CLIENT_SECRET` | — | Optional, for `literatuur_zoeken` with `bron: "openaire"`: a registered service at [develop.openaire.eu](https://develop.openaire.eu/apis) (7200 instead of 60 requests per hour). `OPENAIRE_REFRESH_TOKEN` (personal, valid one month) works too. |
 | `LIDO_USERNAME` / `LIDO_PASSWORD` | — | Optional LiDO account for LiDO's non-public services, used by `lido_verwijzingen_lijst` (`get-links`). LiDO does not enforce it today, so the tool works without it. When both are set they are sent as HTTP Basic auth on `get-links` only. ([request via the LiDO feedback page](https://linkeddata.overheid.nl)) |
 | `MCP_TRANSPORT` | `stdio` | Transport mode: `stdio`, `sse`, or `streamable-http` (alternative to CLI flags) |
 | `LOG_LEVEL` | `info` | Pino log level (`debug`, `info`, `warn`, `error`, `silent`) |
@@ -455,7 +458,7 @@ Both DSO tools use the DSO Omgevingsdocumenten Presenteren API v8 and need `DSO_
 See:
 - `docs/ARCHITECTURE.md` — technical internals, layer diagram, request lifecycle, resilience stack
 - `docs/SOURCES.md` — endpoint details per connector
-- `docs/TOOLS.md` — full tool catalog with behavior notes
+- `docs/TOOLS.md` — catalog of the upstream tools with behavior notes; the fork's own tools are described in `docs/FORK.md`
 - `docs/BACKLOG-SOURCES.md` — planned integrations and sources checked but not built
 
 ## Contributing
