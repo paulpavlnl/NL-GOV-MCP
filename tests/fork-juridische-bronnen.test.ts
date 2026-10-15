@@ -20,7 +20,7 @@ const PUC_ZOEK = `<html><body><div class="resultaat"><p>1 t/m 20 van 78 voor: "k
 <li><a href="/svb/doc/PUC_746787_20/1">HvJ EG 22 oktober 2015, zaak C-378/14 (Trapkowski) ... persoon recht heeft op kinderbijslag ... Officiële uitspraak Kenmerk: ECLI:EU:C:2015:720, C-378/14 Uitspraakdatum: <b>22-10-2015</b> Beschikbaar: <b>18-09-2019</b></a></li>
 </ul></div></body></html>`;
 
-const PUC_DOC = `<html><body><nav><a href="/svb/">Home</a></nav><h1>Verlaging of intrekking van de uitkering (SB1407)</h1>
+const PUC_DOC = `<html><body><nav><a href="/svb/">Home</a></nav><h1>Verlaging of intrekking van de uitkering (SB1407)<div class="versiebalk">Geldigheid:<strong>01-04-2026 t/m</strong>Versie:<a href="/svb/doc/PUC_811677_20/3">◀</a>4/4<a>vergelijk</a><ul><li><a>versie 3: 03-12-2025 t/m 31-03-2026</a></li><li><a>versie 2: 28-11-2024 t/m 02-12-2025</a></li></ul>Status: <strong>Geldig vandaag</strong></div></h1>
 <div>Dit onderwerp bevat de volgende rubrieken.</div><a href="#x">Maak een PDF</a>
 <h2>Inleiding</h2><p>Deze beleidsregel gaat over het moment waarop een uitkering wordt verlaagd.</p><a href="#">Permanente link</a>
 <h3>AKW</h3><p>Bij een wijziging op de peildatum past de SVB de kinderbijslag aan.</p>
@@ -54,7 +54,8 @@ function zip(name: string, content: string): Uint8Array {
 describe("PUC", () => {
   it("builds PUC's own search URLs", () => {
     expect(pucZoekUrl({ portaal: "svb", zoekterm: "kinderbijslag buitenland", pagina: 2, geldigVandaag: true, sorteer: "datum" }))
-      .toBe("https://puc.overheid.nl/svb/zoeken/resultaat/q/kinderbijslag-wt_buitenland/p/2/gdlv/1/s/datumdocument-wt_desc/");
+      .toBe("https://puc.overheid.nl/svb/zoeken/resultaat/q/kinderbijslag-wt_buitenland/p/2/s/datumdocument-wt_desc/");
+    expect(pucZoekUrl({ portaal: "svb", zoekterm: "x", geldigVandaag: false })).toBe("https://puc.overheid.nl/svb/zoeken/resultaat/q/x/p/1/gdlv/1/");
     expect(pucZoekUrl({ zoekterm: "art. 4:84 Awb" })).toBe("https://puc.overheid.nl/zoeken/resultaat/q/art.-wt_4%3A84-wt_Awb/p/1/");
   });
 
@@ -69,6 +70,8 @@ describe("PUC", () => {
   it("reads a document: text without page furniture, metadata, relations", () => {
     const d = parsePucDocument(PUC_DOC, "PUC_811677_20");
     expect(d.titel).toBe("Verlaging of intrekking van de uitkering (SB1407)");
+    expect(d.status).toBe("Geldig vandaag");
+    expect(d.versies).toEqual([{ versie: 4, van: "01-04-2026" }, { versie: 3, van: "03-12-2025", tot: "31-03-2026" }, { versie: 2, van: "28-11-2024", tot: "02-12-2025" }]);
     expect(d.tekst).toContain("past de SVB de kinderbijslag aan");
     expect(d.tekst).not.toMatch(/Permanente link|Informatietype|Home/);
     expect(d).toMatchObject({ versie: "4", geldigheid: "van 01-04-2026 tot en met", documentsoort: "Beleidsregel niet in wetten.nl", organisatie: "Sociale Verzekeringsbank", kenmerk: "SB1407" });
@@ -80,7 +83,7 @@ describe("PUC", () => {
     vi.stubGlobal("fetch", vi.fn(async () => htmlResponse(PUC_ZOEK)));
     const out = await call("puc_zoeken", { zoekterm: "kinderbijslag buitenland", portaal: "svb" });
     expect(out.records[0].title).toContain("SB1414");
-    expect(out.provenance.endpoint).toContain("/svb/zoeken/resultaat/q/kinderbijslag-wt_buitenland/p/1/gdlv/1/");
+    expect(out.provenance.endpoint).toBe("https://puc.overheid.nl/svb/zoeken/resultaat/q/kinderbijslag-wt_buitenland/p/1/");
   });
 });
 
