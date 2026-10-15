@@ -272,6 +272,9 @@ const ACCESS_NOTE_LINKS =
   "De lijst staat ook op portal_url.";
 
 export class LidoSource {
+  /** FORK (docs/FORK.md): LiDO object of an article get-id does not know, via the BWB toestand. */
+  static artikelFallback?: (bwbId: string, artikel: string) => Promise<string | null>;
+
   constructor(private readonly config: AppConfig) {}
 
   private async fetchXml(service: string, query: Record<string, string>, headers?: Record<string, string>) {
@@ -290,6 +293,11 @@ export class LidoSource {
     const ref = artikel !== null ? `${value}&artikel=${artikel}` : value;
     const idResp = await this.fetchXml("get-id", { "juriconnect-ref": ref });
     const found = textOf(idResp.root.id)?.trim();
+    if (!found && artikel !== null && LidoSource.artikelFallback) {
+      // FORK (docs/FORK.md): "6:162" BW and "3:4" Awb are unknown to get-id.
+      const viaToestand = await LidoSource.artikelFallback(value, artikel).catch(() => null);
+      if (viaToestand) return { id: viaToestand, url: idResp.url, ref };
+    }
     return { id: found ? found : null, url: idResp.url, ref };
   }
 

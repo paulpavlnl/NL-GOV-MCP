@@ -10,6 +10,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AppConfig, MCPRecord, ToolResult } from "../types.js";
 import type { LidoSource } from "../sources/lido.js";
 import { errorResponse, mapSourceError, nowIso, successResponse, toMcpToolPayload } from "../utils/response.js";
+import { installLidoArtikelFallback } from "./lido-artikel.js";
 import { CELLAR_CELEX, CELLAR_SPARQL, EURLEX_NL, EuTekstSource, type EuMetadata, type EuTekst } from "./eu-bron.js";
 import {
   analyseUitspraak,
@@ -222,6 +223,8 @@ export interface EuForkDeps {
 
 /** Registers the fork's EU tools; returns the result function for nl_gov_ask. */
 export function registerEuForkTools(server: McpServer, deps: EuForkDeps): (args: EuTekstArgs) => Promise<ToolResult> {
+  // Also the fork's LiDO article fallback (src/fork/lido-artikel.ts): one hook in tools.ts for both.
+  installLidoArtikelFallback(deps.config);
   const source = new EuTekstSource(deps.config);
   const result = (args: EuTekstArgs) => euTekstResult(source, deps.lido, args);
   server.registerTool("eurlex_tekst_get", {

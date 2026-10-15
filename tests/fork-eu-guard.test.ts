@@ -36,7 +36,7 @@ beforeEach(() => {
 
 describe("fork EU module survives upstream merges", () => {
   it("keeps its own files", () => {
-    for (const f of ["src/fork/eu-tekst.ts", "src/fork/eu-bron.ts", "src/fork/eu-tools.ts", "docs/FORK.md"]) expect(existsSync(new URL(f, root)), f).toBe(true);
+    for (const f of ["src/fork/eu-tekst.ts", "src/fork/eu-bron.ts", "src/fork/eu-tools.ts", "src/fork/lido-artikel.ts", "docs/FORK.md"]) expect(existsSync(new URL(f, root)), f).toBe(true);
   });
 
   it("keeps the hooks in upstream files", () => {
@@ -48,6 +48,9 @@ describe("fork EU module survives upstream merges", () => {
     expect(ask).toContain("euTekstResult?: (args: { id: string; max_chars: number }) => Promise<ToolResult>;");
     expect(ask).toContain("const { euTekstResult } = deps;");
     expect(ask).toContain("if (outs.some((o) => \"records\" in o))");
+    const lido = read("src/sources/lido.ts");
+    expect(lido).toContain("static artikelFallback?: (bwbId: string, artikel: string) => Promise<string | null>;");
+    expect(lido).toContain("LidoSource.artikelFallback(value, artikel)");
   });
 
   it("registers eurlex_tekst_get next to the upstream EU tools", async () => {
