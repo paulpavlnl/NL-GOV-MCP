@@ -197,9 +197,10 @@ export function registerGeschilbeslechting(server: McpServer, deps: { TOOL_ANNOT
   });
 
   server.registerTool("crm_oordelen_zoeken", {
-    description: "Search oordelen of the College voor de Rechten van de Mens (equal treatment; before 2012 the Commissie Gelijke Behandeling): free text (operators EN/OF/NIET, * and \"…\"~10), year, discriminatiegrond ('geslacht', 'handicap of chronische ziekte', 'leeftijd', 'ras'…), terrein ('Arbeid', 'Goederen en diensten - Onderwijs'…) and outcome ('Verboden onderscheid', 'Geen verboden onderscheid'). Returns number, title, date and link; read with geschil_uitspraak_get.",
+    description: "Search oordelen of the College voor de Rechten van de Mens (equal treatment; before 2012 the Commissie Gelijke Behandeling): free text (operators EN/OF/NIET, * and \"…\"~10), year, oordeelnummer ('2026-122'), discriminatiegrond ('geslacht', 'handicap of chronische ziekte', 'leeftijd', 'ras'…), terrein ('Arbeid', 'Goederen en diensten - Onderwijs'…) and outcome ('Verboden onderscheid', 'Geen verboden onderscheid'). Returns number, title, date and link; read with geschil_uitspraak_get.",
     inputSchema: {
       zoekterm: z.string().max(200).optional(), jaar: z.string().regex(/^\d{4}$/).optional(),
+      nummer: z.string().regex(/^\d{4}-\d{1,4}$/).optional().describe("Oordeelnummer, bijv. '2026-122'"),
       discriminatiegrond: z.string().max(80).optional(), terrein: z.string().max(80).optional(), uitkomst: z.string().max(60).optional(),
       pagina: z.number().int().min(1).max(200).default(1),
     },
@@ -210,6 +211,8 @@ export function registerGeschilbeslechting(server: McpServer, deps: { TOOL_ANNOT
       u.searchParams.set("verstuurd", "true");
       if (a.zoekterm) u.searchParams.set("ZoekTerm", a.zoekterm);
       if (a.jaar) u.searchParams.set("Jaar", a.jaar);
+      // The site's Nummer field takes only the sequence number; the year goes in Jaar.
+      if (a.nummer) { const [j, n] = a.nummer.split("-"); u.searchParams.set("Jaar", j); u.searchParams.set("Nummer", String(Number(n))); }
       for (const [veld, naam] of [["discriminatiegrond", "Discriminatiegronden"], ["terrein", "Terreinen"], ["uitkomst", "Dictum"]] as const) {
         const v = a[veld];
         if (!v) continue;
