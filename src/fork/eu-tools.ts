@@ -13,6 +13,7 @@ import { errorResponse, mapSourceError, nowIso, successResponse, toMcpToolPayloa
 import { installLidoArtikelFallback, lidoObjectFromArtikel } from "./lido-artikel.js";
 import { groepeerPerType, lidoLookups, lidoRelaties, parseJci } from "./lido-relaties.js";
 import { registerWooTools } from "./woo.js";
+import { registerJuridischeBronnen } from "./juridische-bronnen.js";
 import { WettenBwbSource } from "../sources/wetten-bwb.js";
 import { BwbArtikelSource } from "../sources/bwb-artikel.js";
 import { CELLAR_CELEX, CELLAR_SPARQL, EURLEX_NL, EuTekstSource, type EuMetadata, type EuTekst } from "./eu-bron.js";
@@ -231,6 +232,8 @@ export function registerEuForkTools(server: McpServer, deps: EuForkDeps): (args:
   installLidoArtikelFallback(deps.config);
   // And the Woo tools (src/fork/woo.ts, woo-index.ts): woo_zoeken, woo_document_get, woo_index.
   registerWooTools(server, deps);
+  // And PUC, the ACOI Woo-jurisprudentie and the ANBI register (src/fork/juridische-bronnen.ts).
+  registerJuridischeBronnen(server, deps);
   const source = new EuTekstSource(deps.config);
   const result = (args: EuTekstArgs) => euTekstResult(source, deps.lido, args);
   server.registerTool("eurlex_tekst_get", {

@@ -41,3 +41,13 @@ Alle relaties die LiDO heeft voor één overheidsdocument: rechtspraak (ECLI:NL/
 - `woo_index`: de Woo-index uit het Register van Overheidsorganisaties (`api-organisaties.overheid.nl/v1/overheidsorganisaties/{tooi}/woo`, dezelfde gegevens als organisaties.overheid.nl/woo en open.overheid.nl/verwijzingen): per informatiecategorie waar het orgaan publiceert. De tool volgt die links: lijst-API's achter de pagina (uwv.nl: `fetch-results`, POST `{cluster:n}`), gewone HTML-links, op diepte 2 de bijlagen (PDF's) van gevonden subpagina's, en de zoekvragen naar zoek.officielebekendmakingen.nl via SRU (met de zoekterm). Raadsinformatiesystemen verwijzen naar `ori_search`. Alleen openbare webadressen worden opgehaald (geen IP-adressen, localhost of interne namen). Vergelijkt met het aantal documenten op open.overheid.nl.
 
 Geregistreerd vanuit `registerEuForkTools`. Eén koppeling in upstream-code: de drie connectornamen `open_overheid`, `woo_index` en `woo_index_sites` in `src/utils/connector-runtime.ts` (gemarkeerd `FORK`; valt die bij een sync weg, dan faalt `tests/connector-runtime.test.ts`). Tests: `tests/fork-woo.test.ts`.
+
+## Uitvoeringsinformatie, Woo-jurisprudentie en ANBI (`src/fork/juridische-bronnen.ts`)
+
+Gevonden bij een scan van data.overheid.nl op bronnen voor juristen die de upstream-tools niet dekken:
+
+- `puc_zoeken` / `puc_document_get`: PUC Open Data (puc.overheid.nl, KOOP): SVB Beleidsregels, IND werkinstructies en informatieberichten, RSJ-uitspraken, NZa-beleidsregels, ministeriële en Defensie publicaties. Zoekpagina's (`/{portaal}/zoeken/resultaat/q/{term}/p/{n}/[gdlv/1/]`) en documentpagina's (`/doc/PUC_…[/{versie}]`): tekst, versie en geldigheid, kenmerk en relaties (Juriconnect-artikelen, ECLI's, Staatscourant). PUC antwoordt alleen vanuit Europa (de Render-server staat in Frankfurt).
+- `woo_jurisprudentie_zoeken`: de Woo-jurisprudentiedatabase van het ACOI (woo-wijzer.acoi.nl) via de JSON-RPC van de site (`/wh_services/acoi/jurisprudentie/`, `SearchJurisprudentie`): zoekterm, instantie, weigeringsgrond (art. 5.1/5.2/5.3 Woo), periode, pagina.
+- `anbi_zoeken`: het ANBI-register van de Belastingdienst (open data, `anbi.zip` met XML), 12 uur gecachet; status (ook culturele ANBI) op een peildatum.
+
+Niet gebouwd: het openbaar register van de Huurcommissie (portaal zonder open koppelvlak) en de toevoegingscijfers van de Raad voor Rechtsbijstand (alleen statistiek). Connectorcategorieën `puc`, `acoi`, `anbi` in het FORK-blok van `src/utils/connector-runtime.ts`. Tests: `tests/fork-juridische-bronnen.test.ts`.

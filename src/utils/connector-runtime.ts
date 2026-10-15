@@ -85,6 +85,10 @@ const CONNECTOR_CATEGORY: Record<string, ConnectorCategory> = {
   open_overheid: "semi_live",
   woo_index: "semi_live",
   woo_index_sites: "semi_live",
+  // FORK: PUC uitvoeringsinformatie, ACOI Woo-jurisprudentie (both change weekly), ANBI register (daily file).
+  puc: "static",
+  acoi: "static",
+  anbi: "static",
   lido: "semi_live",
   // A register organisations publish to themselves, a few entries a day: searched
   // like the API register and NGR catalogues.
