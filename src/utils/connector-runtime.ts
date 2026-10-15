@@ -89,6 +89,7 @@ const CONNECTOR_CATEGORY: Record<string, ConnectorCategory> = {
   puc: "static",
   acoi: "static",
   anbi: "static",
+  geschillen: "static",
   lido: "semi_live",
   // A register organisations publish to themselves, a few entries a day: searched
   // like the API register and NGR catalogues.
