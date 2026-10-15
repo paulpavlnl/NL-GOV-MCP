@@ -169,6 +169,28 @@ export function euHtmlToLines(html: string): string[] {
   return decodeEntities(s).split("\n").map(cleanLine).filter(Boolean);
 }
 
+/**
+ * Text from the PDF of the Official Journal carries a running header and footer
+ * on every page ("30.4.2004 NL Publicatieblad van de Europese Unie L 166/", a
+ * rule of underscores, the page number): they are no part of the act.
+ */
+export function cleanPdfLines(lines: string[]): string[] {
+  const HEADER = /^\d{1,2}\.\d{1,2}\.\d{4}\s+[A-Z]{2}\s+(?:Publicatieblad|Official Journal|Journal officiel|Amtsblatt)\b/i;
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (HEADER.test(line)) continue;
+    if (/^_{5,}$/.test(line)) { if (/^\d{1,4}$/.test(lines[i + 1]?.trim() ?? "")) i++; continue; }
+    out.push(lines[i]);
+  }
+  return out;
+}
+
+/** CELLAR's placeholder for "no additional title information" on legislation. */
+export function isPlaceholderInfo(value: string | undefined): boolean {
+  return !value || /^CELEX\d*$/i.test(value.trim());
+}
+
 /* ------------------------------------------------------------------ */
 /* Language                                                            */
 /* ------------------------------------------------------------------ */

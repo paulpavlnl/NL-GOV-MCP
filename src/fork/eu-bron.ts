@@ -14,7 +14,9 @@ import {
   caseNumberCelexCandidates,
   caseResourceUri,
   detectTaal,
+  cleanPdfLines,
   ecliResourceUri,
+  isPlaceholderInfo,
   euHtmlToLines,
   instantieFromCelex,
   soortFromCelex,
@@ -205,7 +207,7 @@ export class EuTekstSource {
       partijen: first("parties")?.replace(/\.$/, ""),
       zaaknummer: zaak ?? zaakFromTitle(titleNl ?? titleEn),
       onderwerp: first("subject"),
-      aanduiding: first("info"),
+      aanduiding: isPlaceholderInfo(first("info")) ? undefined : first("info"),
       resource_type: types[0],
       ...(celex.startsWith("3") ? { in_force: force === "true" || force === "1" ? true : force === "false" || force === "0" ? false : null, eli: first("eli") } : {}),
     };
@@ -255,7 +257,7 @@ export class EuTekstSource {
 
     const pdf = await fetchPdfText(CELLAR_CELEX + celex, { connector: "eu_cellar", timeoutMs: TEXT_TIMEOUT_MS, retries: 1, maxChars: 200_000, headers: { "Accept-Language": "nl" } });
     if (pdf.ok) {
-      const lines = pdf.text.split(/\n+/).map((l) => l.replace(/\s+/g, " ").trim()).filter(Boolean);
+      const lines = cleanPdfLines(pdf.text.split(/\n+/).map((l) => l.replace(/\s+/g, " ").trim()).filter(Boolean));
       const taal = detectTaal(pdf.text);
       pogingen.push({ bron: "cellar_pdf", url: pdf.source_url, ok: true, taal });
       if (taal === "nl") return { lines, url: pdf.source_url, taal, formaat: "pdf", pogingen };
