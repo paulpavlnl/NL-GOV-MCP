@@ -78,6 +78,7 @@ describe("literatuur", () => {
     expect(urls[0]).toContain("primary_topic.subfield.id%3A3308");
     expect(urls[1]).not.toContain("3308");
     expect(r.records.map((x: { data: { vakgebied: string } }) => x.data.vakgebied)).toEqual(["Recht", "buiten Recht geclassificeerd"]);
+    expect(r.summary).toMatch(/1 publicaties binnen Recht.*aangevuld met 1 buiten Recht/);
     urls.length = 0;
     await call("literatuur_zoeken", { zoekterm: "aansprakelijkheid", vakgebied: "alle" });
     expect(urls).toHaveLength(1);
@@ -113,6 +114,7 @@ describe("literatuur", () => {
     expect(calls[1].url).toContain("fos=0505+law");
     expect(calls).toHaveLength(2); // 6 resultaten binnen Recht: niet verbreed
     expect(r.records[0].data.betrouwbaarheid).toMatch(/peer reviewed/);
+    expect(r.records[0].source_name).toBe("openaire.eu");
     expect(JSON.stringify(r)).not.toContain("TOKEN");
     vi.unstubAllEnvs(); vi.stubEnv("OPENAIRE_CLIENT_ID", "");
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({}, 429)));
