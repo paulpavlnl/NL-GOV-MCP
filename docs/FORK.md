@@ -92,3 +92,23 @@ Geen koppeling in upstream-code behalve de registratie in `eu-tools.ts`. Tests: 
 - `literatuur_document_get`: probeert alle open vindplaatsen (PDF, `citation_pdf_url` op de repositoriumpagina) en valt op DOI terug op CORE. Een OpenAIRE-id met DOI gaat via OpenAlex.
 
 Geen koppeling in upstream-code behalve de registratie in `eu-tools.ts` en de cachecategorieën `ap` en `literatuur`. Tests: `tests/fork-literatuur-toezicht.test.ts`.
+
+## Wetsgeschiedenis (`wetsgeschiedenis_get`; `src/fork/wetsgeschiedenis.ts`)
+
+- **Artikel**: wordt opgezocht in de BWB (`WettenBwbSource.tekst` en `BwbArtikelSource.getArtikel`, zoals `lido_relaties`), om de label-id te krijgen.
+- **WTI**: de wetstechnische informatie (`repository.officiele-overheidspublicaties.nl/bwb/{id}/{id}.WTI`, BW Boek 7 is ongeveer 8 MB). Onder `<wijzigingen>` staat per `<regelingelement label-id>` per versie: datum, betreft (nieuw of wijziging), dossiernummer en Staatsblad (`urlidentifier`). Aanhangige wetsvoorstellen (`betreft` Aanhangig) staan op het niveau van `<regeling>` en gelden dus voor de hele wet.
+- **Dossierkeuze**: de wet die het artikel invoerde gaat altijd mee, daarna de nieuwste wijzigingen (`max_dossiers`).
+- **Kamerstukken**: uit de KOOP-SRU (`c.product-area==officielepublicaties and w.dossiernummer==… and w.publicatienaam==Kamerstuk`). De soort volgt uit het deel van de titel na de puntkomma.
+- **Passages**: alleen in de kernstukken (MvT, RvS-advies en nader rapport, NnavV, nota van wijziging, memorie van antwoord), gevonden op het artikelnummer zoals Kamerstukken het schrijven ("artikel 7:669", "artikel 669", "art. 3:4"). De dossiers met de meeste treffers staan bovenaan.
+- **Vóór 1995**: stukken van vóór 1995 staan niet bij KOOP; de tool verwijst dan naar Staten-Generaal Digitaal.
+
+Tests: `tests/fork-wetsgeschiedenis.test.ts`.
+
+## Richtlijnen van de rechtspraak (`rechtspraak_richtlijnen`; `src/fork/richtlijnen.ts`)
+
+- **Bron**: de pagina's onder rechtspraak.nl/voor-advocaten-en-juristen/reglementen-procedures-en-formulieren; die worden op de server gerenderd, met pdf-links. Bewust geen strafrecht.
+- **Titel**: is de linktekst alleen een geldigheid ("geldig vanaf 1 juli 2026"), dan is de titel de alinea erboven die op een dubbele punt eindigt, of anders de kop.
+- **Geldigheid**: komt uit de titel ("geldig juli 2025-juni 2026", "per 1 februari 2026", "1 april 2017 - 1 februari 2026"). Per reeks (titel zonder datum) is de geldende versie de laatste die vóór de peildatum begon en niet is afgelopen.
+- **Archief**: is een pagina per jaar ingedeeld (alimentatienormen: "Aangepast Rapport Alimentatienormen 2026"), dan telt alleen het laatste jaar tot de peildatum; de oudere secties zijn archief.
+
+Tests: `tests/fork-richtlijnen.test.ts`.

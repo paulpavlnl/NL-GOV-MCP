@@ -32,7 +32,7 @@ Examples:
 
 `NL-GOV-MCP` actively retrieves and normalizes data across many sources, can combine cross-source results, and returns a consistent MCP response contract ready for assistants and automations.
 
-## Sources (50 connectors, 90 tools upstream; 116 with this fork's additions)
+## Sources (50 connectors, 90 tools upstream; 118 with this fork's additions)
 
 | Source | What it covers |
 |---|---|
@@ -111,6 +111,8 @@ Legal sources added by this fork (paulpavlnl), kept in their own files under `sr
 | European Court of Human Rights (HUDOC) | `ehrm_zoeken`, `ehrm_uitspraak_get` | Search by text, respondent State, article, Grand Chamber, importance, date and language; one judgment divided into the parties' submissions (applicant, Government, third parties), the Court's assessment (general principles, application), operative part and separate opinions; what it means for the Netherlands (res judicata when the Netherlands is the respondent State, otherwise res interpretata; final or not) and the Dutch rulings citing it (LiDO) |
 | Kifid | `kifid_zoeken` | Rulings of the Kifid (financial services complaints institute): Geschillencommissie and Commissie van Beroep, by term, category (bank, investments, mortgage, insurance, BKR …), authority and date, with summary, outcome and the passages from the full text |
 | Autoriteit Persoonsgegevens | `ap_documenten_zoeken`, `ap_document_get` | Fines, orders subject to a penalty, warnings, policy rules, guidance (normuitleg) and legislative advice of the Dutch DPA, with the text of the decision (PDF). The AP site sits behind a firewall that may refuse a server; the tool then says so and points to the official alternatives (Staatscourant, Woo, rechtspraak) |
+| Legislative history | `wetsgeschiedenis_get` | Per article (wet + artikel or BWB id): the acts that introduced or amended it, from the BWB's wetstechnische informatie (date in force, Kamerstukken dossier, Staatsblad); per dossier the parliamentary papers by kind (memorie van toelichting, advies Raad van State and nader rapport, nota naar aanleiding van het verslag, nota van wijziging, memorie van antwoord) with the passages about the article and the citation (Kamerstukken II 2013/14, 33 818, nr. 3); and the bills still pending for the law. Papers from before 1995 are not at KOOP; the tool points to Staten-Generaal Digitaal |
+| Norms and procedural rules of the judiciary | `rechtspraak_richtlijnen` | From rechtspraak.nl (no criminal law): the rapport alimentatienormen (tremanormen) with its half-yearly annexes, LOVF and LOVCK recommendations, the landelijke procesreglementen, indicatie- and liquidatietarieven, curatele/bewind recommendations and the administrative-law procedural rules; per series the version in force on a date, and its text (PDF), whole or by search term |
 | Open legal literature | `literatuur_zoeken`, `literatuur_document_get` | Dissertations, journal articles, books and reports from OpenAlex, OpenAIRE (all Dutch university repositories, peer review status, full journal citation), OAPEN/DOAB (open access books) and CORE (repository full texts); law first (works classified under Law, broadened only when that finds too little, marked), with reliability per type, and the open access text (PDF or repository page, CORE as fallback). Optional keys: `OPENALEX_API_KEY`, `CORE_API_KEY`, `OPENAIRE_CLIENT_ID`/`OPENAIRE_CLIENT_SECRET` or `OPENAIRE_REFRESH_TOKEN` (without them a smaller hourly budget) |
 
 **Research and checking.** This server is the research side: it finds and reads sources and their relations. In this fork's own setup a separate reference checker (a private MCP server, not part of this repository) checks every reference that comes out of it: does it exist, is the cited paragraph right, is the quote literal and from the court's own reasoning (not the facts or a party's position), and does it support the claim.
@@ -217,7 +219,7 @@ npm run test:live    # integration test suite (live API calls)
 
 ### Transport modes
 
-Three transport modes are supported. All expose the same 116 tools.
+Three transport modes are supported. All expose the same 118 tools.
 
 #### stdio (Claude Desktop, Claude Code)
 
