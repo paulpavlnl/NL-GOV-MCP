@@ -13,6 +13,8 @@ import {
   analyseWetgeving,
   caseNumberCelexCandidates,
   checkCitaat,
+  cleanPdfLines,
+  isPlaceholderInfo,
   detectTaal,
   euHtmlToLines,
   parseEuReferences,
@@ -138,6 +140,24 @@ describe("text parsing", () => {
     expect(detectTaal(euHtmlToLines(NY_MOLLE_KRO_HTML).join(" "))).toBe("nl");
     expect(detectTaal(euHtmlToLines(ENGLISH_HTML).join(" "))).toBe("en");
     expect(detectTaal("Le présent arrêt est rendu dans le cadre de la procédure qui est pendante devant la juridiction pour la question de la directive et des droits sur le transfert, qui est une question au sujet du droit des travailleurs.")).toBe("fr");
+  });
+});
+
+describe("clean-up", () => {
+  it("drops the Official Journal header, rule and page number from PDF text", () => {
+    expect(cleanPdfLines([
+      "1. Degenen op wie deze verordening van toepassing is, zijn slechts aan de wetgeving van één",
+      "lidstaat onderworpen.",
+      "30.4.2004 NL Publicatieblad van de Europese Unie L 166/",
+      "_______________________________________________________________________________",
+      "23",
+      "2. Voor de toepassing van deze titel",
+    ])).toEqual(["1. Degenen op wie deze verordening van toepassing is, zijn slechts aan de wetgeving van één", "lidstaat onderworpen.", "2. Voor de toepassing van deze titel"]);
+  });
+
+  it("treats CELLAR's 'CELEX1' as no title information", () => {
+    expect(isPlaceholderInfo("CELEX1")).toBe(true);
+    expect(isPlaceholderInfo("Arrest van het Hof (Eerste kamer) van 26 mei 2005.")).toBe(false);
   });
 });
 
@@ -302,7 +322,7 @@ describe("euTekstResult", () => {
   it("reads articles of a regulation and adds LiDO counts by CELEX", async () => {
     stubCellar({
       resolve: [{ key: lit("celex|32016R0679"), celex: lit("32016R0679") }],
-      meta: [{ date: lit("2016-04-27"), titleNl: lit("Verordening (EU) 2016/679 van het Europees Parlement en de Raad van 27 april 2016"), force: lit("true") }],
+      meta: [{ date: lit("2016-04-27"), titleNl: lit("Verordening (EU) 2016/679 van het Europees Parlement en de Raad van 27 april 2016"), force: lit("true"), info: lit("CELEX1") }],
       text: () => html(VERORDENING_HTML),
     });
     const lido = { references: vi.fn(async () => ({ items: [{ total_references: 1234, per_type: [{ type: "Jurisprudentie", count: 1000 }], portal_url: "https://linkeddata.overheid.nl/x" }] })) };
@@ -313,6 +333,8 @@ describe("euTekstResult", () => {
     expect(d.artikelen).toEqual([{ artikel: "1", titel: "Onderwerp en doelstellingen" }, { artikel: "3", titel: "Territoriaal toepassingsgebied" }]);
     expect(d.sectie.tekst).toContain("[artikel 3] Territoriaal toepassingsgebied");
     expect(d.lido).toMatchObject({ id: "32016R0679", total_references: 1234 });
+    expect(d.aanduiding).toBeUndefined();
+    expect(out.records[0].title).toContain("Verordening (EU) 2016/679");
     expect(lido.references).toHaveBeenCalledWith({ id: "32016R0679" });
   });
 });
