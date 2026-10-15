@@ -25,3 +25,7 @@ Alleen deze regels (gemarkeerd met `FORK`) staan in bestanden van WAINUTAI:
 De workflow *Upstream sync (WAINUTAI)* voert de tests uit, dus ook `tests/fork-eu-guard.test.ts`, en controleert apart of de koppelingen er nog zijn. Ontbreekt er een, dan staat dat in de pull request. Zet de gemarkeerde regels dan terug voordat je merget. Bij een merge-conflict in `src/tools.ts` of `src/router/nl-gov-ask.ts`: neem de versie van WAINUTAI en voeg de `FORK`-regels opnieuw toe.
 
 `tests/router-new-routes.test.ts` (van WAINUTAI) is op één punt aangepast, gemarkeerd met `FORK`: een EU-ECLI wordt eerst in CELLAR opgezocht. Lukt dat niet, dan blijft het oorspronkelijke antwoord (met de EUR-Lex-link) staan.
+
+## LiDO: artikelen die get-id niet kent (`src/fork/lido-artikel.ts`)
+
+LiDO's get-id vindt geen object voor "6:162" in BW Boek 6 (LiDO kent daar "162") en voor artikelen met hoofdstuknummering zoals "3:4" Awb. `lido_verwijzingen` en `lido_verwijzingen_lijst` gaven daardoor 0 verwijzingen voor de meest geciteerde artikelen. De terugval leest label-id en inwerkingtreding uit de BWB-toestand en bouwt daarmee het LiDO-object. Koppeling in upstream-code: het statische veld `artikelFallback` en het blok in `resolveBwb` van `src/sources/lido.ts` (gemarkeerd `FORK`); geïnstalleerd vanuit `registerEuForkTools`.

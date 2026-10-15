@@ -83,7 +83,8 @@ jobs:
           grep -q 'registerEuForkTools(server' src/tools.ts || missing="$missing src/tools.ts(registerEuForkTools)"
           grep -q 'registerNlGovAsk(server, { euTekstResult,' src/tools.ts || missing="$missing src/tools.ts(euTekstResult)"
           grep -q 'const { euTekstResult } = deps;' src/router/nl-gov-ask.ts || missing="$missing src/router/nl-gov-ask.ts(euTekstResult)"
-          for f in src/fork/eu-tekst.ts src/fork/eu-bron.ts src/fork/eu-tools.ts; do [ -f "$f" ] || missing="$missing $f"; done
+          grep -q 'LidoSource.artikelFallback(value, artikel)' src/sources/lido.ts || missing="$missing src/sources/lido.ts(artikelFallback)"
+          for f in src/fork/eu-tekst.ts src/fork/eu-bron.ts src/fork/eu-tools.ts src/fork/lido-artikel.ts; do [ -f "$f" ] || missing="$missing $f"; done
           echo "missing=$missing" >> "$GITHUB_OUTPUT"
 
       - name: Push branch and open or update pull request
