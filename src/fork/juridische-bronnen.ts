@@ -351,7 +351,7 @@ export function registerJuridischeBronnen(server: McpServer, deps: { TOOL_ANNOTA
       const body = zoekterm ? passages(d.tekst, zoekterm).join("\n…\n") : d.tekst;
       const tekst = body.length > max_chars ? `${body.slice(0, max_chars)}…` : body;
       return toMcpToolPayload(successResponse({
-        summary: `${d.titel}${d.kenmerk ? ` (${d.kenmerk})` : ""}${d.geldigheid ? `, geldig ${d.geldigheid}` : ""}; ${d.relaties.length} relaties`,
+        summary: `${d.titel}${d.kenmerk && !d.titel.includes(d.kenmerk) ? ` (${d.kenmerk})` : ""}${d.geldigheid ? `, geldig ${d.geldigheid}` : ""}; ${d.relaties.length} relaties`,
         records: [{ source_name: "puc.overheid.nl", title: d.titel, canonical_url: url, data: { ...d, tekst, ingekort: body.length > max_chars, ...(zoekterm ? { zoekterm } : {}) } }],
         provenance: { tool: "puc_document_get", endpoint: url, query_params: { id, ...(versie ? { versie: String(versie) } : {}), ...(zoekterm ? { zoekterm } : {}) }, timestamp: nowIso(), returned_results: 1, total_results: 1 },
         access_note: `${PUC_NOTE} relaties: de wetsartikelen (Juriconnect-links, bruikbaar in lido_relaties), uitspraken en bekendmakingen waarnaar het document verwijst.`,
