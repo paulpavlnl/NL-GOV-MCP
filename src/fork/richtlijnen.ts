@@ -32,7 +32,7 @@ export const RICHTLIJN_PAGINAS: Record<string, { url: string; omschrijving: stri
 };
 
 const MAANDEN: Record<string, number> = { januari: 1, februari: 2, maart: 3, april: 4, mei: 5, juni: 6, juli: 7, augustus: 8, september: 9, oktober: 10, november: 11, december: 12 };
-const tekst = (h: string) => decodeEntities(h.replace(/<br\s*\/?>/gi, " ").replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+const tekst = (h: string) => decodeEntities(h.replace(/<br\s*\/?>/gi, " ").replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").replace(/ ([,.:;])/g, "$1").trim();
 const datum = (d: string | undefined, m: string | undefined, j: string) => `${j}-${String(MAANDEN[m?.toLowerCase() ?? ""] ?? 1).padStart(2, "0")}-${String(d ? Number(d) : 1).padStart(2, "0")}`;
 
 /** The first day after a month given without a day ("juni 2026" ends on 1 July 2026). */
@@ -53,16 +53,17 @@ export function geldigheid(t: string): { vanaf?: string; tot?: string } {
   return een ? { vanaf: datum(een[1], een[2], een[3]) } : {};
 }
 
-export interface RichtlijnDoc { titel: string; reeks: string; url: string; vanaf?: string; tot?: string }
+export interface RichtlijnDoc { titel: string; reeks: string; url: string; vanaf?: string; tot?: string; sectiejaar?: number }
 
 /** The PDF documents on a rechtspraak.nl page, with their title (link text, or the paragraph/heading above). */
 export function parseRichtlijnPagina(html: string): RichtlijnDoc[] {
   const uit: RichtlijnDoc[] = [];
   let kop = "", context = "";
-  const re = /<(h[2-4])\b[^>]*>([\s\S]*?)<\/\1>|<p\b[^>]*>([\s\S]*?)<\/p>|<a\b[^>]*href="([^"]+\.pdf)"[^>]*>([\s\S]*?)<\/a>/gi;
+  let sectiejaar: number | undefined;
+  const re = /<(h[2-4])\b[^>]*>([\s\S]*?)<\/\1>|<p\b[^>]*>((?:(?!<\/p>|<a\b)[\s\S])*?)<\/p>|<a\b[^>]*href="([^"]+\.pdf)"[^>]*>([\s\S]*?)<\/a>/gi;
   for (const m of html.matchAll(re)) {
-    if (m[1]) { kop = tekst(m[2]); context = ""; continue; }
-    if (m[3] !== undefined) { if (!/<a\b/i.test(m[3])) { const t = tekst(m[3]); if (t.endsWith(":")) context = t.slice(0, -1); } continue; }
+    if (m[1]) { kop = tekst(m[2]); context = ""; const j = /\b(19|20)\d{2}\b/.exec(kop)?.[0]; if (j) sectiejaar = Number(j); else if (m[1] !== "h4") sectiejaar = undefined; continue; }
+    if (m[3] !== undefined) { const t = tekst(m[3]); if (t.endsWith(":")) context = t.slice(0, -1).trim(); continue; }
     const link = tekst(m[5]).replace(/\s*-\s*U verlaat Rechtspraak\.nl$/i, "");
     const kaal = link.replace(/\s*\((?:pdf|docx?|xlsx?)[^)]*\)/gi, "").trim();
     const alleenGeldigheid = /^(?:geldig|versie|per|vanaf|tot)\b/i.test(kaal) || kaal.length < 6;
@@ -70,7 +71,7 @@ export function parseRichtlijnPagina(html: string): RichtlijnDoc[] {
     const reeks = (alleenGeldigheid ? context || kop : kaal).replace(/,?\s*(?:geldig|versie|per|vanaf)?\s*(?:\d{1,2}\s+)?(?:januari|februari|maart|april|mei|juni|juli|augustus|september|oktober|november|december)?\s*\d{4}(?:\s*(?:-|–|t\/m|tot)\s*(?:\d{1,2}\s+)?(?:januari|februari|maart|april|mei|juni|juli|augustus|september|oktober|november|december)?\s*\d{4})?/gi, "").replace(/\s+/g, " ").replace(/[,\s]+$/, "").trim();
     const url = new URL(m[4].replace(/&amp;/g, "&"), BASE).toString();
     if (uit.some((d) => d.url === url && d.titel === titel)) continue;
-    uit.push({ titel, reeks: reeks || titel, url, ...geldigheid(kaal) });
+    uit.push({ titel, reeks: reeks || titel, url, ...geldigheid(kaal), ...(sectiejaar ? { sectiejaar } : {}) });
   }
   return uit;
 }
@@ -78,6 +79,12 @@ export function parseRichtlijnPagina(html: string): RichtlijnDoc[] {
 /** Per series the version in force on the date: the latest start on or before it, not ended. */
 export function actueel(docs: RichtlijnDoc[], peildatum: string): Set<RichtlijnDoc> {
   const uit = new Set<RichtlijnDoc>();
+  // A page divided per year ("Aangepast Rapport Alimentatienormen 2026", "… 2025"): only the latest year
+  // up to the date counts; the older sections are the archive, whatever their documents are called.
+  const jaren = [...new Set(docs.map((d) => d.sectiejaar).filter((j): j is number => !!j))];
+  const peiljaar = Number(peildatum.slice(0, 4));
+  const huidigJaar = jaren.length >= 3 ? Math.max(...jaren.filter((j) => j <= peiljaar)) : undefined;
+  if (huidigJaar) docs = docs.filter((d) => !d.sectiejaar || d.sectiejaar === huidigJaar);
   for (const reeks of new Set(docs.map((d) => d.reeks))) {
     const leden = docs.filter((d) => d.reeks === reeks);
     const geldig = leden.filter((d) => (!d.vanaf || d.vanaf <= peildatum) && (!d.tot || d.tot > peildatum));
