@@ -16,6 +16,7 @@ import { registerWooTools } from "./woo.js";
 import { registerJuridischeBronnen } from "./juridische-bronnen.js";
 import { registerGeschilbeslechting } from "./geschilbeslechting.js";
 import { registerVerdragen } from "./verdragen.js";
+import { registerEhrm } from "./ehrm.js";
 import { WettenBwbSource } from "../sources/wetten-bwb.js";
 import { BwbArtikelSource } from "../sources/bwb-artikel.js";
 import { CELLAR_CELEX, CELLAR_SPARQL, EURLEX_NL, EuTekstSource, type EuMetadata, type EuTekst } from "./eu-bron.js";
@@ -239,6 +240,7 @@ export function registerEuForkTools(server: McpServer, deps: EuForkDeps): (args:
   // And rulings outside rechtspraak.nl (src/fork/geschilbeslechting.ts): RvS-zoeken, CRM, Onderwijsgeschillen, Geschillencommissie, RvA, MfN.
   registerGeschilbeslechting(server, deps);
   registerVerdragen(server, deps);
+  registerEhrm(server, deps);
   const source = new EuTekstSource(deps.config);
   const result = (args: EuTekstArgs) => euTekstResult(source, deps.lido, args);
   server.registerTool("eurlex_tekst_get", {

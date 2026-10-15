@@ -32,7 +32,7 @@ Examples:
 
 `NL-GOV-MCP` actively retrieves and normalizes data across many sources, can combine cross-source results, and returns a consistent MCP response contract ready for assistants and automations.
 
-## Sources (50 connectors, 90 tools upstream; 109 with this fork's additions)
+## Sources (50 connectors, 90 tools upstream; 111 with this fork's additions)
 
 | Source | What it covers |
 |---|---|
@@ -87,7 +87,7 @@ Examples:
 | Algemene Rekenkamer | Audit reports, verantwoordingsonderzoek and letters on rekenkamer.nl (the site's own RSS search; title and teaser, at most 20 per query) |
 | SCP | Rapporten, kerncijfers and Burgerperspectieven of the Sociaal en Cultureel Planbureau on scp.nl (the site's own RSS search; title and teaser, at most 20 per query) |
 
-### Additions in this fork (19 tools)
+### Additions in this fork (21 tools)
 
 Legal sources added by this fork (paulpavlnl), kept in their own files under `src/fork/` so upstream syncs stay clean. Details, upstream hooks and tests: [docs/FORK.md](docs/FORK.md).
 
@@ -108,6 +108,7 @@ Legal sources added by this fork (paulpavlnl), kept in their own files under `sr
 | All of the above | `geschil_uitspraak_get` | Full text of one ruling from these sites (HTML or PDF) |
 | Verdragenbank | `verdragen_zoeken`, `verdrag_get` | Every treaty binding the Kingdom: full-text and filtered search (subject, party, NL as depositary, Hague Conference), and per treaty its status per part of the Kingdom, Tractatenblad, approval act, BWB id of the consolidated text, and the parties with ratification, entry into force, reservations, objections and designated authorities |
 | HCCH | `hcch_verdrag_get` | The Hague conventions: list (incl. the main conventions of the specialised sections) and the official English text or one article, with links to status table, central authorities and explanatory reports |
+| European Court of Human Rights (HUDOC) | `ehrm_zoeken`, `ehrm_uitspraak_get` | Search by text, respondent State, article, Grand Chamber, importance, date and language; one judgment divided into the parties' submissions (applicant, Government, third parties), the Court's assessment (general principles, application), operative part and separate opinions; what it means for the Netherlands (res judicata when the Netherlands is the respondent State, otherwise res interpretata; final or not) and the Dutch rulings citing it (LiDO) |
 
 **Research and checking.** This server is the research side: it finds and reads sources and their relations. In this fork's own setup a separate reference checker (a private MCP server, not part of this repository) checks every reference that comes out of it: does it exist, is the cited paragraph right, is the quote literal and from the court's own reasoning (not the facts or a party's position), and does it support the claim.
 
@@ -213,7 +214,7 @@ npm run test:live    # integration test suite (live API calls)
 
 ### Transport modes
 
-Three transport modes are supported. All expose the same 109 tools.
+Three transport modes are supported. All expose the same 111 tools.
 
 #### stdio (Claude Desktop, Claude Code)
 
