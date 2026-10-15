@@ -112,3 +112,11 @@ Tests: `tests/fork-wetsgeschiedenis.test.ts`.
 - **Archief**: is een pagina per jaar ingedeeld (alimentatienormen: "Aangepast Rapport Alimentatienormen 2026"), dan telt alleen het laatste jaar tot de peildatum; de oudere secties zijn archief.
 
 Tests: `tests/fork-richtlijnen.test.ts`.
+
+## Sleutels op de eigen computers (`src/load-env.ts`, `scripts/update-local.mjs`)
+
+Deze repository is openbaar, dus de sleutels van de bronnen van de fork (`OPENALEX_API_KEY`, `CORE_API_KEY`, `OPENAIRE_CLIENT_ID`, `OPENAIRE_CLIENT_SECRET`) staan er niet in.
+
+- **Op Render** staan ze als omgevingsvariabelen.
+- **Op de eigen computers** leest `load-env` ze uit `bronsleutels.env` in de privé-repo `verwijzingscontrole` (of `verwijzingscontrole-en-uitbreiding`) naast deze map. `update-lokaal` werkt die repo mee bij, dus er hoeft niets te worden ingevoerd.
+- **Voorrang**: een sleutel uit dat bestand vult alleen aan wat nog niet is gezet. Een lege waarde telt als niet gezet. Een eigen `.env` en de omgeving gaan voor.
