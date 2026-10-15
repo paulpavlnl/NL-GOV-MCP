@@ -63,3 +63,11 @@ Niet gebouwd: het openbaar register van de Huurcommissie (portaal zonder open ko
 - `geschil_uitspraak_get`: leest één uitspraak van deze sites (HTML of PDF, bij MfN ook de bron-PDF), optioneel alleen passages met een zoekterm.
 
 Rolverdeling: NL-GOV-MCP vindt en leest; de verwijzingscontroleur (verify_legal_reference) controleert bestaan, r.o., citaat en bewering. Connectorcategorie `geschillen` in het FORK-blok van `src/utils/connector-runtime.ts`. Tests: `tests/fork-geschilbeslechting.test.ts`.
+
+## Verdragen (`verdragen_zoeken`, `verdrag_get`, `hcch_verdrag_get`; `src/fork/verdragen.ts`)
+
+- `verdragen_zoeken`: de Verdragenbank (verdragenbank.overheid.nl, BZ/KOOP), alle verdragen die het Koninkrijk binden. Vrije tekst via de KOOP-SRU (`repository.overheid.nl/sru`, `c.product-area==vd`, volledige gegevens: "apostille" vindt het Apostilleverdrag ook al staat dat woord niet in de Nederlandse titel); of de zoekfunctie van de site met haar filters: titel, onderwerp (`topic`), partij (`party`), Nederland depositaris; of de lijst van de Haagse Conferentie (`/nl/Verdrag/HaagseConferentie`).
+- `verdrag_get`: het verdragsrecord als XML (`repository.overheid.nl/frbr/vd/{nr}/1/xml-nl/{nr}.xml`): titel, afkorting, sluiting, status per Koninkrijksdeel, Tractatenblad, goedkeuringswet, BWBV-id van de geconsolideerde tekst (lezen met `wetten_bwb_tekst`), partijen (ondertekening, ratificatie, inwerkingtreding, opzegging, voorbehouden met tekst en bezwaren daartegen, gebiedsdelen), bezwaren tegen toetreding, aangewezen autoriteiten, depositaire mededelingen en notificaties (Nederland is depositaris van de Haagse verdragen). Met `partij` alles over die ene partij.
+- `hcch_verdrag_get`: hcch.net. Zonder `cid` de lijst: de pagina met verdragen plus de hoofdverdragen uit de *specialised sections* (apostille, service, evidence, child abduction, child support …; die staan niet op de lijstpagina), 24 uur gecachet. Met `cid` de officiële Engelse tekst, of één artikel, met links naar de HCCH-statustabel, centrale autoriteiten en de pdf's.
+
+Geen koppeling in upstream-code behalve de registratie in `eu-tools.ts`. Tests: `tests/fork-verdragen.test.ts`.
