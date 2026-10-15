@@ -103,6 +103,12 @@ export interface LidoDocument {
 }
 export interface Facet { naam: string; aantal: number }
 
+/** CELLAR titles reach LiDO with '#' between their parts ("Arrest …#Celtec Ltd tegen …#Verzoek om …"). */
+export function schoneTitel(t: string | null | undefined): string | null {
+  const v = t?.replace(/\s*#+\s*/g, " — ").replace(/^ — | — $/g, "").trim();
+  return v || null;
+}
+
 function facet(root: Node, name: string): Facet[] | null {
   const f = arr((root.facetten as Node | undefined)?.facet).find((x) => attr(x, "name") === name);
   return f ? arr((f as Node).int).map((i) => ({ naam: String(attr(i, "name") ?? ""), aantal: Number(text(i) ?? 0) })).filter((x) => x.naam).sort((a, b) => b.aantal - a.aantal) : null;
@@ -137,7 +143,7 @@ export function parseLinks(xml: string) {
     items.push({
       lidoId: id,
       id: text(ext),
-      titel: text(s.title),
+      titel: schoneTitel(text(s.title)),
       type: text(s.type),
       instantie: text(s.creator) ?? text(s.authority),
       gewijzigd: text(s.modified)?.slice(0, 10) ?? null,
@@ -149,7 +155,7 @@ export function parseLinks(xml: string) {
   const perType = facet(root, "obj_type");
   return {
     lidoId: sid,
-    titel: text(self.title),
+    titel: schoneTitel(text(self.title)),
     totaal: perType ? perType.reduce((n, t) => n + t.aantal, 0) : null,
     paginaRegels: subjects.length - 1,
     perType: perType ?? [],
@@ -157,6 +163,22 @@ export function parseLinks(xml: string) {
     perJaar: facet(root, "obj_jaar") ?? [],
     items,
   };
+}
+
+/**
+ * A Juriconnect reference (standaarden.overheid.nl/juriconnect): "jci1.3:c:BWBR0005537&hoofdstuk=3&artikel=3:4",
+ * "jci1.31:c:BWBR0005289&boek=6&titeldeel=3&artikel=162&z=2024-01-01&g=2024-01-01". Returns the BWB id and the
+ * article as the tools take it ("6:162" when the book is a separate parameter and the article has no colon).
+ */
+export function parseJci(ref: string): { bwb: string; artikel?: string; geldigOp?: string } | null {
+  const m = /^\s*jci\d+(?:\.\d+)*:[cv]:(BWB[RV]\d{7})((?:&[a-z]+=[^&\s]*)*)\s*$/i.exec(ref);
+  if (!m) return null;
+  const p = new URLSearchParams(m[2].replace(/^&/, ""));
+  const art = p.get("artikel")?.trim();
+  const boek = p.get("boek")?.trim();
+  const artikel = art ? (boek && !art.includes(":") ? `${boek}:${art}` : art) : undefined;
+  const geldigOp = p.get("g") ?? p.get("z") ?? undefined;
+  return { bwb: m[1].toUpperCase(), ...(artikel ? { artikel } : {}), ...(geldigOp ? { geldigOp } : {}) };
 }
 
 /** Decentrale regelgeving staat niet in LiDO (geen relaties, ook niet met art. 149 Gemeentewet). */
@@ -225,12 +247,16 @@ export async function lidoRelaties(
     for (const it of page.items) if (!seen.has(it.lidoId) && items.length < max) { seen.add(it.lidoId); items.push(it); }
     if (page.paginaRegels < LIDO_PAGE_ROWS) break;
   }
-  // Facets count without their own filter ({!tag=…}): a filtered total comes from that filter's facet.
-  const from = (list: Array<{ naam?: string; type?: string; aantal: number }> | undefined, name: string) => list?.find((x) => (x.naam ?? x.type) === name)?.aantal ?? 0;
+  // Facets count without their own filter ({!tag=…}) but with the other filters: the facet of any
+  // one active filter gives the total for the combination. A name missing from a long (cut) facet stays unknown.
+  const from = (list: Array<{ naam: string; aantal: number }> | undefined, name: string) => {
+    const hit = list?.find((x) => x.naam === name);
+    return hit ? hit.aantal : list && list.length >= 100 ? null : 0;
+  };
   const totaalMetFilter = !fq.length ? (firstPage?.totaal ?? null)
-    : fq.length > 1 ? null
-    : opts.type ? from(firstPage?.perType.map((p) => ({ naam: p.naam, aantal: p.aantal })), opts.type)
-    : opts.instantie ? from(firstPage?.perInstantie, opts.instantie) : from(firstPage?.perJaar, String(opts.jaar));
+    : opts.jaar ? from(firstPage?.perJaar, String(opts.jaar))
+    : opts.instantie ? from(firstPage?.perInstantie, opts.instantie)
+    : from(firstPage?.perType, opts.type!);
   let rechtspraak: LidoDocument[] | undefined;
   const nJur = telling.perType.find((t) => t.type === "Jurisprudentie")?.aantal ?? 0;
   if (!fq.length && nJur && items.filter((i) => i.type === "Jurisprudentie").length < Math.min(nJur, 25)) {
@@ -254,9 +280,14 @@ export async function lidoRelaties(
   };
 }
 
-/** Documents grouped per document type, the shape the tool returns. */
-export function groepeerPerType(items: LidoDocument[]): Record<string, Array<Omit<LidoDocument, "lidoId" | "type" | "gewijzigd">>> {
+/** Documents grouped per document type, the shape the tool returns. The separately fetched newest case law goes first in Jurisprudentie, without duplicates. */
+export function groepeerPerType(items: LidoDocument[], rechtspraak: LidoDocument[] = []): Record<string, Array<Omit<LidoDocument, "lidoId" | "type" | "gewijzigd">>> {
   const out: Record<string, Array<Omit<LidoDocument, "lidoId" | "type" | "gewijzigd">>> = {};
-  for (const { lidoId: _l, type, gewijzigd: _g, ...rest } of items) (out[type ?? "Onbekend"] ??= []).push(rest);
+  const seen = new Set<string>();
+  for (const { lidoId, type, gewijzigd: _g, ...rest } of [...rechtspraak, ...items]) {
+    if (seen.has(lidoId)) continue;
+    seen.add(lidoId);
+    (out[type ?? "Onbekend"] ??= []).push(rest);
+  }
   return out;
 }
