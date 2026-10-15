@@ -151,7 +151,7 @@ export function documentTekst(html: string): { titel?: string; tekst: string } {
   return { titel, tekst: decodeEntities(htmlNaarTekst(main.replace(/<(nav|header|form|aside)\b[\s\S]*?<\/\1>/gi, " "))) };
 }
 
-function passages(text: string, term: string, max = 25): string[] {
+export function passages(text: string, term: string, max = 25): string[] {
   const lines = text.split("\n"); const t = fold(term); const out: string[] = []; let last = -2;
   lines.forEach((l, i) => { if (out.length >= max || !fold(l).includes(t)) return; const from = Math.max(i - 1, last + 2), to = Math.min(i + 1, lines.length - 1); if (from <= to) out.push(lines.slice(from, to + 1).join("\n")); last = to - 1; });
   return out;
