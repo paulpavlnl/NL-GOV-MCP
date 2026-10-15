@@ -20,6 +20,7 @@ import { registerEhrm } from "./ehrm.js";
 import { registerLiteratuur } from "./literatuur.js";
 import { registerToezicht } from "./toezicht.js";
 import { registerWetsgeschiedenis } from "./wetsgeschiedenis.js";
+import { registerRichtlijnen } from "./richtlijnen.js";
 import { WettenBwbSource } from "../sources/wetten-bwb.js";
 import { BwbArtikelSource } from "../sources/bwb-artikel.js";
 import { CELLAR_CELEX, CELLAR_SPARQL, EURLEX_NL, EuTekstSource, type EuMetadata, type EuTekst } from "./eu-bron.js";
@@ -247,6 +248,7 @@ export function registerEuForkTools(server: McpServer, deps: EuForkDeps): (args:
   registerLiteratuur(server, deps);
   registerToezicht(server, deps);
   registerWetsgeschiedenis(server, deps);
+  registerRichtlijnen(server, deps);
   const source = new EuTekstSource(deps.config);
   const result = (args: EuTekstArgs) => euTekstResult(source, deps.lido, args);
   server.registerTool("eurlex_tekst_get", {

@@ -93,6 +93,8 @@ const CONNECTOR_CATEGORY: Record<string, ConnectorCategory> = {
   // FORK: AP-documenten (PDF-besluiten) en open vakliteratuur veranderen niet meer na publicatie.
   ap: "static",
   literatuur: "static",
+  // FORK: richtlijnen en procesreglementen van rechtspraak.nl wijzigen een paar keer per jaar.
+  rechtspraak_richtlijnen: "static",
   lido: "semi_live",
   // A register organisations publish to themselves, a few entries a day: searched
   // like the API register and NGR catalogues.
