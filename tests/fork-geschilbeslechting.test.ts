@@ -77,6 +77,14 @@ describe("tools over MCP", () => {
     expect(out.access_note).toContain("rechtspraak_get_by_ecli");
   });
 
+  it("crm_oordelen_zoeken zoekt op oordeelnummer via Nummer en Jaar", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => { urls.push(String(input instanceof Request ? input.url : input)); return htmlResponse(CRM); }));
+    await call("crm_oordelen_zoeken", { nummer: "2026-122" });
+    const q = new URL(urls.at(-1)!).searchParams;
+    expect([q.get("Nummer"), q.get("Jaar")]).toEqual(["122", "2026"]);
+  });
+
   it("onderwijsgeschillen_zoeken filtert op type en jaar via Algolia", async () => {
     let body: { facetFilters?: string[][]; query?: string } = {};
     vi.stubGlobal("fetch", vi.fn(async (_u: unknown, init?: RequestInit) => { body = JSON.parse(String(init?.body)); return jsonResponse({ nbHits: 1, hits: [{ title: "Verwijdering", link: "https://www.onderwijsgeschillen.nl/uitspraken/x/", date: "1788220800", year: "2026", acf: { pub_number: "136526" }, terms: { commission_tax: { names: ["GPO"] } } }], facets: {} }); }));

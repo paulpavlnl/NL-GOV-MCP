@@ -196,7 +196,14 @@ export async function extractPdfText(
     const { extractText, getDocumentProxy } = await import("unpdf");
     // pdf.js mutates the buffer it is handed; copy so a caller can reuse the bytes.
     const document = await getDocumentProxy(new Uint8Array(bytes), { verbosity: 0 });
-    const { totalPages, text } = await extractText(document, { mergePages: true });
+    // FORK: release the document; pdf.js otherwise keeps every parsed PDF (pages, fonts) in memory.
+    let extracted: Awaited<ReturnType<typeof extractText>>;
+    try {
+      extracted = await extractText(document, { mergePages: true });
+    } finally {
+      await document.loadingTask.destroy().catch(() => {});
+    }
+    const { totalPages, text } = extracted;
 
     const normalized = normalizePdfText(Array.isArray(text) ? text.join("\n\n") : text);
     if (!normalized) {
