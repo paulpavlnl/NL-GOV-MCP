@@ -149,7 +149,7 @@ export function registerWetsgeschiedenis(server: McpServer, deps: { config: AppC
     inputSchema: {
       wet: z.string().max(200).optional(), bwb_id: z.string().max(20).optional(), artikel: z.string().min(1).max(30),
       zoekterm: z.string().max(200).optional().describe("Search the papers for this term instead of the article number."),
-      max_dossiers: z.number().int().min(1).max(10).default(3).describe("How many introducing/amending acts to read, newest first."),
+      max_dossiers: z.number().int().min(1).max(10).default(4).describe("How many acts to read: the one that introduced the article, then the newest amendments."),
       passages: z.boolean().default(true).describe("Read the main papers and return the passages (slower)."),
       aanhangig: z.boolean().default(true).describe("Also list the bills still pending for this law."),
     },
@@ -171,9 +171,11 @@ export function registerWetsgeschiedenis(server: McpServer, deps: { config: AppC
 
       const { data: wti } = await getText(WTI_URL(bwbId), { connector: "wetten_bwb", timeoutMs: 60_000, maxResponseBytes: 80_000_000 });
       const { wijzigingen, aanhangig } = parseWti(wti, artikel.label_id);
-      const dossiers = [...new Set(wijzigingen.flatMap((w) => w.dossiers))].slice(0, a.max_dossiers);
+      // The act that introduced the article explains it most; then the newest amendments.
+      const nieuw = wijzigingen.filter((w) => w.betreft === "nieuw").flatMap((w) => w.dossiers);
+      const dossiers = [...new Set([...nieuw.slice(-1), ...wijzigingen.flatMap((w) => w.dossiers)])].slice(0, a.max_dossiers);
       const stukken = dossiers.length ? await kamerstukken(dossiers) : [];
-      const re = a.zoekterm ? new RegExp(a.zoekterm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") : artikelPatroon(artikel.artikel.includes(":") || !/:/.test(a.artikel) ? a.artikel : artikel.artikel);
+      const re = a.zoekterm ? new RegExp(a.zoekterm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") : artikelPatroon(a.artikel);
 
       const records: MCPRecord[] = [];
       for (const w of wijzigingen.filter((x) => x.dossiers.some((d) => dossiers.includes(d)))) {
@@ -207,6 +209,9 @@ export function registerWetsgeschiedenis(server: McpServer, deps: { config: AppC
         const ks = await kamerstukken(aanhangig.slice(0, 12)).catch(() => [] as Kamerstuk[]);
         pending = aanhangig.slice(0, 12).map((d) => { const k = ks.find((x) => x.id.includes(`-${d}-`)); return { dossier: d, titel: k?.dossiertitel, link: `https://zoek.officielebekendmakingen.nl/dossier/${d}` }; });
       }
+      // Dossiers whose papers discuss the article first.
+      const treffers = (r: MCPRecord) => ((r.data as { gelezen?: Array<{ passages?: unknown[] }> }).gelezen ?? []).reduce((n, g) => n + (g.passages?.length ?? 0), 0);
+      records.sort((x, y) => treffers(y) - treffers(x));
       if (pending.length) records.push(rec(`Aanhangige wetsvoorstellen die ${artikel.titel_regeling ?? bwbId} wijzigen`, `https://zoek.officielebekendmakingen.nl/`, undefined, { aanhangig: pending, let_op: "Geldt voor de hele wet, niet per artikel: kijk in het wetsvoorstel of het dit artikel raakt." }));
       return toMcpToolPayload(successResponse({
         summary: `${artikel.titel_regeling ?? bwbId}, artikel ${artikel.artikel}: ${wijzigingen.length} versie(s) in de BWB, ${dossiers.length} wetgevingsdossier(s) gelezen${pending.length ? `; ${pending.length} aanhangig(e) wetsvoorstel(len) voor deze wet` : ""}`,
