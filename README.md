@@ -1,5 +1,7 @@
 # NL-GOV-MCP
 
+> **This is a fork** of [WAINUTAI/NL-GOV-MCP](https://github.com/WAINUTAI/NL-GOV-MCP), maintained by [paulpavlnl](https://github.com/paulpavlnl) for Dutch legal research. Many thanks to WAINUT for building and open-sourcing NL-GOV-MCP: this fork stands entirely on their work and follows it through a weekly upstream sync. The additions are listed under [Additions in this fork](#additions-in-this-fork-19-tools) and in [docs/FORK.md](docs/FORK.md). This fork is independent and not endorsed by WAINUT; licence and NOTICE are unchanged (Apache 2.0).
+
 Dutch public-sector data is scattered across many sources that do not natively work together. CBS does not know what Tweede Kamer publishes. BAG does not know what DUO knows. Rechtspraak is disconnected from Rijksbegroting.
 
 `NL-GOV-MCP` connects what the Dutch government has not connected itself: **one interface, many sources, one question, one answer — with provenance**.
@@ -107,7 +109,7 @@ Legal sources added by this fork (paulpavlnl), kept in their own files under `sr
 | Verdragenbank | `verdragen_zoeken`, `verdrag_get` | Every treaty binding the Kingdom: full-text and filtered search (subject, party, NL as depositary, Hague Conference), and per treaty its status per part of the Kingdom, Tractatenblad, approval act, BWB id of the consolidated text, and the parties with ratification, entry into force, reservations, objections and designated authorities |
 | HCCH | `hcch_verdrag_get` | The Hague conventions: list (incl. the main conventions of the specialised sections) and the official English text or one article, with links to status table, central authorities and explanatory reports |
 
-**Research and checking.** This server is the research side: it finds and reads sources and their relations. The separate reference checker (`verwijzingscontrole-en-uitbreiding`, tool `verify_legal_reference`) checks every reference that comes out of it: does it exist, is the cited paragraph right, is the quote literal and from the court's own reasoning (not the facts or a party's position), and does it support the claim.
+**Research and checking.** This server is the research side: it finds and reads sources and their relations. In this fork's own setup a separate reference checker (a private MCP server, not part of this repository) checks every reference that comes out of it: does it exist, is the cited paragraph right, is the quote literal and from the court's own reasoning (not the facts or a party's position), and does it support the claim.
 
 ## Key features
 
@@ -305,7 +307,7 @@ Restart Claude Desktop after saving.
 
 ### Updating a local install
 
-`npm run update-local` (on Windows: double-click `update-lokaal.cmd` in the repo folder) updates the local servers on that machine in one go: this repo and, when it sits in the same parent folder, `verwijzingscontrole`. Per repo it switches to `main`, pulls from GitHub (fast-forward only), runs `npm install` when `package.json` changed and rebuilds when code changed. If npm fails it puts the previous version back. It leaves a repo alone when it has local changes to tracked files. Restart Claude afterwards; close Claude first when dependencies changed, because on Windows a running server keeps sharp's native file locked.
+`npm run update-local` (on Windows: double-click `update-lokaal.cmd` in the repo folder) updates the local servers on that machine in one go: this repo and, when it sits in the same parent folder as `verwijzingscontrole`, the fork's private reference checker (not needed to use this server). Per repo it switches to `main`, pulls from GitHub (fast-forward only), runs `npm install` when `package.json` changed and rebuilds when code changed. If npm fails it puts the previous version back. It leaves a repo alone when it has local changes to tracked files. Restart Claude afterwards; close Claude first when dependencies changed, because on Windows a running server keeps sharp's native file locked.
 
 A weekly GitHub Action (`upstream-sync.yml`) merges new work from WAINUTAI/NL-GOV-MCP into the branch `upstream-sync` and opens a pull request with the test results, or an issue when it conflicts with this fork.
 
