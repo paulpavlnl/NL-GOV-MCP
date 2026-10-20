@@ -133,3 +133,8 @@ Fouten van het taalmodel bij het opzoeken van juridische bronnen opvangen en erv
 - **Koppeling in upstream-code**: twee regels in `src/server.ts` (gemarkeerd `FORK`): de import en `installHallucinatieBeveiliging(server)` vóór `registerTools(server)`. Die vervangt `server.registerTool` door een omhulsel dat telt, de vijf tools aanvult en de tooldescripties uitbreidt (en `peildatum` toevoegt aan `bwb_artikel_tekst`). Plus het veld `status` in `src/sources/bwb-artikel.ts`. De workflow *Upstream sync* controleert de koppeling.
 
 Tests: `tests/fork-hallucinatie.test.ts` (tien patronen als regressietest, offline).
+
+## Nachtelijke update en upstream-sync met meldingen in Workflowy
+
+- `scripts/nachtelijke-update.mjs`: de geplande taak *MCP nachtelijke update* (door `update-lokaal.cmd` ingesteld, 03:30, ook later als de computer uit stond). Alleen als er iets bij te werken is: Claude sluiten, `update-local.mjs` (pull, install, build, terugdraaien bij een fout), rooktest per server (stdio: initialize en tools/list), Claude weer starten. Buiten 01:00-06:00 wordt een draaiende Claude nooit gesloten. Een fout wordt een taak in de Workflowy-Inbox met de computer en de oorzaak (`scripts/meld-workflowy.mjs`, `WORKFLOWY_API_KEY` uit `bronsleutels.env`).
+- `.github/workflows/upstream-sync.yml`: dagelijks; slagen type-check, build, alle tests en de controle van de fork-koppelingen, dan gaat de merge automatisch naar `main` (melding in Workflowy). Anders niets op `main`, een pull request op `upstream-sync` (of de conflicten in de samenvatting van de run) en een taak in Workflowy. Secret `WORKFLOWY_API_KEY`.

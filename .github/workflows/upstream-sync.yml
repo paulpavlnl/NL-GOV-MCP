@@ -1,15 +1,16 @@
 name: Upstream sync (WAINUTAI)
 
-# Signals new work in the original repo (WAINUTAI/NL-GOV-MCP) and prepares it
-# for this fork: once a week (and on demand) it merges upstream main into the
-# branch `upstream-sync`, runs type-check, build and tests, and opens or
-# updates a pull request listing the new upstream commits. When the merge
-# conflicts with this fork's own changes, it opens an issue instead. Nothing
-# reaches main without merging that pull request.
+# Brings new work from the original repo (WAINUTAI/NL-GOV-MCP) into this fork, every day (and on demand),
+# at the owner's request: it merges upstream main into the branch `upstream-sync` and runs type-check,
+# build and all tests (the fork's own tests included) and checks the fork's hooks (docs/FORK.md). When all
+# of that passes, the merge goes to main automatically (Render then deploys) and a note goes to the
+# Workflowy Inbox. When the merge conflicts, a test fails or a hook is missing, nothing reaches main: the
+# branch and a pull request (or, on a conflict, the run summary) say what is wrong, and a task goes to the
+# Workflowy Inbox so the daily round reports it and Claude can repair it. Secret: WORKFLOWY_API_KEY.
 
 on:
   schedule:
-    - cron: "17 6 * * 1" # Mondays 06:17 UTC
+    - cron: "17 4 * * *" # every day 04:17 UTC
   workflow_dispatch:
 
 permissions:
@@ -88,8 +89,40 @@ jobs:
           for f in src/fork/hallucinatie.ts src/fork/foutlog.ts data/bekende-valkuilen.json src/fork/eu-tekst.ts src/fork/eu-bron.ts src/fork/eu-tools.ts src/fork/lido-artikel.ts src/fork/lido-relaties.ts; do [ -f "$f" ] || missing="$missing $f"; done
           echo "missing=$missing" >> "$GITHUB_OUTPUT"
 
+      - name: Merge into main when everything passes
+        id: auto
+        if: steps.merge.outputs.conflict == 'false' && steps.test.outcome == 'success' && steps.fork.outputs.missing == ''
+        env:
+          COUNT: ${{ steps.fetch.outputs.count }}
+          WORKFLOWY_API_KEY: ${{ secrets.WORKFLOWY_API_KEY }}
+        run: |
+          git push origin HEAD:main
+          echo "merged=true" >> "$GITHUB_OUTPUT"
+          node scripts/meld-workflowy.mjs "✅ NL-GOV-MCP: $COUNT upstream-update(s) van WAINUTAI automatisch samengevoegd (tests en fork-koppelingen in orde)" "$(cat /tmp/commits.md)
+          Render deployt automatisch. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" || true
+
+      - name: Warn in Workflowy when it cannot be merged automatically
+        if: steps.fetch.outputs.count != '0' && steps.auto.outputs.merged != 'true'
+        env:
+          COUNT: ${{ steps.fetch.outputs.count }}
+          CONFLICT: ${{ steps.merge.outputs.conflict }}
+          TEST_OUTCOME: ${{ steps.test.outcome }}
+          FORK_MISSING: ${{ steps.fork.outputs.missing }}
+          WORKFLOWY_API_KEY: ${{ secrets.WORKFLOWY_API_KEY }}
+        run: |
+          if [ "$CONFLICT" = "true" ]; then wat="merge-conflict in: $(tr '\n' ' ' < /tmp/conflicts.txt)";
+          elif [ "$TEST_OUTCOME" != "success" ]; then wat="type-check, build of tests mislukt";
+          else wat="fork-koppelingen ontbreken na de merge:$FORK_MISSING"; fi
+          node scripts/meld-workflowy.mjs "⚠️ NL-GOV-MCP: $COUNT upstream-update(s) van WAINUTAI niet automatisch samengevoegd ($wat)" "Opdracht voor Claude: herstel de upstream-sync van NL-GOV-MCP (paulpavlnl/NL-GOV-MCP, branch upstream-sync, docs/FORK.md).
+          Wat: $wat
+          Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+          $( [ -f /tmp/test.log ] && tail -n 30 /tmp/test.log )
+
+          Nieuwe upstream-commits:
+          $(cat /tmp/commits.md)" || true
+
       - name: Push branch and open or update pull request
-        if: steps.merge.outputs.conflict == 'false'
+        if: steps.merge.outputs.conflict == 'false' && steps.auto.outputs.merged != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TEST_OUTCOME: ${{ steps.test.outcome }}

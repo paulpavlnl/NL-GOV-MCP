@@ -12,21 +12,27 @@
  *
  * Plain JavaScript with no dependencies, so it also works when node_modules
  * or dist is broken.
+ *
+ * FORK: also used by scripts/nachtelijke-update.mjs (the nightly run: close Claude, update, smoke test the
+ * servers, start Claude again, report a failure in the Workflowy Inbox). Run by hand, this script also
+ * registers that nightly task on Windows when it is not there yet.
  */
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const siblings = ["verwijzingscontrole", "verwijzingscontrole-en-uitbreiding"].map((n) => join(here, "..", n));
-const repos = [
+export const repos = [
   { name: "NL-GOV-MCP", root: here, build: true, entry: join(here, "dist", "src", "index.js") },
   ...siblings.filter((d) => existsSync(join(d, ".git"))).slice(0, 1)
-    .map((root) => ({ name: "verwijzingscontrole", root, build: false, entry: join(root, "server.js") })),
+    .map((root) => ({ name: "verwijzingscontrole", root, build: false, entry: join(root, "server.js"), args: ["--stdio"] })),
 ];
 
-const say = (m) => console.log(m);
+/** Everything said during this run, for the nightly log and the Workflowy report. */
+export const logboek = [];
+const say = (m) => { console.log(m); logboek.push(m); };
 function git(root, args, timeout = 60_000) {
   const r = spawnSync("git", ["-C", root, ...args], { encoding: "utf8", timeout, windowsHide: true });
   return r.status === 0 ? r.stdout.trim() : null;
@@ -47,7 +53,55 @@ export function updatePlan(changed, build) {
   return { install, build: rebuild };
 }
 
-function update({ name, root, build, entry }) {
+/** Is there anything to do for this repo (new commits on main, missing node_modules or build)? */
+export function heeftUpdate({ root, build, entry }) {
+  if (git(root, ["fetch", "--quiet", "origin", "main"]) === null) return true; // let update() report it
+  if (!existsSync(join(root, "node_modules")) || (build && !existsSync(entry))) return true;
+  return git(root, ["rev-parse", "HEAD"]) !== git(root, ["rev-parse", "origin/main"]);
+}
+
+/**
+ * Smoke test: start the server over stdio, send initialize and tools/list, and check that it answers with
+ * tools within the time-out (no Claude needed). Resolves { ok, tools?, fout? }.
+ */
+export function rookTest({ name, entry, args = [] }, timeoutMs = 30_000) {
+  return new Promise((ok) => {
+    if (!existsSync(entry)) return ok({ ok: false, fout: `${entry} ontbreekt` });
+    const p = spawn(process.execPath, [entry, ...args], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true, env: { ...process.env, FOUTLOG_UIT: "1" } });
+    let buf = "", err = "", klaar = false;
+    const einde = (r) => { if (klaar) return; klaar = true; clearTimeout(t); try { p.kill(); } catch { /* weg */ } ok(r); };
+    const t = setTimeout(() => einde({ ok: false, fout: `${name} antwoordde niet binnen ${timeoutMs / 1000} s${err ? `: ${err.trim().split("\n").slice(-3).join(" ")}` : ""}` }), timeoutMs);
+    p.stderr.on("data", (d) => { err += d; });
+    p.on("exit", (c) => einde({ ok: false, fout: `${name} stopte direct (exitcode ${c})${err ? `: ${err.trim().split("\n").slice(-5).join(" ")}` : ""}` }));
+    p.stdout.on("data", (d) => {
+      buf += d;
+      for (const l of buf.split("\n")) {
+        let m; try { m = JSON.parse(l); } catch { continue; }
+        if (m.id === 1 && m.result) p.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" })}\n`);
+        if (m.id === 2) einde(m.result?.tools?.length ? { ok: true, tools: m.result.tools.length } : { ok: false, fout: `${name} gaf geen tools` });
+      }
+    });
+    p.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "rooktest", version: "1" } } })}\n`);
+  });
+}
+
+/** Windows: register the nightly task (03:30, also later when the computer was off), unless it exists. */
+export function zorgVoorNachtelijkeTaak() {
+  if (process.platform !== "win32") return;
+  const naam = "MCP nachtelijke update";
+  if (spawnSync("schtasks", ["/Query", "/TN", naam], { windowsHide: true }).status === 0) return;
+  const script = join(here, "scripts", "nachtelijke-update.mjs");
+  const ps = [
+    `$a = New-ScheduledTaskAction -Execute '${process.execPath}' -Argument '"${script}"'`,
+    "$t = New-ScheduledTaskTrigger -Daily -At 3:30am",
+    "$s = New-ScheduledTaskSettingsSet -StartWhenAvailable -WakeToRun -ExecutionTimeLimit (New-TimeSpan -Hours 1)",
+    `Register-ScheduledTask -TaskName '${naam}' -Action $a -Trigger $t -Settings $s -Description 'Werkt NL-GOV-MCP en de verwijzingscontroleur bij en herstart Claude; meldt een fout in Workflowy.' -Force | Out-Null`,
+  ].join("; ");
+  const r = spawnSync("powershell.exe", ["-NoProfile", "-Command", ps], { encoding: "utf8", windowsHide: true });
+  say(r.status === 0 ? `\nNachtelijke taak '${naam}' ingesteld (elke nacht om 03:30).` : `\nNachtelijke taak instellen mislukt: ${(r.stderr || "").trim().slice(0, 300)}`);
+}
+
+export function update({ name, root, build, entry }) {
   say(`\n== ${name} (${root})`);
   const branch = git(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
   if (branch === null) return say("   Overgeslagen: git werkt hier niet."), false;
@@ -91,6 +145,7 @@ function update({ name, root, build, entry }) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const results = repos.map(update);
+  zorgVoorNachtelijkeTaak();
   const allOk = results.every(Boolean);
   say(allOk ? "\nKlaar. Herstart Claude (helemaal afsluiten en opnieuw openen) om de nieuwe versie te gebruiken." : "\nNiet alles is bijgewerkt; zie hierboven.");
   process.exitCode = allOk ? 0 : 1;
