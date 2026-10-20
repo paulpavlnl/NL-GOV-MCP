@@ -282,7 +282,7 @@ describe("nl_gov_ask: kaartbeeld route", () => {
   });
 
   it("takes the kaartbeeld route after the DSO and before the catalogue", () => {
-    const facts: RouteFacts = { q: "luchtfoto van visstraat 19 dordrecht", place: undefined, eu: false, dso: false, kaartbeeld: true, ecli: false, foreignEcli: false, wetArtikel: false, research: undefined, debat: false, algoritme: false, multi: false, multiSources: [], budget: false, rechtspraak: false, rijk: false, oriGemeente: false, policy: undefined, policyMunicipal: false };
+    const facts: RouteFacts = { q: "luchtfoto van visstraat 19 dordrecht", place: undefined, eu: false, dso: false, kaartbeeld: true, ecli: false, foreignEcli: false, wetArtikel: false, research: undefined, debat: false, algoritme: false, multi: false, multiSources: [], budget: false, rechtspraak: false, rijk: false, oriGemeente: false, policy: undefined, policyMunicipal: false, subsidies: undefined };
     expect(routeChain(facts)[0]).toBe("kaartbeeld");
     expect(routeChain({ ...facts, dso: true }).slice(0, 2)).toEqual(["dso", "kaartbeeld"]);
   });

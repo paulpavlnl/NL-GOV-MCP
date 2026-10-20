@@ -32,7 +32,7 @@ Examples:
 
 `NL-GOV-MCP` actively retrieves and normalizes data across many sources, can combine cross-source results, and returns a consistent MCP response contract ready for assistants and automations.
 
-## Sources (50 connectors, 90 tools upstream; 118 with this fork's additions)
+## Sources (53 connectors, 91 tools upstream; 119 with this fork's additions)
 
 | Source | What it covers |
 |---|---|
@@ -86,6 +86,9 @@ Examples:
 | WODC | Research reports of the Wetenschappelijk Onderzoek- en Datacentrum (Justitie en Veiligheid) since 1974: search in metadata and full text, filter by date, series, project number or author; per report its files and text (keyless DSpace REST API) |
 | Algemene Rekenkamer | Audit reports, verantwoordingsonderzoek and letters on rekenkamer.nl (the site's own RSS search; title and teaser, at most 20 per query) |
 | SCP | Rapporten, kerncijfers and Burgerperspectieven of the Sociaal en Cultureel Planbureau on scp.nl (the site's own RSS search; title and teaser, at most 20 per query) |
+| RVO subsidies | Subsidies and financing schemes of RVO (open data catalogue of rvo.nl, CC0, searched in full): keywords, target group, subject, sector and country; status, application period and budget as the public rvo.nl page shows them; one regeling in full with its legal references and downloads |
+| NWO and ZonMw | Open calls and subsidy rounds of NWO (with SIA, NKO and Open Science NL) and ZonMw: status as the sites show it, budget, start and deadline; one call with all its dates, budget, documents and text |
+| EU Funding & Tenders Portal | EU calls for proposals (Horizon Europe, LIFE, Digital Europe, Creative Europe, ...), cascade funding and EuropeAid calls: status, all deadlines, budget per topic and the call's budget overview; outdated index copies left out and counted |
 
 ### Additions in this fork (28 tools)
 
@@ -203,7 +206,7 @@ npm ci
 npm run build
 npm run dev                    # start stdio server (for Claude Desktop / Claude Code)
 npm run dev:sse                # SSE/HTTP server on port 3333
-npm run dev:streamable-http    # Streamable HTTP server on port 3333 (MCP spec 2025-03-26)
+npm run dev:streamable-http    # Streamable HTTP server on port 3333
 ```
 
 To verify your setup:
@@ -219,7 +222,7 @@ npm run test:live    # integration test suite (live API calls)
 
 ### Transport modes
 
-Three transport modes are supported. All expose the same 118 tools.
+Three transport modes are supported. All expose the same 119 tools.
 
 #### stdio (Claude Desktop, Claude Code)
 
@@ -242,7 +245,7 @@ npm run start:sse  # production
 | `GET /health` | Server health check |
 | `GET /health/sources` | Per-connector runtime health snapshot |
 
-#### Streamable HTTP (MCP spec 2025-03-26)
+#### Streamable HTTP
 
 ```bash
 npm run dev:streamable-http    # development
@@ -257,11 +260,13 @@ npm run start:streamable-http  # production
 | `GET /health` | Server health check |
 | `GET /health/sources` | Per-connector runtime health snapshot |
 
-Session management uses the `mcp-session-id` header.
+The server negotiates MCP protocol versions 2024-10-07 up to 2025-11-25. Session management uses the `mcp-session-id` header. Replies to `POST /mcp` come as an SSE stream; set `NL_GOV_HTTP_JSON_RESPONSE=true` to get plain `application/json` replies instead.
+
+Sessions are optional in the MCP spec. Some clients, gateways, proxies and load balancers do not pass the `mcp-session-id` header back, and then every request after `initialize` fails with `400 Server not initialized`. For those, set `NL_GOV_HTTP_STATELESS=true`: each `POST /mcp` is then served on its own, with or without a preceding `initialize` and without a session header, and `GET` and `DELETE /mcp` answer `405`. Nothing is lost, because this server keeps no per-session state. Each request builds its own server instance (about 15 MB, briefly), so `NL_GOV_HTTP_MAX_CONCURRENT` caps how many run at once; more get `503` with `Retry-After`.
 
 #### Security for the HTTP transports
 
-The SSE and Streamable HTTP transports have no authentication and listen on all interfaces by default, so Docker and network clients such as Open WebUI can reach them. For local use, bind to this machine only with `NL_GOV_HTTP_HOST=127.0.0.1`. When browsers can reach the server, set `NL_GOV_ALLOWED_ORIGINS` to the origins of your own clients so other websites cannot call it. Idle sessions are closed after `NL_GOV_SESSION_TTL_MS` and the number of sessions is capped by `NL_GOV_MAX_SESSIONS`; malformed or oversized request bodies (limit 1 MB) get a JSON-RPC error.
+The SSE and Streamable HTTP transports have no authentication and listen on all interfaces by default, so Docker and network clients such as Open WebUI can reach them. For local use, bind to this machine only with `NL_GOV_HTTP_HOST=127.0.0.1`. When browsers can reach the server, set `NL_GOV_ALLOWED_ORIGINS` to the origins of your own clients so other websites cannot call it. Idle sessions are closed after `NL_GOV_SESSION_TTL_MS` and the number of sessions is capped by `NL_GOV_MAX_SESSIONS`; malformed or oversized request bodies (limit 1 MB) get a JSON-RPC error. At startup the server logs a warning when it listens on all interfaces without an Origin allowlist. In stateless mode there is no session cap to bound the load, so put a reverse proxy with rate limiting (and authentication) in front of a server that a network can reach. `/health/sources` shows which upstream sources fail; set `NL_GOV_HTTP_SOURCE_HEALTH=false` to answer it with `404`.
 
 #### Selecting transport via environment
 
@@ -328,6 +333,10 @@ Keys can come from the client (the `env` block in `claude_desktop_config.json`, 
 | `NL_GOV_ALLOWED_ORIGINS` | — | Comma-separated allowlist of browser origins (e.g. `http://localhost:8080`) for the HTTP transports. When set, a request whose `Origin` header is not on the list gets `403`; requests without an `Origin` header are allowed |
 | `NL_GOV_SESSION_TTL_MS` | `1800000` (30 min) | HTTP sessions with no request and no open stream for this long are closed |
 | `NL_GOV_MAX_SESSIONS` | `100` | Most concurrent HTTP sessions per transport; when full, the least recently used session is closed. Each session holds roughly 14 MB, so lower this on small containers |
+| `NL_GOV_HTTP_STATELESS` | `false` | `true` serves Streamable HTTP without sessions: no `mcp-session-id`, every `POST /mcp` stands alone, `GET`/`DELETE /mcp` answer `405`. For clients, gateways and proxies that drop the session header |
+| `NL_GOV_HTTP_JSON_RESPONSE` | `false` | `true` answers Streamable HTTP POSTs with `application/json` instead of an SSE stream, with or without sessions |
+| `NL_GOV_HTTP_MAX_CONCURRENT` | `50` | Most requests served at once in stateless mode (each takes about 15 MB while it runs); more get `503` with `Retry-After` |
+| `NL_GOV_HTTP_SOURCE_HEALTH` | `true` | `false` answers `GET /health/sources` with `404`; `/health` stays |
 | `NL_GOV_TIMEZONE` | `Europe/Amsterdam` | Default timezone used by `nl_gov_ask` for natural date parsing |
 | `KNMI_API_KEY` | — | Required for KNMI weather tools ([get a free token](https://developer.dataplatform.knmi.nl/open-data-api#token)) |
 | `OVERHEID_API_KEY` | — | Required for API register tool ([request a key](https://apis.developer.overheid.nl/apis/key-aanvragen)) |
@@ -425,6 +434,15 @@ or with RD coordinates: `{ "rd_x": 105255.6, "rd_y": 425245.7 }`. Expected resul
 `lido_verwijzingen_lijst` returns that list itself: per linked document its title, type, direction (`uitgaand`: the item cites it, `inkomend`: it cites the item, `beide`), link labels and source URL. It pages upstream (`offset`/`limit`, at most 100 per call) and can filter on a LiDO document type (`type: "Wet"`, `"Jurisprudentie"`, ...), which is validated strictly before it goes into LiDO's filter. `total` counts references, as in `lido_verwijzingen`; a document linked more than once is listed once per page. The tool uses LiDO's `get-links` service, which LiDO lists under its non-public services but currently serves without login. If LiDO starts requiring an account, set `LIDO_USERNAME`/`LIDO_PASSWORD`; a 401/403 yields an error that names those variables.
 
 **Tuchtrecht is a separate source.** Disciplinary rulings against doctors, lawyers, notaries, accountants, vets and bailiffs are published on `tuchtrecht.overheid.nl`, not on Rechtspraak.nl. Use `tuchtrecht_search` for those; `nl_gov_ask` routes disciplinary questions there before it considers Rechtspraak.
+
+### Subsidies and funding calls (RVO, NWO/ZonMw, EU)
+
+Which subsidies, schemes and calls exist or are open, from three official, open sources. The legal text of a regeling is in `cvdr_search` (municipalities, provinces, water boards), `officiele_bekendmakingen_search`, `wetten_bwb_tekst` and `eurlex_search`. A status, deadline or amount the source does not give is left out and said so, never guessed.
+
+- `rvo_subsidies_search` searches every page of rvo.nl's section Subsidies en financiering (about 1,370, closed and historical regelingen and sub-pages included). RVO's open data API has no search, so the catalogue is read whole and searched in-process (all words, also inside compounds); filters `doelgroep`, `onderwerp`, `sector`, `land`, `changed_since`, `main_pages_only`. Status, application period and budget are not in the open data: they are read from each shown result's public page (at most 10, within 10 s) exactly as RVO shows them, with a note where label and dates disagree. `status` filters on them (at most 40 pages per call). `rvo_subsidie_get` reads one regeling in full, with sections, legal references and downloads.
+- `nl_onderzoek_calls_search` reads the call overviews of nwo.nl and zonmw.nl (no API): status (`actueel` by default: open or opening soon), budget (NWO), start and deadline (ZonMw). `nl_onderzoek_call_get` gives one call's dates, budget, documents and text. nwo.nl asks for a 3-second crawl delay and renders slowly, so a search reads at most 3 NWO pages; zonmw.nl asks for 4 seconds. Both delays are kept: requests to one site start at least that far apart. DUS-I is not covered: its site gives no status per regeling.
+- `eu_funding_search` searches the EU Funding & Tenders Portal (open search API, no account): calls for proposals, cascade funding and EuropeAid calls, with every deadline, the next one, and the budget per topic (`budget_scope` says what it covers). Keywords must be English. The portal index keeps outdated copies of many topics with their old status; calls without a deadline left are hidden by default and counted. `eu_funding_get` gives a topic's description, conditions, budget lines, call budget and cascade calls.
+- `nl_gov_ask` routes subsidy questions to these tools ("Welke subsidies zijn er voor waterstof?" to RVO, "open EU calls voor zorginnovatie" to the EU portal with English keywords, "NWO call ... deadline" to NWO with the closing dates read from the call pages); a question naming a gemeente or provincie as funder keeps the document routes (CVDR holds their regelingen).
 
 ### Research and audit publications (WODC, Rekenkamer, SCP)
 
