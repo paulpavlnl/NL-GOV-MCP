@@ -1,0 +1,36 @@
+{
+  "toelichting": "Bepalingen die vaak verkeerd worden aangehaald omdat ze vervallen of vernummerd zijn. Neem alleen op wat in de officiële bron (wetten.overheid.nl, officielebekendmakingen.nl) is gelezen, met vindplaats en datum van controle. Hetzelfde bestand staat in NL-GOV-MCP (data/bekende-valkuilen.json) en in de verwijzingscontroleur (bekende-valkuilen.json): wijzig beide.",
+  "valkuilen": [
+    {
+      "bwb_id": "BWBR0001827",
+      "wet": "Wetboek van Burgerlijke Rechtsvordering",
+      "afkorting": "Rv",
+      "artikel": "843a",
+      "soort": "vervallen",
+      "vervallen_per": "2025-01-01",
+      "uitleg": "Art. 843a Rv (exhibitieplicht: inzage, afschrift of uittreksel van bescheiden) is per 1 januari 2025 vervallen door de Wet vereenvoudiging en modernisering bewijsrecht. De hele Eerste afdeling van de zevende titel van het derde Boek vervalt (art. I, onderdeel X). De regeling staat nu in de artikelen 194-195a Rv (Boek 1, Negende afdeling Bewijs, § 7 Inzage, afschrift of uittreksel van gegevens); het begrip 'bescheiden' is vervangen door 'gegevens' en de partij moet 'voldoende belang' hebben in plaats van 'rechtmatig belang'.",
+      "wijzigingswet": { "titel": "Wet vereenvoudiging en modernisering bewijsrecht", "vindplaats": "Stb. 2024, 62", "url": "https://zoek.officielebekendmakingen.nl/stb-2024-62.html" },
+      "inwerkingtreding": { "vindplaats": "Stb. 2024, 72", "url": "https://zoek.officielebekendmakingen.nl/stb-2024-72.html", "tekst": "De Wet vereenvoudiging en modernisering bewijsrecht treedt in werking met ingang van 1 januari 2025." },
+      "opvolger": [
+        { "artikel": "194", "onderwerp": "recht op inzage, afschrift of uittreksel van gegevens over een rechtsbetrekking", "url": "https://wetten.overheid.nl/jci1.3:c:BWBR0001827&artikel=194" },
+        { "artikel": "195", "onderwerp": "bevel van de rechter aan de wederpartij, op verzoek, met voorwaarden, wijze en termijn van verstrekking", "url": "https://wetten.overheid.nl/jci1.3:c:BWBR0001827&artikel=195" },
+        { "artikel": "195a", "onderwerp": "inzage van gegevens bij een derde die geen partij is bij de rechtsbetrekking", "url": "https://wetten.overheid.nl/jci1.3:c:BWBR0001827&artikel=195a" }
+      ],
+      "overgangsrecht": {
+        "vindplaats": "Art. XIIA Wet vereenvoudiging en modernisering bewijsrecht (Stb. 2024, 62)",
+        "tekst": "Ten aanzien van de verdere behandeling door een rechtbank, een gerechtshof of de Hoge Raad van zaken die op de datum van inwerkingtreding van deze wet met een dagvaarding aanhangig zijn dan wel met een verzoekschrift zijn ingediend, blijft het recht zoals dat gold vóór de datum van inwerkingtreding van deze wet van toepassing.",
+        "betekenis": "Voor zaken die op 1 januari 2025 al met een dagvaarding aanhangig of met een verzoekschrift ingediend waren, blijft art. 843a Rv gelden zolang die instantie de zaak behandelt; in een nieuwe instantie of een nieuwe zaak gelden de artikelen 194-195a Rv.",
+        "url": "https://zoek.officielebekendmakingen.nl/stb-2024-62.html"
+      },
+      "laatste_tekst_peildatum": "2024-12-31",
+      "gecontroleerd_op": "2026-10-20",
+      "bronnen": [
+        "https://wetten.overheid.nl/jci1.3:c:BWBR0001827&artikel=843a&g=2024-12-31",
+        "https://wetten.overheid.nl/jci1.3:c:BWBR0001827&artikel=843a",
+        "https://wetten.overheid.nl/jci1.3:c:BWBR0001827&artikel=194",
+        "https://zoek.officielebekendmakingen.nl/stb-2024-62.html",
+        "https://zoek.officielebekendmakingen.nl/stb-2024-72.html"
+      ]
+    }
+  ]
+}

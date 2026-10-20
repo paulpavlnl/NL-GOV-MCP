@@ -40,6 +40,7 @@
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "fast-xml-parser": "^5.4.1",
+    "pg": "^8.23.1",
     "pino": "^10.3.1",
     "sharp": "^0.34.5",
     "unpdf": "^1.8.1",
@@ -48,6 +49,7 @@
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/node": "^25.3.3",
+    "@types/pg": "^8.23.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"

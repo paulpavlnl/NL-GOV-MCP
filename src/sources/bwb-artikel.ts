@@ -31,6 +31,8 @@ export interface BwbArtikel {
   pad: string;
   label_id?: string;
   inwerking?: string;
+  /** BWB status: "goed", "vervallen" or "nogniet" (FORK: used by src/fork/hallucinatie.ts). */
+  status?: string;
   bron_wijziging?: string;
   tekst: string;
   toestand: string;
@@ -208,6 +210,7 @@ export class BwbArtikelSource {
         pad: h.pad,
         label_id: labelId,
         inwerking: attr(h.openTag, "inwerking"),
+        status: attr(h.openTag, "status"),
         bron_wijziging: attr(h.openTag, "bron"),
         tekst,
         toestand: res.toestand ?? "",

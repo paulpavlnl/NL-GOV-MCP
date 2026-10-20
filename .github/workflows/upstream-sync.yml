@@ -84,7 +84,8 @@ jobs:
           grep -q 'registerNlGovAsk(server, { euTekstResult,' src/tools.ts || missing="$missing src/tools.ts(euTekstResult)"
           grep -q 'const { euTekstResult } = deps;' src/router/nl-gov-ask.ts || missing="$missing src/router/nl-gov-ask.ts(euTekstResult)"
           grep -q 'LidoSource.artikelFallback(value, artikel)' src/sources/lido.ts || missing="$missing src/sources/lido.ts(artikelFallback)"
-          for f in src/fork/eu-tekst.ts src/fork/eu-bron.ts src/fork/eu-tools.ts src/fork/lido-artikel.ts src/fork/lido-relaties.ts; do [ -f "$f" ] || missing="$missing $f"; done
+          grep -q 'installHallucinatieBeveiliging(server)' src/server.ts || missing="$missing src/server.ts(installHallucinatieBeveiliging)"
+          for f in src/fork/hallucinatie.ts src/fork/foutlog.ts data/bekende-valkuilen.json src/fork/eu-tekst.ts src/fork/eu-bron.ts src/fork/eu-tools.ts src/fork/lido-artikel.ts src/fork/lido-relaties.ts; do [ -f "$f" ] || missing="$missing $f"; done
           echo "missing=$missing" >> "$GITHUB_OUTPUT"
 
       - name: Push branch and open or update pull request
@@ -139,9 +140,15 @@ jobs:
             cat /tmp/commits.md
           } > /tmp/body.md
           title="Upstream-wijzigingen met conflicten ($COUNT commits)"
-          issue=$(gh issue list --state open --search "Upstream-wijzigingen met conflicten in:title" --json number --jq '.[0].number')
-          if [ -n "$issue" ]; then
-            gh issue edit "$issue" --title "$title" --body-file /tmp/body.md
+          # Issues staan in deze fork uit: dan de melding in de samenvatting van de run (en de run faalt niet).
+          if [ "$(gh api "repos/$GITHUB_REPOSITORY" --jq .has_issues)" = "true" ]; then
+            issue=$(gh issue list --state open --search "Upstream-wijzigingen met conflicten in:title" --json number --jq '.[0].number')
+            if [ -n "$issue" ]; then
+              gh issue edit "$issue" --title "$title" --body-file /tmp/body.md
+            else
+              gh issue create --title "$title" --body-file /tmp/body.md
+            fi
           else
-            gh issue create --title "$title" --body-file /tmp/body.md
+            { echo "## $title"; echo; cat /tmp/body.md; } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning title=$title::Upstream-commits botsen met de fork; zie de samenvatting van deze run (Issues staan uit in deze repo)."
           fi

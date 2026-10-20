@@ -8,6 +8,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { loadConfig } from "./config.js";
 import { registerTools } from "./tools.js";
+import { installHallucinatieBeveiliging } from "./fork/hallucinatie.js"; // FORK: diagnose, geldigheid, bekende valkuilen, foutlog (docs/FORK.md)
 import { getAllConnectorHealth } from "./utils/connector-runtime.js";
 import { logger } from "./utils/logger.js";
 
@@ -355,6 +356,7 @@ export function createServer(): McpServer {
     },
     { instructions: SERVER_INSTRUCTIONS },
   );
+  installHallucinatieBeveiliging(server); // FORK (docs/FORK.md)
   registerTools(server);
   return server;
 }
