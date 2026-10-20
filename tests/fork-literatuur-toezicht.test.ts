@@ -67,6 +67,23 @@ describe("literatuur", () => {
     expect(d.records[0].data.pogingen.length).toBeGreaterThan(0);
   });
 
+  it("literatuur_zoeken met bron google_books: boeken met uitgever, jaar, ISBN en inkijk, zonder de sleutel te lekken", async () => {
+    vi.stubEnv("GOOGLE_BOOKS_API_KEY", "GBGEHEIM");
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const u = String(input instanceof Request ? input.url : input); urls.push(u);
+      if (u.includes("googleapis.com/books")) return jsonResponse({ totalItems: 1, items: [{ id: "abc", volumeInfo: { title: "Rechtsgeleerd onderzoek", authors: ["C.J.J.M. Stolker"], publisher: "Boom juridisch", publishedDate: "2023", industryIdentifiers: [{ type: "ISBN_13", identifier: "9789462127000" }], description: "<p>Handboek</p>", infoLink: "https://books.google.nl/books?id=abc" }, accessInfo: { viewability: "PARTIAL" } }] });
+      return htmlResponse("niet gevonden", 404);
+    }));
+    const r = await call("literatuur_zoeken", { zoekterm: "rechtsgeleerd onderzoek", bron: "google_books", taal: "nl" });
+    const d = r.records[0].data;
+    expect([d.uitgever, d.jaar, d.isbn, d.inkijk, d.soort]).toEqual(["Boom juridisch", 2023, "9789462127000", "gedeeltelijk in te zien", "boek"]);
+    expect(r.records[0].source_name).toBe("books.google.com");
+    expect(urls[0]).toContain("key=GBGEHEIM");
+    expect(urls[0]).toContain("langRestrict=nl");
+    expect(JSON.stringify(r)).not.toContain("GBGEHEIM");
+  });
+
   it("searches law first and broadens only when that finds too little", async () => {
     const urls: string[] = [];
     const ANDER = { ...WERK, id: "https://openalex.org/W7654321", doi: "https://doi.org/10.1/ander", display_name: "Werkgeversaansprakelijkheid in de praktijk", primary_topic: { subfield: { display_name: "Political Science" } } };

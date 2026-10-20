@@ -28,9 +28,26 @@ const OPENAIRE_REFRESH_URL = "https://services.openaire.eu/uoa-user-management/a
 /** OAPEN Library en Directory of Open Access Books, als bron in OpenAlex. */
 const OAPEN_BRONNEN = "S4306402535|S4306400539";
 /** Gratis sleutels: zonder sleutel delen OpenAlex en CORE een klein budget per IP-adres. */
-const sleutel = (naam: "OPENALEX_API_KEY" | "CORE_API_KEY" | "OPENAIRE_REFRESH_TOKEN" | "OPENAIRE_CLIENT_ID" | "OPENAIRE_CLIENT_SECRET") => process.env[naam]?.trim() || undefined;
+const sleutel = (naam: "OPENALEX_API_KEY" | "CORE_API_KEY" | "OPENAIRE_REFRESH_TOKEN" | "OPENAIRE_CLIENT_ID" | "OPENAIRE_CLIENT_SECRET" | "GOOGLE_BOOKS_API_KEY") => process.env[naam]?.trim() || undefined;
 /** Een sleutel hoort nooit in de uitvoer. */
-export const zonderSleutel = (url: string) => url.replace(/([?&])api_key=[^&]*&?/, "$1").replace(/[?&]$/, "");
+export const zonderSleutel = (url: string) => url.replace(/([?&])(?:api_key|key)=[^&]*&?/, "$1").replace(/[?&]$/, "");
+export const GOOGLE_BOOKS = "https://www.googleapis.com/books/v1/volumes";
+
+/** Google Books: één boek (volume) naar de velden van literatuur_zoeken. */
+export function googleBooksWerk(i: W) {
+  const v = (i.volumeInfo ?? {}) as W;
+  const ids = (v.industryIdentifiers ?? []) as W[];
+  const isbn = ids.find((x) => x.type === "ISBN_13")?.identifier ?? ids.find((x) => x.type === "ISBN_10")?.identifier;
+  return {
+    id: `gb:${i.id}`, titel: [v.title, v.subtitle].filter(Boolean).join(": "), auteurs: (v.authors ?? []) as string[], jaar: Number(String(v.publishedDate ?? "").slice(0, 4)) || undefined,
+    datum: v.publishedDate as string | undefined, uitgever: v.publisher as string | undefined, isbn, soort: "boek", taal: v.language as string | undefined, paginas: v.pageCount as number | undefined,
+    categorieen: v.categories as string[] | undefined, beschrijving: v.description ? String(v.description).replace(/<[^>]+>/g, " ").slice(0, 800) : undefined,
+    herkomst_beschrijving: v.description ? "beschrijving van de uitgever of Google Books: voor selectie, niet om te citeren" : undefined,
+    inkijk: i.accessInfo?.viewability && i.accessInfo.viewability !== "NO_PAGES" ? (i.accessInfo.viewability === "ALL_PAGES" ? "volledig te lezen" : "gedeeltelijk in te zien") : "geen inkijk",
+    pagina: (v.infoLink ?? v.canonicalVolumeLink) as string | undefined,
+    betrouwbaarheid: "boek: controleer uitgever en druk (handboek, monografie of praktijkboek)",
+  };
+}
 const VELDEN = "id,doi,title,display_name,publication_year,publication_date,type,language,authorships,primary_location,best_oa_location,locations,open_access,cited_by_count,abstract_inverted_index,primary_topic,biblio";
 const SOORT: Record<string, string> = { proefschrift: "dissertation", artikel: "article", boek: "book|book-chapter", rapport: "report", preprint: "preprint" };
 const SOORT_NL: Record<string, string> = { dissertation: "proefschrift", article: "artikel", book: "boek", "book-chapter": "boekhoofdstuk", report: "rapport", preprint: "preprint (niet beoordeeld)", review: "recensie", other: "overig", dataset: "dataset", editorial: "redactioneel stuk", letter: "brief" };
@@ -174,7 +191,7 @@ export function pdfUitPagina(html: string, base: string): string | undefined {
   try { return m ? new URL(decodeEntities(m[1]), base).toString() : undefined; } catch { return undefined; }
 }
 
-const bronNaam = (id: string) => (id.startsWith("openaire:") ? "openaire.eu" : id.startsWith("core:") ? "core.ac.uk" : "openalex.org");
+const bronNaam = (id: string) => (id.startsWith("openaire:") ? "openaire.eu" : id.startsWith("core:") ? "core.ac.uk" : id.startsWith("gb:") ? "books.google.com" : "openalex.org");
 const rec = (title: string, url: string, date: string | undefined, snippet: string | undefined, data: Record<string, unknown>): MCPRecord => ({ source_name: bronNaam(String(data.id ?? "")), title, canonical_url: url, ...(date ? { date } : {}), ...(snippet ? { snippet: snippet.slice(0, 400) } : {}), data });
 const NOTE = "Bron: OpenAlex (open catalogus van wetenschappelijke publicaties, CC0), met de vindplaats in tijdschrift of universiteitsrepositorium. Literatuur is geen recht: gebruik haar voor uitleg, onderbouwing en de stand van de discussie, en noem auteur, titel, vindplaats, jaar en pagina. Citeer alleen uit tekst die je hebt gelezen (literatuur_document_get).";
 
@@ -223,6 +240,28 @@ export function registerLiteratuur(server: McpServer, deps: { TOOL_ANNOTATIONS: 
     } catch (e) { return toMcpToolPayload(mapSourceError(e, "CORE", CORE_API)); }
   };
 
+  /** Boeken (handboeken, monografieën, praktijkboeken) via Google Books; de enige bron hier met gesloten juridische boeken. */
+  const googleBooksZoeken = async (a: { zoekterm: string; taal?: string; pagina?: number; aantal?: number; sortering?: string }) => {
+    const k = sleutel("GOOGLE_BOOKS_API_KEY");
+    const n = Math.min(40, a.aantal ?? 15);
+    const u = new URL(GOOGLE_BOOKS);
+    u.searchParams.set("q", a.zoekterm); u.searchParams.set("printType", "books"); u.searchParams.set("maxResults", String(n));
+    u.searchParams.set("startIndex", String(((a.pagina ?? 1) - 1) * n));
+    if (a.taal && a.taal !== "alle") u.searchParams.set("langRestrict", a.taal);
+    if (a.sortering === "nieuwste") u.searchParams.set("orderBy", "newest");
+    if (k) u.searchParams.set("key", k);
+    try {
+      const r = await f(u.toString(), { headers: { Accept: "application/json" } });
+      if (r.status === 429) throw new Error(`Google Books: limiet bereikt${k ? "" : " (geen GOOGLE_BOOKS_API_KEY)"}`);
+      if (r.status !== 200) throw new Error(`Google Books antwoordde met HTTP ${r.status}`);
+      const d = JSON.parse(r.text) as W;
+      const items = ((d.items ?? []) as W[]).map(googleBooksWerk);
+      const records = items.map((w) => rec(w.titel, w.pagina ?? GOOGLE_BOOKS, w.datum, w.beschrijving, w));
+      return toMcpToolPayload(successResponse({ summary: `Google Books: ${d.totalItems ?? records.length} boeken voor '${a.zoekterm}'; ${records.length} getoond`, records, provenance: prov("literatuur_zoeken", zonderSleutel(u.toString()), a, records.length, Number(d.totalItems ?? records.length)),
+        access_note: `${NOTE} Google Books: boeken met titel, auteurs, uitgever, jaar, ISBN en of er een inkijk is; de tekst zelf is er (meestal) niet. Elke druk is een apart resultaat: kies de druk die je gebruikt. Vakgebied- en landfilters gelden hier niet. Een verwijzing naar een boek controleer je met verify_legal_reference ('literatuur: …') in de verwijzingscontroleur.` }));
+    } catch (e) { return toMcpToolPayload(mapSourceError(e, "Google Books", GOOGLE_BOOKS)); }
+  };
+
   // OpenAIRE: zonder token 60 verzoeken per uur, met token 7200. Een token geldt een uur; we bewaren het 55 minuten.
   let openaireToken: { token: string; tot: number } | undefined;
   const haalOpenaireToken = async (): Promise<string | undefined> => {
@@ -262,11 +301,11 @@ export function registerLiteratuur(server: McpServer, deps: { TOOL_ANNOTATIONS: 
   const sleutelVan = (w: { doi?: string; titel: string }) => (w.doi ?? w.titel).toLowerCase().replace(/\W+/g, "");
 
   server.registerTool("literatuur_zoeken", {
-    description: "Search legal literature in open scholarly sources (OpenAlex, OpenAIRE, CORE): dissertations (proefschriften), journal articles, books and reports, with author, institution, journal or university repository, DOI, number of citations, abstract and the open access link. Filters: soort (proefschrift, artikel, boek, rapport, alle), taal ('nl', 'en'), land of the authors' institution ('NL', 'BE', 'NL+BE'), alleen_open_access (default true), vakgebied (default recht_eerst: first works classified under Law, and only when that gives fewer than 5 results the broader search added, marked 'buiten Recht geclassificeerd'; alleen_recht; alle), years and sort order. bron openaire searches the European OpenAIRE Graph (all Dutch university repositories via NARCIS, with peer review status and the full journal citation). Each result says how reliable the type is (defended dissertation, peer-reviewed open access journal, repository, preprint). Read the text with literatuur_document_get.",
+    description: "Search legal literature in open scholarly sources (OpenAlex, OpenAIRE, CORE): dissertations (proefschriften), journal articles, books and reports, with author, institution, journal or university repository, DOI, number of citations, abstract and the open access link. Filters: soort (proefschrift, artikel, boek, rapport, alle), taal ('nl', 'en'), land of the authors' institution ('NL', 'BE', 'NL+BE'), alleen_open_access (default true), vakgebied (default recht_eerst: first works classified under Law, and only when that gives fewer than 5 results the broader search added, marked 'buiten Recht geclassificeerd'; alleen_recht; alle), years and sort order. bron openaire searches the European OpenAIRE Graph (all Dutch university repositories via NARCIS, with peer review status and the full journal citation). bron google_books finds books, also closed legal handbooks and monographs (publisher, year, ISBN, each edition separately; no text). Each result says how reliable the type is (defended dissertation, peer-reviewed open access journal, repository, preprint). Read the text with literatuur_document_get.",
     inputSchema: {
       zoekterm: z.string().min(2).max(300),
       zoeken_in: z.enum(["titel_samenvatting", "alles"]).default("titel_samenvatting").describe("titel_samenvatting: precise (title and abstract); alles: also the full text, broader but noisier. Use alles when the precise search finds too little."),
-      bron: z.enum(["openalex", "openaire", "oa_boeken", "core"]).default("openalex").describe("openalex: the broad catalogue; openaire: the European OpenAIRE Graph, strong for Dutch repositories, dissertations and peer review status (60 requests/hour without token); oa_boeken: only open access books from OAPEN and DOAB; core: CORE, repository full texts (needs CORE_API_KEY for the text)."),
+      bron: z.enum(["openalex", "openaire", "oa_boeken", "core", "google_books"]).default("openalex").describe("openalex: the broad catalogue; openaire: the European OpenAIRE Graph, strong for Dutch repositories, dissertations and peer review status (60 requests/hour without token); oa_boeken: only open access books from OAPEN and DOAB; core: CORE, repository full texts (needs CORE_API_KEY for the text); google_books: books incl. closed legal handbooks and monographs (title, authors, publisher, year, ISBN, edition, preview), no full text."),
       soort: z.enum(["proefschrift", "artikel", "boek", "rapport", "alle"]).default("alle"),
       taal: z.enum(["nl", "en", "alle"]).default("alle"), land: z.enum(["NL", "BE", "NL+BE", "alle"]).default("alle"),
       alleen_open_access: z.boolean().default(true),
@@ -278,6 +317,7 @@ export function registerLiteratuur(server: McpServer, deps: { TOOL_ANNOTATIONS: 
     annotations: deps.TOOL_ANNOTATIONS,
   }, async (a) => {
     if (a.bron === "core") return coreZoeken(a);
+    if (a.bron === "google_books") return googleBooksZoeken(a);
     const naam = a.bron === "openaire" ? "OpenAIRE" : "OpenAlex";
     const zoek = (recht: boolean) => (a.bron === "openaire" ? zoekOpenaire(a, recht) : zoekOpenalex(a, recht));
     try {
