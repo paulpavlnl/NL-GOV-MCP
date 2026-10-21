@@ -36,6 +36,18 @@ jobs:
           ref: main
           fetch-depth: 0
 
+      # Without this secret a failed merge would go unnoticed (issues are off in this fork). A missing
+      # key fails the run, so GitHub's own e-mail about a failed workflow is the signal.
+      - name: Check that warnings can reach Workflowy
+        env:
+          WORKFLOWY_API_KEY: ${{ secrets.WORKFLOWY_API_KEY }}
+        run: |
+          if [ -z "$WORKFLOWY_API_KEY" ]; then
+            echo "::error::Geheim WORKFLOWY_API_KEY ontbreekt: zonder die sleutel komt een mislukte upstream-update niet in de Workflowy-Inbox. Zet hem onder Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          echo "WORKFLOWY_API_KEY is ingesteld."
+
       - name: Fetch upstream
         id: fetch
         run: |
