@@ -573,7 +573,7 @@ const allUpstreams: Partial<Record<Upstream, Route>> = {
   dov: () => jsonResponse(ckanJson(["Dataset"])),
   rechtspraak: () => jsonResponse(rechtspraakJson(["ECLI:NL:RVS:2026:1", "ECLI:NL:RBROT:2026:2"])),
   begroting: () => begrotingIndex(),
-  apireg: () => jsonResponse({ items: [{ name: "Basisregistratie Adressen en Gebouwen (BAG)", url: "https://apis.developer.overheid.nl/apis/bag" }] }),
+  apireg: () => jsonResponse([{ id: "bag", title: "Basisregistratie Adressen en Gebouwen (BAG)", organisation: { label: "Kadaster" } }]),
 };
 
 const documentUpstreams = ["ori", "ob", "tk", "rijk"] as const;

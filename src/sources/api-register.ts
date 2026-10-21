@@ -87,34 +87,55 @@ function parseCards(pageHtml: string): Array<Record<string, unknown>> {
   return out;
 }
 
+/** Production base URL of the API register API (servers[0] in its OpenAPI spec). */
+export const API_REGISTER_API = "https://api.developer.overheid.nl/api-register/v1";
+const PORTAL = "https://apis.developer.overheid.nl/apis";
+
+/** Maps an ApiSummary (id, title, summary, description, organisation, lifecycle, adrScore) to a record item. */
+export function apiSummaryToItem(raw: unknown): Record<string, unknown> {
+  const a = (raw ?? {}) as Record<string, unknown>;
+  const org = (a.organisation ?? {}) as Record<string, unknown>;
+  const id = String(a.id ?? "");
+  const url = id ? `${PORTAL}/${id}` : PORTAL;
+  return {
+    id,
+    name: String(a.title ?? id ?? "API"),
+    organization: String(org.label ?? ""),
+    organization_uri: org.uri,
+    description: String(a.summary ?? a.description ?? ""),
+    lifecycle: a.lifecycle,
+    adr_score: a.adrScore,
+    url,
+    portalUrl: url,
+    documentation_url: url,
+    source: "developer.overheid.nl-api",
+  };
+}
+
 export class ApiRegisterSource {
   constructor(private readonly config: AppConfig, private readonly apiKey: string) {}
 
+  /**
+   * The official API register API (developer.overheid.nl, OpenAPI in
+   * github.com/developer-overheid-nl/don-api-register): GET /apis with `q` and
+   * `perPage`, the read-only key in X-Api-Key, an array of ApiSummary in return.
+   * The old guess (`<portal>/api/v1/apis`) never existed, so every search fell
+   * back to scraping the portal, which is now rendered client-side and yields nothing.
+   */
   private async tryOfficialApi(query: string, top: number) {
-    // Single attempt at the most likely JSON API endpoint.
-    // The developer.overheid.nl JSON API has been unreliable (often 404);
-    // if this fails, we fall back to HTML scraping which is reliable.
-    const endpoint = `${this.config.endpoints.apiRegister}/api/v1/apis`;
+    const endpoint = `${API_REGISTER_API}/apis`;
+    const params = { q: query, perPage: String(Math.min(100, Math.max(1, top))) };
     try {
-      const { data, meta } = await getJson<Record<string, unknown>>(endpoint, {
-        query: { q: query, limit: String(top) },
-        headers: { "X-API-Key": this.apiKey },
-        timeoutMs: 5_000,
+      const { data, meta } = await getJson<unknown>(endpoint, {
+        query: params,
+        headers: { "X-Api-Key": this.apiKey, Accept: "application/json" },
+        timeoutMs: 10_000,
       });
-
-      const items =
-        (data.items as Array<Record<string, unknown>> | undefined) ??
-        (data.apis as Array<Record<string, unknown>> | undefined) ??
-        [];
-
-      if (items.length) {
-        return { items, endpoint: meta.url, params: { q: query, limit: String(top) } };
-      }
+      if (!Array.isArray(data)) return undefined;
+      return { items: data.slice(0, top).map(apiSummaryToItem), endpoint: meta.url, params };
     } catch {
-      // JSON API not available — fall through to HTML scraping
+      return undefined;
     }
-
-    return undefined;
   }
 
   private async fallbackScrape(query: string, top: number) {
