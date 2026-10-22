@@ -53,11 +53,21 @@ export function updatePlan(changed, build) {
   return { install, build: rebuild };
 }
 
-/** Is there anything to do for this repo (new commits on main, missing node_modules or build)? */
+/** Changed files that only matter on GitHub or in tests: pulling them needs no restart of the servers. */
+export const zonderHerstart = (f) => /\.(md|txt)$/i.test(f) || /^(docs|tests|\.github)\//.test(f) || /^test[-.]/.test(f) || /^LICENSE|^NOTICE/.test(f);
+
+/**
+ * What the nightly run has to do for this repo: { bijwerken, herstart, fout? }. bijwerken: there are new
+ * commits (or node_modules/the build is missing); herstart: some of them change code the running servers use,
+ * so Claude must be closed first. GitHub unreachable: nothing to do (fout says why), never a needless restart.
+ */
 export function heeftUpdate({ root, build, entry }) {
-  if (git(root, ["fetch", "--quiet", "origin", "main"]) === null) return true; // let update() report it
-  if (!existsSync(join(root, "node_modules")) || (build && !existsSync(entry))) return true;
-  return git(root, ["rev-parse", "HEAD"]) !== git(root, ["rev-parse", "origin/main"]);
+  if (git(root, ["fetch", "--quiet", "origin", "main"]) === null) return { bijwerken: false, herstart: false, fout: "GitHub niet bereikbaar" };
+  if (!existsSync(join(root, "node_modules")) || (build && !existsSync(entry))) return { bijwerken: true, herstart: true };
+  const from = git(root, ["rev-parse", "HEAD"]), to = git(root, ["rev-parse", "origin/main"]);
+  if (from === to) return { bijwerken: false, herstart: false };
+  const changed = (git(root, ["diff", "--name-only", from, to]) ?? "").split("\n").filter(Boolean);
+  return { bijwerken: true, herstart: !changed.length || changed.some((f) => !zonderHerstart(f)) };
 }
 
 /**

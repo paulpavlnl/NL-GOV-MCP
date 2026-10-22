@@ -2,12 +2,15 @@
 /**
  * FORK: de nachtelijke update op de eigen computers (geplande taak "MCP nachtelijke update", ingesteld door
  * update-lokaal.cmd). Volgorde:
- *  1. Is er iets bij te werken (nieuwe commits, ontbrekende node_modules of build)? Zo niet: klaar, Claude blijft open.
- *  2. Claude sluiten (de servers houden anders bestanden vast). Buiten de nacht (01:00-06:00) alleen als Claude
- *     niet draait: een gemiste taak die 's ochtends alsnog start, sluit Claude nooit midden in het werk.
+ *  1. Is er iets bij te werken? Zo niet (of is GitHub onbereikbaar): klaar, Claude blijft open. Veranderen alleen
+ *     documentatie, tests of workflows, dan wordt bijgewerkt zonder Claude te sluiten.
+ *  2. Claude sluiten (de servers houden anders bestanden vast), maar alleen als vaststaat hoe hij weer te starten
+ *     is (app-ID uit Get-StartApps, of het pad). Buiten de nacht (01:00-06:00) alleen als Claude niet draait:
+ *     een gemiste taak die 's ochtends alsnog start, sluit Claude nooit midden in het werk.
  *  3. Bijwerken (update-local.mjs: pull, npm install, build; bij een fout de vorige versie terug).
  *  4. Rooktest: elke server start via stdio en geeft zijn tools.
- *  5. Claude weer starten als hij open was (of als dat 's nachts gebeurde).
+ *  5. Claude weer starten als hij open was (via de app-ID, anders het pad), en controleren dat hij binnen een
+ *     minuut echt draait; anders een tweede poging op de andere manier, en lukt dat niet: een melding.
  *  6. Mislukt er iets: een taak in de Workflowy-Inbox met de computer, wat er misging en het logboek, zodat de
  *     dagronde het meldt en Claude het kan herstellen. Logboek: %USERPROFILE%\mcp-lokaal\nachtelijke-update.log.
  *
@@ -50,36 +53,60 @@ async function sluitClaude() {
   await new Promise((r) => setTimeout(r, 3000)); // de servers (node) laten afsluiten
   return !claudeDraait();
 }
-function startClaude(pad) {
-  if (!pad) return false;
-  try { spawn("cmd.exe", ["/c", "start", "", pad], { detached: true, stdio: "ignore", windowsHide: true }).unref(); return true; } catch { return false; }
+/** De app-ID van Claude in het startmenu (werkt ook voor een Store/MSIX-installatie), of undefined. */
+function claudeAppId() {
+  if (!win) return undefined;
+  const r = ps("(Get-StartApps | Where-Object { $_.Name -eq 'Claude' } | Select-Object -First 1 -ExpandProperty AppID)");
+  return r.stdout?.trim() || undefined;
+}
+const wacht = (ms) => new Promise((r) => setTimeout(r, ms));
+/** Start Claude (eerst via de app-ID, dan via het pad) en controleer dat hij binnen een minuut draait. */
+async function startClaude({ appId, pad }) {
+  const manieren = [
+    appId && { naam: `app-ID ${appId}`, start: () => spawn("explorer.exe", [`shell:AppsFolder\\${appId}`], { detached: true, stdio: "ignore", windowsHide: true }).unref() },
+    pad && { naam: pad, start: () => spawn("cmd.exe", ["/c", "start", "", pad], { detached: true, stdio: "ignore", windowsHide: true }).unref() },
+  ].filter(Boolean);
+  for (const m of manieren) {
+    try { m.start(); } catch (e) { log(`Starten via ${m.naam} mislukt: ${e instanceof Error ? e.message : e}`); continue; }
+    for (let i = 0; i < 60; i++) { await wacht(1000); if (claudeDraait()) return { ok: true, via: m.naam }; }
+    log(`Claude draait niet na starten via ${m.naam}.`);
+  }
+  return { ok: false, via: manieren.map((m) => m.naam).join(" en ") || "geen app-ID of pad bekend" };
 }
 
 const problemen = [];
 try {
   log(`Nachtelijke update op ${computer} (${droog ? "droog" : win ? "Windows" : process.platform}).`);
-  const teDoen = repos.filter((r) => heeftUpdate(r));
-  if (!teDoen.length) { log("Alles is bij; niets gedaan."); process.exit(0); }
-  log(`Bij te werken: ${teDoen.map((r) => r.name).join(", ")}.`);
+  const plan = repos.map((r) => ({ r, ...heeftUpdate(r) }));
+  for (const p of plan.filter((x) => x.fout)) log(`${p.r.name}: ${p.fout}; overgeslagen.`);
+  const teDoen = plan.filter((x) => x.bijwerken);
+  if (!teDoen.length) { log("Niets bij te werken; Claude niet gesloten."); process.exit(0); }
+  const herstart = teDoen.some((x) => x.herstart);
+  log(`Bij te werken: ${teDoen.map((x) => x.r.name).join(", ")}${herstart ? "" : " (alleen documentatie/tests: zonder Claude te sluiten)"}.`);
 
-  const pad = claudePad();
   const wasOpen = claudeDraait();
-  if (wasOpen && !nacht && !droog) { log("Claude is open en het is geen nacht: niet gesloten, de update volgt de volgende nacht."); process.exit(0); }
-  if (wasOpen && !droog) { log("Claude sluiten…"); if (!(await sluitClaude())) problemen.push("Claude kon niet worden gesloten"); }
+  const pad = claudePad(), appId = claudeAppId();
+  let gesloten = false;
+  if (wasOpen && herstart) {
+    if (!nacht && !droog) { log("Claude is open en het is geen nacht: niet gesloten, de update volgt de volgende nacht."); process.exit(0); }
+    if (!appId && !pad) { problemen.push("Claude niet gesloten en niet bijgewerkt: geen app-ID of pad bekend om hem daarna weer te starten"); throw new Error("stop"); }
+    if (!droog) { log(`Claude sluiten (weer starten via ${appId ? `app-ID ${appId}` : pad})…`); gesloten = await sluitClaude(); if (!gesloten) problemen.push("Claude kon niet worden gesloten"); }
+  }
 
-  for (const r of repos) if (!update(r)) problemen.push(`${r.name}: bijwerken mislukt`);
+  for (const x of teDoen) if (!update(x.r)) problemen.push(`${x.r.name}: bijwerken mislukt`);
   for (const r of repos) {
     const t = await rookTest(r);
     log(t.ok ? `Rooktest ${r.name}: ${t.tools} tools.` : `Rooktest ${r.name} MISLUKT: ${t.fout}`);
     if (!t.ok) problemen.push(`${r.name}: start niet (${t.fout})`);
   }
 
-  if ((wasOpen || nacht) && !droog) {
-    if (startClaude(pad)) log(`Claude gestart (${pad}).`);
-    else problemen.push(`Claude kon niet opnieuw worden gestart${pad ? ` (${pad})` : " (pad onbekend)"}`);
+  if (wasOpen && herstart && !droog && !claudeDraait()) {
+    const s = await startClaude({ appId, pad });
+    if (s.ok) log(`Claude weer gestart (via ${s.via}) en draait.`);
+    else problemen.push(`Claude is gesloten maar draait niet na opnieuw starten (geprobeerd: ${s.via}): start hem met de hand`);
   }
 } catch (e) {
-  problemen.push(`onverwachte fout: ${e instanceof Error ? e.message : e}`);
+  if (!(e instanceof Error && e.message === "stop")) problemen.push(`onverwachte fout: ${e instanceof Error ? e.message : e}`);
 }
 
 for (const l of logboek) log(`  ${l.trim()}`);
