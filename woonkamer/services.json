@@ -177,6 +177,7 @@
       "PUBLIC_URL": "https://${HOST}:10000",
       "RENDER_EXTERNAL_URL": "https://${HOST}:10000",
       "RENDER_EXTERNAL_HOSTNAME": "${HOST}"
-    }
+    },
+    "route": "/eboekhouden"
   }
 ]

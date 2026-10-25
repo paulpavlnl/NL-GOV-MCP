@@ -10,7 +10,7 @@ woonkamer-pc (Windows, altijd aan). Claude.ai bereikt ze via Tailscale Funnel op
 | DDS-mail | `https://<host>/mail/mcp?key=<MCP_AUTH_TOKEN>` |
 | Studie-literatuur | `https://<host>/studie/mcp/<MCP_PATH_SECRET>` |
 | Verwijzingscontrole en LiDO | `https://<host>/verwijzing/mcp/<MCP_PATH_SECRET>` |
-| e-Boekhouden | `https://<host>:10000/mcp` (eigen poort: de gateway doet zijn eigen OAuth) |
+| e-Boekhouden | `https://<host>/eboekhouden/mcp/<MCP_AUTH_TOKEN>` (claude.ai bereikt alleen poort 443; :10000 blijft ook werken) |
 | Chromebook-tijd (ManicTime, geen connector) | `https://<host>/chromebook/ws/<SECRET>/timeline` |
 | WhatsApp, OneNote | `https://<host>/whatsapp/...`, `https://<host>/onenote/...` (via `secrets/services.local.json`) |
 
