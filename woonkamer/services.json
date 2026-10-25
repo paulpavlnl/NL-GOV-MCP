@@ -1,0 +1,182 @@
+[
+  {
+    "name": "nlgov",
+    "titel": "NL-GOV-MCP (Overheidsdata)",
+    "repo": "https://github.com/paulpavlnl/NL-GOV-MCP",
+    "branch": "main",
+    "renderId": "srv-dagpbo2jnfac73d8l210",
+    "port": 3101,
+    "route": "/nlgov",
+    "health": "/health",
+    "mcpPad": "/mcp",
+    "install": [
+      "npm ci --no-audit --no-fund"
+    ],
+    "build": [
+      "npm run build"
+    ],
+    "start": [
+      "node",
+      "dist/src/index.js",
+      "--streamable-http"
+    ],
+    "env": {
+      "NL_GOV_HTTP_PORT": "3101",
+      "NL_GOV_HTTP_HOST": "127.0.0.1",
+      "PORT": "3101",
+      "FOUTLOG_MAP": "${ROOT}/data/foutlog",
+      "FOUTLOG_SERVER": "woonkamer"
+    }
+  },
+  {
+    "name": "workflowy",
+    "titel": "Workflowy",
+    "repo": "https://github.com/paulpavlnl/workflowy-mcp",
+    "branch": "main",
+    "renderId": "srv-dairp395efls73emla8g",
+    "port": 3102,
+    "route": "/workflowy",
+    "health": "/healthz",
+    "mcpPad": "/mcp?key=${CONNECTOR_TOKEN}",
+    "install": [
+      "npm install --no-audit --no-fund"
+    ],
+    "build": [],
+    "start": [
+      "node",
+      "server.js"
+    ],
+    "env": {
+      "PORT": "3102"
+    }
+  },
+  {
+    "name": "studie",
+    "titel": "Studie-literatuur",
+    "repo": "https://github.com/paulpavlnl/studie-literatuur-mcp",
+    "branch": "main",
+    "renderId": "srv-db8mf4ajnfac73eqmlkg",
+    "port": 3103,
+    "route": "/studie",
+    "health": "/healthz",
+    "mcpPad": "/mcp/${MCP_PATH_SECRET}",
+    "install": [
+      "npm install --no-audit --no-fund"
+    ],
+    "build": [],
+    "start": [
+      "node",
+      "server.js"
+    ],
+    "env": {
+      "PORT": "3103",
+      "FOUTLOG_MAP": "${ROOT}/data/foutlog",
+      "FOUTLOG_SERVER": "woonkamer"
+    }
+  },
+  {
+    "name": "verwijzing",
+    "titel": "Verwijzingscontrole en LiDO",
+    "repo": "https://github.com/paulpavlnl/verwijzingscontrole-en-uitbreiding",
+    "branch": "main",
+    "renderId": "srv-daj63jp5efls73fncl50",
+    "port": 3104,
+    "route": "/verwijzing",
+    "health": "/healthz",
+    "mcpPad": "/mcp/${MCP_PATH_SECRET}",
+    "install": [
+      "npm install --no-audit --no-fund"
+    ],
+    "build": [],
+    "start": [
+      "node",
+      "server.js"
+    ],
+    "env": {
+      "PORT": "3104",
+      "NL_GOV_MCP_DIR": "${ROOT}/repos/nlgov",
+      "STUDIE_LITERATUUR_DIR": "${ROOT}/repos/studie",
+      "TOESTAND_CACHE_DIR": "${ROOT}/data/verwijzing-cache",
+      "FOUTLOG_MAP": "${ROOT}/data/foutlog",
+      "FOUTLOG_SERVER": "woonkamer"
+    }
+  },
+  {
+    "name": "chromebook",
+    "titel": "Chromebook-tijd (ManicTime web source)",
+    "repo": "https://github.com/paulpavlnl/chromebook-tijd",
+    "branch": "main",
+    "renderId": "srv-dbeublq9lscs7385nscg",
+    "port": 3105,
+    "route": "/chromebook",
+    "health": "/health",
+    "mcpPad": "/ws/${SECRET}/timeline",
+    "install": [
+      "npm install --no-audit --no-fund"
+    ],
+    "build": [],
+    "start": [
+      "node",
+      "server.js"
+    ],
+    "env": {
+      "PORT": "3105",
+      "DATA_FILE": "${ROOT}/data/chromebook-tijd.json"
+    },
+    "zonder": [
+      "REDIS_URL"
+    ]
+  },
+  {
+    "name": "mail",
+    "titel": "DDS-mail",
+    "repo": "https://github.com/paulpavlnl/mail-mcp",
+    "branch": "claude/private-repo-imap-mcp-gue5kz",
+    "renderId": "srv-db0cbodg1s2s73dfhr2g",
+    "port": 8000,
+    "health": "/health",
+    "mcpPad": "/mcp?key=${MCP_AUTH_TOKEN}",
+    "install": [
+      "python -m venv .venv",
+      "{venvpy} -m pip install -q --disable-pip-version-check -r requirements.txt"
+    ],
+    "build": [],
+    "start": [
+      "{venvpy}",
+      "server.py"
+    ],
+    "env": {
+      "PORT": "8000",
+      "PUBLIC_URL": "https://${HOST}/mail"
+    },
+    "route": "/mail"
+  },
+  {
+    "name": "eboekhouden",
+    "titel": "e-Boekhouden",
+    "repo": "https://github.com/CodeMill-Solutions/e-boekhouden-mcp",
+    "branch": "main",
+    "renderId": "srv-dasdrqm0tbcc73evu5pg",
+    "port": 3107,
+    "funnel": 10000,
+    "health": "/healthz",
+    "mcpPad": "/mcp",
+    "install": [
+      "npm ci --include=dev --no-audit --no-fund"
+    ],
+    "build": [
+      "npm run build",
+      "node -e \"require('fs').writeFileSync('gateway.mjs', Buffer.from(process.env.GATEWAY_B64,'base64'))\""
+    ],
+    "start": [
+      "node",
+      "gateway.mjs"
+    ],
+    "env": {
+      "PORT": "3107",
+      "PUBLIC_URL": "https://${HOST}:10000",
+      "RENDER_EXTERNAL_URL": "https://${HOST}:10000",
+      "RENDER_EXTERNAL_HOSTNAME": "${HOST}"
+    }
+  }
+]
