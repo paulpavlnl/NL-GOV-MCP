@@ -1,6 +1,6 @@
 # NL-GOV-MCP
 
-> **This is a fork** of [WAINUTAI/NL-GOV-MCP](https://github.com/WAINUTAI/NL-GOV-MCP), maintained by [paulpavlnl](https://github.com/paulpavlnl) for Dutch legal research. Many thanks to WAINUT for building and open-sourcing NL-GOV-MCP: this fork stands entirely on their work and follows it through a weekly upstream sync. The additions are listed under [Additions in this fork](#additions-in-this-fork-29-tools) and in [docs/FORK.md](docs/FORK.md). This fork is independent and not endorsed by WAINUT; licence and NOTICE are unchanged (Apache 2.0).
+> **This is a fork** of [WAINUTAI/NL-GOV-MCP](https://github.com/WAINUTAI/NL-GOV-MCP), maintained by [paulpavlnl](https://github.com/paulpavlnl) for Dutch legal research. Many thanks to WAINUT for building and open-sourcing NL-GOV-MCP: this fork stands entirely on their work and follows it through a weekly upstream sync. The additions are listed under [Additions in this fork](#additions-in-this-fork-34-tools) and in [docs/FORK.md](docs/FORK.md). This fork is independent and not endorsed by WAINUT; licence and NOTICE are unchanged (Apache 2.0).
 
 Dutch public-sector data is scattered across many sources that do not natively work together. CBS does not know what Tweede Kamer publishes. BAG does not know what DUO knows. Rechtspraak is disconnected from Rijksbegroting.
 
@@ -32,7 +32,7 @@ Examples:
 
 `NL-GOV-MCP` actively retrieves and normalizes data across many sources, can combine cross-source results, and returns a consistent MCP response contract ready for assistants and automations.
 
-## Sources (53 connectors, 91 tools upstream; 120 with this fork's additions)
+## Sources (53 connectors, 91 tools upstream; 125 with this fork's additions)
 
 | Source | What it covers |
 |---|---|
@@ -90,9 +90,9 @@ Examples:
 | NWO and ZonMw | Open calls and subsidy rounds of NWO (with SIA, NKO and Open Science NL) and ZonMw: status as the sites show it, budget, start and deadline; one call with all its dates, budget, documents and text |
 | EU Funding & Tenders Portal | EU calls for proposals (Horizon Europe, LIFE, Digital Europe, Creative Europe, ...), cascade funding and EuropeAid calls: status, all deadlines, budget per topic and the call's budget overview; outdated index copies left out and counted |
 
-### Additions in this fork (29 tools)
+### Additions in this fork (34 tools)
 
-Legal sources added by this fork (paulpavlnl), kept in their own files under `src/fork/` so upstream syncs stay clean. Details, upstream hooks and tests: [docs/FORK.md](docs/FORK.md).
+Legal sources added by this fork (paulpavlnl), kept in their own files under `src/fork/` so upstream syncs stay clean (29 tools), plus 5 direct lookups registered in `src/tools.ts` (last row). Details, upstream hooks and tests: [docs/FORK.md](docs/FORK.md).
 
 | Source | Tools | What it covers |
 |---|---|---|
@@ -118,6 +118,7 @@ Legal sources added by this fork (paulpavlnl), kept in their own files under `sr
 | Rechtspraak (Open Data search) | `rechtspraak_zoeken_open_data` | Search rulings through the documented ECLI index of data.rechtspraak.nl, with filters for court (instantie), field of law (rechtsgebied), ruling date (van/tot) and procedure (kort geding, hoger beroep, cassatie, …); the keywords are matched in the inhoudsindicaties, and with `volledige_tekst` also in the full text of the newest rulings (with the passage). Also the fallback of `rechtspraak_search_ecli` and `nl_gov_ask` when the website search refuses (see [Rechtspraak details](#rechtspraak-details)) |
 | Norms and procedural rules of the judiciary | `rechtspraak_richtlijnen` | From rechtspraak.nl (no criminal law): the rapport alimentatienormen (tremanormen) with its half-yearly annexes, LOVF and LOVCK recommendations, the landelijke procesreglementen, indicatie- and liquidatietarieven, curatele/bewind recommendations and the administrative-law procedural rules; per series the version in force on a date, and its text (PDF), whole or by search term |
 | Open legal literature | `literatuur_zoeken`, `literatuur_document_get` | Dissertations, journal articles, books and reports from OpenAlex, OpenAIRE (all Dutch university repositories, peer review status, full journal citation), OAPEN/DOAB (open access books) and CORE (repository full texts); law first (works classified under Law, broadened only when that finds too little, marked), with reliability per type, and the open access text (PDF or repository page, CORE as fallback). Optional keys: `OPENALEX_API_KEY`, `CORE_API_KEY`, `OPENAIRE_CLIENT_ID`/`OPENAIRE_CLIENT_SECRET` or `OPENAIRE_REFRESH_TOKEN` (without them a smaller hourly budget) |
+| Direct lookups (in `src/tools.ts`) | `bwb_artikel_tekst`, `rechtspraak_get_by_ecli`, `lido_relations_by_identifier`, `lido_search_free_text`, `pdok_kaartbeeld` | The official text of one law article on a date (BWB); a ruling's official XML by ECLI; LiDO relations of a known ECLI, CVDR, BWBR or article, and LiDO search by free text or nickname; a map image (PDOK aerial photo with parcel boundaries and marker, or BGT/BRT topography) of an address or RD point |
 
 **Research and checking.** This server is the research side: it finds and reads sources and their relations. In this fork's own setup a separate reference checker (a private MCP server, not part of this repository) checks every reference that comes out of it: does it exist, is the cited paragraph right, is the quote literal and from the court's own reasoning (not the facts or a party's position), and does it support the claim.
 
