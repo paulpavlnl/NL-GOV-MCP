@@ -97,6 +97,64 @@ describe("Rechtspraak search through Open Data", () => {
   });
 });
 
+/** A ruling as data.rechtspraak.nl/uitspraken/content returns it, with a procedure and a text. */
+function uitspraakXml(ecli: string, procedure: string, tekst: string): string {
+  return `<?xml version="1.0" encoding="utf-8"?><open-rechtspraak>
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:psi="http://psi.rechtspraak.nl/" xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#">
+    <rdf:Description>
+      <dcterms:identifier>${ecli}</dcterms:identifier>
+      <dcterms:type resourceIdentifier="http://psi.rechtspraak.nl/uitspraak">Uitspraak</dcterms:type>
+      <psi:procedure rdfs:label="Procedure" resourceIdentifier="http://psi.rechtspraak.nl/procedure#x">${procedure}</psi:procedure>
+    </rdf:Description>
+  </rdf:RDF>
+  <uitspraak xmlns="http://www.rechtspraak.nl/schema/rechtspraak-1.0"><section><title><nr>1</nr>Beoordeling</title><para>${tekst}</para></section></uitspraak>
+</open-rechtspraak>`;
+}
+
+describe("Open Data search: full text and procedure", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("matches a procedure label and finds the passage around a word", async () => {
+    const { procedureMatches, passageAround } = await import("../src/fork/rechtspraak-open-data.js");
+    expect(procedureMatches(["Hoger beroep kort geding"], "kort geding")).toBe(true);
+    expect(procedureMatches(["Beschikking"], "kort geding")).toBe(false);
+    expect(passageAround("Het hof oordeelt dat de concurrentiebeding nietig is.", [{ word: "concurrentiebeding" }])).toContain("concurrentiebeding nietig");
+  });
+
+  it("volledige_tekst finds a ruling whose inhoudsindicatie lacks the words, with the passage", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = urlOf(input);
+      urls.push(url);
+      if (url.includes("/uitspraken/zoeken")) return atom();
+      if (url.includes("RBROT")) return new Response(uitspraakXml("ECLI:NL:RBROT:2026:14701", "Beschikking", "De werknemer beroept zich op het relatiebeding in de arbeidsovereenkomst."), { status: 200, headers: { "content-type": "application/xml" } });
+      return new Response(uitspraakXml("ECLI:NL:RBZWB:2026:9950", "Kort geding", "Geen beding."), { status: 200, headers: { "content-type": "application/xml" } });
+    }));
+    const out = await searchRechtspraakOpenData({ query: "relatiebeding", rows: 5, rechtsgebied: "arbeidsrecht", volledige_tekst: true });
+    expect(out.items.map((x) => x.ecli)).toEqual(["ECLI:NL:RBROT:2026:14701"]);
+    expect(out.items[0]).toMatchObject({ gevonden_in: "volledige tekst", procedures: ["Beschikking"] });
+    expect(String(out.items[0].passage)).toContain("relatiebeding");
+    expect(out.access_note).toContain("Volledige tekst: 2 van de 2");
+  });
+
+  it("procedure keeps only rulings with that procedure, from their metadata", async () => {
+    const meta: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
+      const url = urlOf(input);
+      if (url.includes("/uitspraken/zoeken")) return atom();
+      meta.push(new URL(url).searchParams.get("return") ?? "");
+      const ecli = new URL(url).searchParams.get("id") ?? "";
+      return new Response(uitspraakXml(ecli, ecli.includes("RBZWB") ? "Kort geding" : "Beschikking", ""), { status: 200, headers: { "content-type": "application/xml" } });
+    }));
+    const out = await searchRechtspraakOpenData({ query: "ontslag", rows: 5, rechtsgebied: "arbeidsrecht", procedure: "kort geding" });
+    expect(out.items.map((x) => x.ecli)).toEqual(["ECLI:NL:RBZWB:2026:9950"]);
+    expect(out.items[0].procedures).toEqual(["Kort geding"]);
+    expect(meta.every((r) => r === "META")).toBe(true);
+  });
+});
+
 describe("FORK couplings in upstream files (docs/FORK.md)", () => {
   const read = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
 

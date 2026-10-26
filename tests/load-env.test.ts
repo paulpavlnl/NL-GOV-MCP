@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { findServerRoot } from "../src/load-env.js";
 
 describe("load-env", () => {
@@ -24,7 +25,7 @@ describe("load-env", () => {
     const elsewhere = mkdtempSync(join(tmpdir(), "nlgov-cwd-"));
     const out = execFileSync(process.execPath, [
       "--import", import.meta.resolve("tsx"), "--input-type=module", "-e",
-      `await import(${JSON.stringify(join(root, "src", "load-env.ts"))}); process.stdout.write(process.env.BAG_API_KEY ?? "")`,
+      `await import(${JSON.stringify(pathToFileURL(join(root, "src", "load-env.ts")).href)}); process.stdout.write(process.env.BAG_API_KEY ?? "")`,
     ], { cwd: elsewhere, env: { ...process.env, BAG_API_KEY: "oud-uit-config" } }).toString();
     expect(out).toBe("uit-env-bestand");
   });
@@ -41,7 +42,7 @@ describe("load-env", () => {
     writeFileSync(join(parent, "verwijzingscontrole-en-uitbreiding", "bronsleutels.env"), "OPENALEX_API_KEY=uit-prive-repo\nCORE_API_KEY=uit-prive-repo\n");
     const out = execFileSync(process.execPath, [
       "--import", import.meta.resolve("tsx"), "--input-type=module", "-e",
-      `await import(${JSON.stringify(join(root, "src", "load-env.ts"))}); process.stdout.write([process.env.OPENALEX_API_KEY, process.env.CORE_API_KEY].join(","))`,
+      `await import(${JSON.stringify(pathToFileURL(join(root, "src", "load-env.ts")).href)}); process.stdout.write([process.env.OPENALEX_API_KEY, process.env.CORE_API_KEY].join(","))`,
     ], { cwd: tmpdir(), env: { ...process.env, OPENALEX_API_KEY: "", CORE_API_KEY: "" } }).toString();
     expect(out).toBe("uit-prive-repo,eigen");
   });

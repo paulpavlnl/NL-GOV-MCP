@@ -1,6 +1,6 @@
 # NL-GOV-MCP
 
-> **This is a fork** of [WAINUTAI/NL-GOV-MCP](https://github.com/WAINUTAI/NL-GOV-MCP), maintained by [paulpavlnl](https://github.com/paulpavlnl) for Dutch legal research. Many thanks to WAINUT for building and open-sourcing NL-GOV-MCP: this fork stands entirely on their work and follows it through a weekly upstream sync. The additions are listed under [Additions in this fork](#additions-in-this-fork-28-tools) and in [docs/FORK.md](docs/FORK.md). This fork is independent and not endorsed by WAINUT; licence and NOTICE are unchanged (Apache 2.0).
+> **This is a fork** of [WAINUTAI/NL-GOV-MCP](https://github.com/WAINUTAI/NL-GOV-MCP), maintained by [paulpavlnl](https://github.com/paulpavlnl) for Dutch legal research. Many thanks to WAINUT for building and open-sourcing NL-GOV-MCP: this fork stands entirely on their work and follows it through a weekly upstream sync. The additions are listed under [Additions in this fork](#additions-in-this-fork-29-tools) and in [docs/FORK.md](docs/FORK.md). This fork is independent and not endorsed by WAINUT; licence and NOTICE are unchanged (Apache 2.0).
 
 Dutch public-sector data is scattered across many sources that do not natively work together. CBS does not know what Tweede Kamer publishes. BAG does not know what DUO knows. Rechtspraak is disconnected from Rijksbegroting.
 
@@ -32,7 +32,7 @@ Examples:
 
 `NL-GOV-MCP` actively retrieves and normalizes data across many sources, can combine cross-source results, and returns a consistent MCP response contract ready for assistants and automations.
 
-## Sources (53 connectors, 91 tools upstream; 119 with this fork's additions)
+## Sources (53 connectors, 91 tools upstream; 120 with this fork's additions)
 
 | Source | What it covers |
 |---|---|
@@ -90,7 +90,7 @@ Examples:
 | NWO and ZonMw | Open calls and subsidy rounds of NWO (with SIA, NKO and Open Science NL) and ZonMw: status as the sites show it, budget, start and deadline; one call with all its dates, budget, documents and text |
 | EU Funding & Tenders Portal | EU calls for proposals (Horizon Europe, LIFE, Digital Europe, Creative Europe, ...), cascade funding and EuropeAid calls: status, all deadlines, budget per topic and the call's budget overview; outdated index copies left out and counted |
 
-### Additions in this fork (28 tools)
+### Additions in this fork (29 tools)
 
 Legal sources added by this fork (paulpavlnl), kept in their own files under `src/fork/` so upstream syncs stay clean. Details, upstream hooks and tests: [docs/FORK.md](docs/FORK.md).
 
@@ -115,6 +115,7 @@ Legal sources added by this fork (paulpavlnl), kept in their own files under `sr
 | Kifid | `kifid_zoeken` | Rulings of the Kifid (financial services complaints institute): Geschillencommissie and Commissie van Beroep, by term, category (bank, investments, mortgage, insurance, BKR …), authority and date, with summary, outcome and the passages from the full text |
 | Autoriteit Persoonsgegevens | `ap_documenten_zoeken`, `ap_document_get` | Fines, orders subject to a penalty, warnings, policy rules, guidance (normuitleg) and legislative advice of the Dutch DPA, with the text of the decision (PDF). The AP site sits behind a firewall that may refuse a server; the tool then says so and points to the official alternatives (Staatscourant, Woo, rechtspraak) |
 | Legislative history | `wetsgeschiedenis_get` | Per article (wet + artikel or BWB id): the acts that introduced or amended it, from the BWB's wetstechnische informatie (date in force, Kamerstukken dossier, Staatsblad); per dossier the parliamentary papers by kind (memorie van toelichting, advies Raad van State and nader rapport, nota naar aanleiding van het verslag, nota van wijziging, memorie van antwoord) with the passages about the article and the citation (Kamerstukken II 2013/14, 33 818, nr. 3); and the bills still pending for the law. Papers from before 1995 are not at KOOP; the tool points to Staten-Generaal Digitaal |
+| Rechtspraak (Open Data search) | `rechtspraak_zoeken_open_data` | Search rulings through the documented ECLI index of data.rechtspraak.nl, with filters for court (instantie), field of law (rechtsgebied), ruling date (van/tot) and procedure (kort geding, hoger beroep, cassatie, …); the keywords are matched in the inhoudsindicaties, and with `volledige_tekst` also in the full text of the newest rulings (with the passage). Also the fallback of `rechtspraak_search_ecli` and `nl_gov_ask` when the website search refuses (see [Rechtspraak details](#rechtspraak-details)) |
 | Norms and procedural rules of the judiciary | `rechtspraak_richtlijnen` | From rechtspraak.nl (no criminal law): the rapport alimentatienormen (tremanormen) with its half-yearly annexes, LOVF and LOVCK recommendations, the landelijke procesreglementen, indicatie- and liquidatietarieven, curatele/bewind recommendations and the administrative-law procedural rules; per series the version in force on a date, and its text (PDF), whole or by search term |
 | Open legal literature | `literatuur_zoeken`, `literatuur_document_get` | Dissertations, journal articles, books and reports from OpenAlex, OpenAIRE (all Dutch university repositories, peer review status, full journal citation), OAPEN/DOAB (open access books) and CORE (repository full texts); law first (works classified under Law, broadened only when that finds too little, marked), with reliability per type, and the open access text (PDF or repository page, CORE as fallback). Optional keys: `OPENALEX_API_KEY`, `CORE_API_KEY`, `OPENAIRE_CLIENT_ID`/`OPENAIRE_CLIENT_SECRET` or `OPENAIRE_REFRESH_TOKEN` (without them a smaller hourly budget) |
 
@@ -322,7 +323,7 @@ Restart Claude Desktop after saving.
 
 **Nightly update (fork).** The first run of `update-lokaal.cmd` registers the Windows task *MCP nachtelijke update* (03:30, also later when the computer was off). It runs `scripts/nachtelijke-update.mjs`: only when there is something new, it closes Claude, updates both repos, smoke-tests each server over stdio (initialize + tools/list), and starts Claude again. Outside the night it never closes a running Claude (it waits for the next night). A failure becomes a task in the Workflowy Inbox (`scripts/meld-workflowy.mjs`, key `WORKFLOWY_API_KEY` from `bronsleutels.env`) naming the computer and what failed, so the daily round reports it; log: `%USERPROFILE%\mcp-lokaal\nachtelijke-update.log`.
 
-A daily GitHub Action (`upstream-sync.yml`) merges new work from WAINUTAI/NL-GOV-MCP: when type-check, build, all tests and the fork hooks pass, the merge goes to `main` automatically (Render deploys) with a note in the Workflowy Inbox; otherwise nothing reaches `main`, the branch `upstream-sync` gets a pull request (or the run summary lists the conflicts) and a task in the Workflowy Inbox asks for a repair. Repository secret: `WORKFLOWY_API_KEY`.
+A daily GitHub Action (`upstream-sync.yml`) merges new work from WAINUTAI/NL-GOV-MCP: when type-check, build, all tests and the fork hooks pass, the merge goes to `main` automatically (the fork's own server picks it up within the hour, see [woonkamer/README.md](woonkamer/README.md)) with a note in the Workflowy Inbox; otherwise nothing reaches `main`, the branch `upstream-sync` gets a pull request (or the run summary lists the conflicts) and a task in the Workflowy Inbox asks for a repair. Repository secret: `WORKFLOWY_API_KEY`.
 
 ### Environment variables
 
@@ -387,6 +388,8 @@ Node ≥ 22 prints an "experimental" warning for this flag; it works. Symptom to
 ### Rechtspraak details
 
 `rechtspraak_search_ecli` mirrors the official frontend search backend (`/api/zoek`) instead of the legacy open-data feed.
+
+**Fork:** since October 2026 `/api/zoek` refuses this server ("Request Rejected", HTTP 403, from the site's firewall). The search then falls back to Open Data van de Rechtspraak (`data.rechtspraak.nl/uitspraken/zoeken`, technische documentatie v1.15): the ECLI index filtered on field of law (derived from the keywords when not given), newest first, up to 5,000 rulings per search, with the keywords matched in their inhoudsindicaties; `access_note` says so and what was read. The website search and the open data service have separate circuits, so refusals of the one never block reading rulings from the other. For court, period, procedure or full-text search use `rechtspraak_zoeken_open_data`. Details: [docs/FORK.md](docs/FORK.md).
 
 Uses structured parameters instead of natural-language parsing:
 - `sort`: `relevance` (default), `date_newest` (publication date desc), `ruling_newest` (ruling date desc)

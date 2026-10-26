@@ -19,12 +19,13 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { foldText, zoektermWords } from "../sources/dso-regeltekst.js";
-import { normalizeEcli, RechtspraakSource } from "../sources/rechtspraak.js";
+import { normalizeEcli, parseUitspraakXml, RechtspraakSource } from "../sources/rechtspraak.js";
 import type { AppConfig, MCPRecord } from "../types.js";
 import { getText, SourceRequestError } from "../utils/http.js";
 import { mapSourceError, nowIso, successResponse, toMcpToolPayload } from "../utils/response.js";
 
 const OPEN_DATA_SEARCH = "https://data.rechtspraak.nl/uitspraken/zoeken";
+const OPEN_DATA_CONTENT = "https://data.rechtspraak.nl/uitspraken/content";
 const DETAILS = "https://uitspraken.rechtspraak.nl/details";
 const SEARCH_PAGE = "https://uitspraken.rechtspraak.nl/resultaat";
 
@@ -117,6 +118,65 @@ const SCAN_DEFAULT = 5000;
 const SCAN_MAX = 10_000;
 /** The service allows at most 10 requests per second; one at a time with a pause stays well below. */
 const PAUSE_MS = 150;
+/** Rulings read in full per search (volledige_tekst), and metadata checks for a procedure, by default and at most. */
+const FULL_TEXT_DEFAULT = 100;
+const FULL_TEXT_MAX = 300;
+const PROCEDURE_CHECKS_MAX = 300;
+/** Documents fetched side by side, each worker pausing between requests: 3 workers stay below 10 requests per second. */
+const DOC_WORKERS = 3;
+const DOC_PAUSE_MS = 300;
+
+/** fn over the items, DOC_WORKERS at a time with a pause after each request; stops early when stop() says so. */
+async function paced<T, R>(items: T[], fn: (item: T) => Promise<R>, stop: () => boolean = () => false): Promise<Array<R | undefined>> {
+  const out: Array<R | undefined> = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length && !stop()) {
+      const i = next++;
+      try {
+        out[i] = await fn(items[i]);
+      } catch {
+        out[i] = undefined;
+      }
+      await new Promise((r) => setTimeout(r, DOC_PAUSE_MS));
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(DOC_WORKERS, items.length) }, worker));
+  return out;
+}
+
+/** The procedure labels of a ruling ("Kort geding", "Hoger beroep", "Beschikking"), from its metadata (return=META, a few kB). */
+async function procedureLabels(ecli: string): Promise<string[]> {
+  const { data } = await getText(OPEN_DATA_CONTENT, { query: { id: ecli, return: "META" }, timeoutMs: 20_000, retries: 1, connector: "rechtspraak_open_data", headers: { Accept: "application/xml" } });
+  return [...data.matchAll(/<psi:procedure\b[^>]*>([^<]*)<\/psi:procedure>/g)].map((m) => decodeXmlEntities(m[1]).trim()).filter(Boolean);
+}
+
+/** The full text and the procedure labels of a ruling (metadata and document in one request). */
+async function fullTextOf(ecli: string): Promise<{ text: string; procedures: string[] }> {
+  const { data } = await getText(OPEN_DATA_CONTENT, { query: { id: ecli }, timeoutMs: 30_000, retries: 1, connector: "rechtspraak_open_data", headers: { Accept: "application/xml" } });
+  const doc = parseUitspraakXml(data, ecli);
+  return { text: doc.blocks.map((b) => b.text).join("\n"), procedures: doc.meta.procedures };
+}
+
+/** Does a procedure label match what was asked ("kort geding" matches "Kort geding" and "Hoger beroep kort geding")? */
+export function procedureMatches(labels: string[], wanted: string): boolean {
+  const want = foldText(wanted).replace(/\s+/g, " ").trim();
+  return labels.some((l) => foldText(l).includes(want));
+}
+
+/** About 300 characters around the first query word in the text, for a hit found in the full text. */
+export function passageAround(text: string, words: Array<{ word: string; stem?: string }>): string {
+  const folded = foldText(text);
+  let at = -1;
+  for (const w of words) {
+    at = folded.indexOf(w.word);
+    if (at < 0 && w.stem) at = folded.indexOf(w.stem);
+    if (at >= 0) break;
+  }
+  if (at < 0) return "";
+  const from = Math.max(0, at - 120);
+  return `${from ? "…" : ""}${text.slice(from, at + 180).replace(/\s+/g, " ").trim()}…`;
+}
 
 /** Rechtsgebied ids for a name ("arbeidsrecht", "Personen- en familierecht", "bestuursrecht"), or from hints in the query. */
 export function resolveRechtsgebieden(rechtsgebied: string | undefined, query: string): { ids: string[]; bron: "opgegeven" | "afgeleid" | "geen"; onbekend?: string } {
@@ -220,6 +280,11 @@ export interface OpenDataSearchArgs {
   van?: string;
   tot?: string;
   scan?: number;
+  /** Also read the full text of the newest rulings the inhoudsindicatie did not match (at most max_documenten). */
+  volledige_tekst?: boolean;
+  max_documenten?: number;
+  /** Only rulings with this procedure (psi:procedure): "kort geding", "hoger beroep", "cassatie", "voorlopige voorziening", … */
+  procedure?: string;
   /** Why this search runs here (the website search refused): leads the access note. */
   reden?: string;
 }
@@ -293,16 +358,64 @@ export async function searchRechtspraakOpenData(args: OpenDataSearchArgs): Promi
     if (feed.entries.length < PAGE) break;
   }
 
-  // All words first; when that gives too few, rulings with most of them follow (marked).
-  const all = words.length ? scored.filter((e) => e.matched === words.length) : scored;
-  const needed = Math.max(1, Math.ceil(words.length / 2));
-  const partial = words.length > 1 && all.length < args.rows ? scored.filter((e) => e.matched >= needed && e.matched < words.length) : [];
+  // All words in the inhoudsindicatie first; then (volledige_tekst) all words in the full text; then most words (marked).
   const byDate = (a?: string, b?: string) => String(b ?? "").localeCompare(String(a ?? ""));
   const order = (a: (typeof scored)[number], b: (typeof scored)[number]) =>
     args.sort === "date_newest" ? byDate(a.updated, b.updated)
     : args.sort === "ruling_newest" ? byDate(a.uitspraakdatum, b.uitspraakdatum)
     : b.score - a.score || byDate(a.uitspraakdatum, b.uitspraakdatum);
-  const chosen = [...all.sort(order), ...partial.sort(order)].slice(0, args.rows);
+  const all = (words.length ? scored.filter((e) => e.matched === words.length) : scored).sort(order);
+
+  // The full text of the newest rulings the inhoudsindicatie did not match.
+  const procedures = new Map<string, string[]>();
+  const passages = new Map<string, string>();
+  const inFullText: typeof scored = [];
+  let fullRead = 0;
+  let fullAsked = 0;
+  if (args.volledige_tekst && words.length) {
+    const done = new Set(all.map((e) => e.ecli));
+    const candidates = scored.filter((e) => !done.has(e.ecli)).sort((a, b) => byDate(a.uitspraakdatum, b.uitspraakdatum)).slice(0, Math.min(args.max_documenten ?? FULL_TEXT_DEFAULT, FULL_TEXT_MAX));
+    fullAsked = candidates.length;
+    const docs = await paced(candidates, (e) => fullTextOf(e.ecli));
+    candidates.forEach((e, i) => {
+      const doc = docs[i];
+      if (!doc) return;
+      fullRead++;
+      procedures.set(e.ecli, doc.procedures);
+      const text = foldText(doc.text);
+      if (words.every((w) => text.includes(w.word) || (w.stem !== undefined && text.includes(w.stem)))) {
+        inFullText.push({ ...e, matched: words.length });
+        passages.set(e.ecli, passageAround(doc.text, words));
+      }
+    });
+    inFullText.sort(order);
+  }
+
+  const found = new Set([...all, ...inFullText].map((e) => e.ecli));
+  const needed = Math.max(1, Math.ceil(words.length / 2));
+  const partial = words.length > 1 ? scored.filter((e) => !found.has(e.ecli) && e.matched >= needed && e.matched < words.length).sort(order) : [];
+  let ranked = [...all, ...inFullText, ...partial];
+
+  // Procedure (kort geding, hoger beroep, …): from the metadata of each ruling in order, until there are enough.
+  let procChecked = 0;
+  if (args.procedure?.trim()) {
+    const want = args.procedure;
+    const toCheck = ranked.slice(0, PROCEDURE_CHECKS_MAX);
+    let hits = 0;
+    const labels = await paced(
+      toCheck,
+      async (e) => {
+        const l = procedures.get(e.ecli) ?? (await procedureLabels(e.ecli));
+        procChecked++;
+        if (procedureMatches(l, want)) hits++;
+        return l;
+      },
+      () => hits >= args.rows,
+    );
+    toCheck.forEach((e, i) => { if (labels[i]) procedures.set(e.ecli, labels[i]!); });
+    ranked = toCheck.filter((e, i) => labels[i] && procedureMatches(labels[i]!, want));
+  }
+  const chosen = ranked.slice(0, args.rows);
 
   const items = chosen.map((e) => ({
     id: e.ecli,
@@ -314,6 +427,8 @@ export async function searchRechtspraakOpenData(args: OpenDataSearchArgs): Promi
     instantie: e.instantie,
     uitspraakdatum: e.uitspraakdatum,
     zaaknummer: e.zaaknummer,
+    ...(procedures.get(e.ecli)?.length ? { procedures: procedures.get(e.ecli) } : {}),
+    ...(passages.has(e.ecli) ? { gevonden_in: "volledige tekst", passage: passages.get(e.ecli) } : words.length ? { gevonden_in: "inhoudsindicatie" } : {}),
     ...(e.matched < words.length ? { gedeeltelijke_match: `${e.matched} van ${words.length} zoekwoorden` } : {}),
   }));
 
@@ -329,20 +444,24 @@ export async function searchRechtspraakOpenData(args: OpenDataSearchArgs): Promi
     gebieden.onbekend ? `Rechtsgebied '${gebieden.onbekend}' komt niet voor in de waardelijst; zonder rechtsgebied gezocht. Kies uit: ${RECHTSGEBIEDEN.map((r) => r.naam).join(", ")}.` : "",
     instanties.onbekend.length ? `Instantie '${instanties.onbekend.join("', '")}' niet herkend; geef bijvoorbeeld 'Hoge Raad', 'CRvB', 'Raad van State' of 'Gerechtshof Den Haag'.` : "",
     total !== undefined && gelezen < total ? "Niet alle uitspraken binnen deze filters zijn gelezen: geef instantie, rechtsgebied of een periode (van/tot) in rechtspraak_zoeken_open_data om gerichter en verder terug te zoeken." : "",
+    fullAsked ? `Volledige tekst: ${fullRead} van de ${fullAsked} nieuwste uitspraken zonder treffer in de inhoudsindicatie gelezen, ${inFullText.length} met alle zoekwoorden in de tekst (gevonden_in: volledige tekst, met passage).${fullAsked < scored.length - all.length ? " Meer lezen: max_documenten (hoogstens 300), of beperk met instantie of periode." : ""}` : "",
+    args.procedure?.trim() ? `Proceduresoort '${args.procedure}': ${procChecked} uitspraken nagekeken in hun metadata, ${ranked.length} met die procedure.${ranked.length < args.rows && procChecked >= PROCEDURE_CHECKS_MAX ? ` Na ${PROCEDURE_CHECKS_MAX} gestopt; beperk met instantie of periode.` : ""}` : "",
     chosen.some((e) => e.matched < words.length) ? "Uitspraken met gedeeltelijke_match bevatten niet alle zoekwoorden." : "",
-    !items.length ? `Geen uitspraak gevonden met deze zoekwoorden in de gelezen inhoudsindicaties. Probeer andere of minder woorden, of zoek handmatig op ${SEARCH_PAGE}?zoekterm=${encodeURIComponent(args.query)}.` : "",
+    !items.length ? `Geen uitspraak gevonden met deze zoekwoorden in de gelezen ${args.volledige_tekst ? "teksten" : "inhoudsindicaties"}${args.procedure ? ` en procedure '${args.procedure}'` : ""}. Probeer andere of minder woorden${args.volledige_tekst ? "" : ", volledige_tekst: true"}, of zoek handmatig op ${SEARCH_PAGE}?zoekterm=${encodeURIComponent(args.query)}.` : "",
     items.length ? "Tekst van een uitspraak: rechtspraak_uitspraak_get; relaties (hoger beroep, cassatie, latere rechtspraak): lido_relaties met de ECLI." : "",
   ].filter(Boolean);
 
   return {
     items,
-    total: all.length + partial.length,
+    total: ranked.length,
     endpoint: firstUrl || OPEN_DATA_SEARCH,
     params: {
       term: args.query,
       rows: String(args.rows),
       bron: "data.rechtspraak.nl (Open Data)",
       gelezen: String(gelezen),
+      ...(fullAsked ? { volledige_tekst_gelezen: String(fullRead) } : {}),
+      ...(args.procedure?.trim() ? { procedure: args.procedure } : {}),
       ...(gebieden.ids.length ? { rechtsgebied: gebieden.ids.join(",") } : {}),
       ...(instanties.uris.length ? { instantie: instanties.namen.join(",") } : {}),
       ...(van || tot ? { uitspraakdatum: `${van ?? ""}/${tot ?? ""}` } : {}),
@@ -385,6 +504,8 @@ export function registerRechtspraakOpenData(server: McpServer, deps: Rechtspraak
       "Search Dutch case law through Open Data van de Rechtspraak (data.rechtspraak.nl), with filters: rechtsgebied, instantie (court) and uitspraakdatum (van/tot). " +
       "The filters select rulings with a published text, most recently published first (up to 'scan' rulings, default 5000); the keywords are matched in their inhoudsindicaties. " +
       "Use it to find rulings of one court or field, also older ones (give a period), e.g. Hoge Raad on 'transitievergoeding' since 2015. rechtspraak_search_ecli falls back to this search when the website search refuses. " +
+      "volledige_tekst: true also reads the full text of the newest rulings whose inhoudsindicatie lacks the words (max_documenten, default 100, at most 300; slower, about 10-40 s), and returns the passage where the words stand. " +
+      "procedure keeps only rulings with that procedure (from each ruling's metadata): 'kort geding', 'hoger beroep', 'cassatie', 'voorlopige voorziening', 'eerste aanleg - enkelvoudig', 'verzet', 'herziening', 'prejudiciële beslissing', 'beschikking', … " +
       "access_note says which filters applied and how many rulings were read. Text of a ruling: rechtspraak_uitspraak_get; relations: lido_relaties.",
     inputSchema: {
       query: z.string().min(1).max(200).describe("Keywords, matched in the inhoudsindicatie (all words; rulings with most of them follow, marked)."),
@@ -395,6 +516,9 @@ export function registerRechtspraakOpenData(server: McpServer, deps: Rechtspraak
       sort: z.enum(["relevance", "date_newest", "ruling_newest"]).default("relevance"),
       rows: z.number().int().min(1).max(50).default(20),
       scan: z.number().int().min(1000).max(SCAN_MAX).default(SCAN_DEFAULT).describe("How many rulings to read at most (1000 per request)."),
+      volledige_tekst: z.boolean().default(false).describe("Also search the full text of the newest rulings whose inhoudsindicatie lacks the words."),
+      max_documenten: z.number().int().min(10).max(FULL_TEXT_MAX).default(FULL_TEXT_DEFAULT).describe("With volledige_tekst: how many rulings to read in full at most."),
+      procedure: z.string().max(60).optional().describe("Only rulings with this procedure: 'kort geding', 'hoger beroep', 'cassatie', 'voorlopige voorziening', 'verzet', 'beschikking', …"),
     },
     annotations: deps.TOOL_ANNOTATIONS,
   }, async (args) => {
