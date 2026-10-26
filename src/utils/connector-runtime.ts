@@ -23,6 +23,10 @@ const CONNECTOR_CATEGORY: Record<string, ConnectorCategory> = {
 
   tweede_kamer: "semi_live",
   rechtspraak: "semi_live",
+  // FORK (docs/FORK.md): split from `rechtspraak`: the website search (uitspraken.rechtspraak.nl/api/zoek)
+  // and the Open Data ECLI index each have their own circuit, so refusals of the one cannot block the other.
+  rechtspraak_zoek: "semi_live",
+  rechtspraak_open_data: "semi_live",
   officiele_bekendmakingen: "semi_live",
   rijksoverheid: "semi_live",
   data_overheid: "semi_live",

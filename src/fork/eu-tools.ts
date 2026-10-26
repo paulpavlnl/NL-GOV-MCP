@@ -21,6 +21,7 @@ import { registerLiteratuur } from "./literatuur.js";
 import { registerToezicht } from "./toezicht.js";
 import { registerWetsgeschiedenis } from "./wetsgeschiedenis.js";
 import { registerRichtlijnen } from "./richtlijnen.js";
+import { registerRechtspraakOpenData } from "./rechtspraak-open-data.js";
 import { WettenBwbSource } from "../sources/wetten-bwb.js";
 import { BwbArtikelSource } from "../sources/bwb-artikel.js";
 import { CELLAR_CELEX, CELLAR_SPARQL, EURLEX_NL, EuTekstSource, type EuMetadata, type EuTekst } from "./eu-bron.js";
@@ -249,6 +250,8 @@ export function registerEuForkTools(server: McpServer, deps: EuForkDeps): (args:
   registerToezicht(server, deps);
   registerWetsgeschiedenis(server, deps);
   registerRichtlijnen(server, deps);
+  // And searching rulings through Open Data van de Rechtspraak (src/fork/rechtspraak-open-data.ts), also as fallback of rechtspraak_search_ecli.
+  registerRechtspraakOpenData(server, deps);
   const source = new EuTekstSource(deps.config);
   const result = (args: EuTekstArgs) => euTekstResult(source, deps.lido, args);
   server.registerTool("eurlex_tekst_get", {

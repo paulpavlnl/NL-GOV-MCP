@@ -113,6 +113,21 @@ Tests: `tests/fork-wetsgeschiedenis.test.ts`.
 
 Tests: `tests/fork-richtlijnen.test.ts`.
 
+## Zoeken in uitspraken via Open Data (`rechtspraak_zoeken_open_data`; `src/fork/rechtspraak-open-data.ts`)
+
+- **Aanleiding**: sinds oktober 2026 weigert uitspraken.rechtspraak.nl/api/zoek (de zoekfunctie achter de website, die `rechtspraak_search_ecli` van WAINUTAI gebruikt) deze server met "Request Rejected" (HTTP 403, F5-firewall). Ophalen op ECLI via data.rechtspraak.nl werkt wel.
+- **Bron**: de ECLI-index van Open Data van de Rechtspraak, `https://data.rechtspraak.nl/uitspraken/zoeken` (technische documentatie v1.15, § 4). Filters: `creator` (instantie), `subject` (rechtsgebied), `date` (uitspraakdatum, van en tot), `modified`, `return=DOC`, `sort=DESC`, `max` (≤ 1000), `from`. Geen zoeken op woorden; elke treffer bevat de inhoudsindicatie. Hoogstens 10 verzoeken per seconde; de module vraagt één pagina tegelijk met 150 ms pauze, standaard 5 pagina's (5000 uitspraken), hoogstens 10.
+- **Zoeken op woorden**: in de inhoudsindicaties van de gelezen uitspraken; eerst uitspraken met alle woorden, bij te weinig treffers die met de meeste (gemarkeerd `gedeeltelijke_match`). Zonder opgegeven rechtsgebied wordt het uit de zoekwoorden afgeleid ("ontslag" → arbeidsrecht, "kinderalimentatie" → personen- en familierecht). Waardelijsten (rechtsgebieden, instanties) staan in de module, overgenomen van data.rechtspraak.nl/Waardelijst.
+- **Terugval**: `installRechtspraakOpenData()` laat `RechtspraakSource.searchEcli` bij een fout van de websitezoekfunctie via Open Data zoeken, dus ook `rechtspraak_search_ecli` en `nl_gov_ask`. Werkt de websitezoekfunctie weer, dan gebruikt die tool haar weer vanzelf.
+
+### Koppelingen in upstream-bestanden
+
+- `src/sources/rechtspraak.ts`: `connector: "rechtspraak_zoek", // FORK` in de `postJson` van `searchEcli`: een eigen circuit, zodat weigeringen van de websitezoekfunctie het ophalen bij data.rechtspraak.nl niet blokkeren.
+- `src/utils/connector-runtime.ts`: de categorieën `rechtspraak_zoek` en `rechtspraak_open_data` (gemarkeerd `FORK`).
+- De terugval vervangt `RechtspraakSource.prototype.searchEcli`; hernoemt WAINUTAI die methode, dan faalt `tests/rechtspraak-open-data.test.ts` en meldt de upstream-sync het.
+
+Tests: `tests/rechtspraak-open-data.test.ts` (offline, met bewaking van de koppelingen); live: `npx tsx scripts/live-rechtspraak-zoeken.ts`.
+
 ## Sleutels op de eigen computers (`src/load-env.ts`, `scripts/update-local.mjs`)
 
 Deze repository is openbaar, dus de sleutels van de bronnen van de fork (`OPENALEX_API_KEY`, `CORE_API_KEY`, `OPENAIRE_CLIENT_ID`, `OPENAIRE_CLIENT_SECRET`) staan er niet in.

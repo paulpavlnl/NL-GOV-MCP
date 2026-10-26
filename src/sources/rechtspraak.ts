@@ -1107,6 +1107,7 @@ export class RechtspraakSource {
       {
         timeoutMs: 20_000,
         retries: 2,
+        connector: "rechtspraak_zoek", // FORK (docs/FORK.md): own circuit, so refusals here cannot block data.rechtspraak.nl
         headers: {
           Accept: "application/json, text/plain, */*",
           "Content-Type": "application/json",

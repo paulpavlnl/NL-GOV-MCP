@@ -98,7 +98,10 @@ jobs:
           grep -q 'const { euTekstResult } = deps;' src/router/nl-gov-ask.ts || missing="$missing src/router/nl-gov-ask.ts(euTekstResult)"
           grep -q 'LidoSource.artikelFallback(value, artikel)' src/sources/lido.ts || missing="$missing src/sources/lido.ts(artikelFallback)"
           grep -q 'installHallucinatieBeveiliging(server)' src/server.ts || missing="$missing src/server.ts(installHallucinatieBeveiliging)"
-          for f in src/fork/hallucinatie.ts src/fork/foutlog.ts data/bekende-valkuilen.json src/fork/eu-tekst.ts src/fork/eu-bron.ts src/fork/eu-tools.ts src/fork/lido-artikel.ts src/fork/lido-relaties.ts; do [ -f "$f" ] || missing="$missing $f"; done
+          grep -q 'connector: "rechtspraak_zoek", // FORK' src/sources/rechtspraak.ts || missing="$missing src/sources/rechtspraak.ts(rechtspraak_zoek)"
+          grep -q 'async searchEcli(' src/sources/rechtspraak.ts || missing="$missing src/sources/rechtspraak.ts(searchEcli, Open Data-terugval)"
+          grep -q 'rechtspraak_open_data: "semi_live"' src/utils/connector-runtime.ts || missing="$missing src/utils/connector-runtime.ts(rechtspraak_open_data)"
+          for f in src/fork/hallucinatie.ts src/fork/foutlog.ts data/bekende-valkuilen.json src/fork/eu-tekst.ts src/fork/eu-bron.ts src/fork/eu-tools.ts src/fork/lido-artikel.ts src/fork/lido-relaties.ts src/fork/rechtspraak-open-data.ts; do [ -f "$f" ] || missing="$missing $f"; done
           echo "missing=$missing" >> "$GITHUB_OUTPUT"
 
       - name: Merge into main when everything passes
