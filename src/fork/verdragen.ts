@@ -217,6 +217,36 @@ export function registerVerdragen(server: McpServer, deps: { TOOL_ANNOTATIONS: R
     hcchLijst = { at: Date.now(), items: [...voor, ...items] };
     return hcchLijst.items;
   };
+  // HCCH convention number → cid (hcch.net numbers conventions, its URLs use cid): read once a day from the full-text pages.
+  let hcchNummers: { at: number; map: Map<number, number> } | null = null;
+  const haalHcchNummers = async () => {
+    if (hcchNummers && Date.now() - hcchNummers.at < 24 * 3600_000) return hcchNummers.map;
+    const map = new Map<number, number>();
+    const cids = [...new Set((await haalHcchLijst()).map((i) => i.cid))];
+    for (let i = 0; i < cids.length; i += 4) {
+      await Promise.all(cids.slice(i, i + 4).map(async (cid) => {
+        try {
+          const v = parseHcchVerdrag((await f(`${HCCH_BASE}/en/instruments/conventions/full-text/?cid=${cid}`)).text, cid);
+          if (v.nummer) map.set(v.nummer, cid);
+        } catch { /* a page that does not load just has no number */ }
+      }));
+    }
+    hcchNummers = { at: Date.now(), map };
+    return map;
+  };
+  const hcchCid = async (gevraagd: string): Promise<{ cid: number } | { fout: string; suggestie: string }> => {
+    if (/^\d+$/.test(gevraagd)) {
+      const cid = (await haalHcchNummers()).get(Number(gevraagd));
+      return cid ? { cid } : { fout: `Geen HCCH-verdrag met nummer ${gevraagd} gevonden.`, suggestie: "Geef de cid (hcch.net-adres) of woorden uit de titel; zonder verdrag/cid geeft de tool de lijst." };
+    }
+    const woorden = gevraagd.toLowerCase().split(/\s+/).filter(Boolean);
+    const treffers = (await haalHcchLijst()).filter((i) => woorden.every((w) => i.titel.toLowerCase().includes(w)));
+    const uniek = [...new Map(treffers.map((t) => [t.cid, t])).values()];
+    if (uniek.length === 1) return { cid: uniek[0].cid };
+    return uniek.length
+      ? { fout: `'${gevraagd}' past op ${uniek.length} HCCH-verdragen: ${uniek.slice(0, 8).map((t) => `${t.titel} (cid ${t.cid})`).join("; ")}.`, suggestie: "Kies er één met cid, of geef meer woorden uit de titel." }
+      : { fout: `Geen HCCH-verdrag met '${gevraagd}' in de titel.`, suggestie: "Zoek met andere Engelse titelwoorden, of roep de tool zonder verdrag aan voor de lijst." };
+  };
   const filterPagina = async () => {
     if (!formulier || Date.now() - formulier.at > 24 * 3600_000) formulier = { at: Date.now(), html: (await f(`${VB_BASE}/nl/Verdrag/ZoekUitgebreid`)).text };
     return formulier.html;
@@ -314,10 +344,22 @@ export function registerVerdragen(server: McpServer, deps: { TOOL_ANNOTATIONS: R
 
   server.registerTool("hcch_verdrag_get", {
     description: "Hague Conference on Private International Law (hcch.net). Without cid: the list of HCCH conventions and instruments with their cid (optionally filtered by zoekterm in the English title, e.g. 'child abduction', 'apostille', 'service', 'evidence', 'maintenance'). With cid: the official English text of that convention, or only one article ('artikel': '3'), with links to the HCCH status table, central authorities and the PDF's (text, explanatory report). Status, reservations and authorities as registered by the depositary (the Netherlands): verdrag_get.",
-    inputSchema: { cid: z.number().int().min(1).max(999).optional(), zoekterm: z.string().max(120).optional(), artikel: z.string().max(20).optional(), max_chars: z.number().int().min(1000).max(100_000).default(30_000) },
+    inputSchema: {
+      cid: z.number().int().min(1).max(999).optional(),
+      verdrag: z.union([z.string().max(200), z.number().int()]).optional().describe("Instead of cid: the HCCH convention number (e.g. 28 for Child Abduction, 12 for Apostille) or words of its title ('apostille', 'child abduction')."),
+      nummer: z.number().int().min(1).max(200).optional().describe("Instead of cid: the HCCH convention number (e.g. 28)."),
+      zoekterm: z.string().max(120).optional(), artikel: z.string().max(20).optional(), max_chars: z.number().int().min(1000).max(100_000).default(30_000),
+    },
     annotations: deps.TOOL_ANNOTATIONS,
   }, async (a) => {
     try {
+      // verdrag / nummer: resolve to a cid, or say why not (never the whole list for a convention asked by name or number).
+      const gevraagd = a.nummer ?? a.verdrag;
+      if (!a.cid && gevraagd !== undefined && String(gevraagd).trim()) {
+        const opgezocht = await hcchCid(String(gevraagd).trim());
+        if ("fout" in opgezocht) return toMcpToolPayload(errorResponse({ error: "unexpected", message: opgezocht.fout, suggestion: opgezocht.suggestie }));
+        a.cid = opgezocht.cid;
+      }
       if (!a.cid) {
         const u = `${HCCH_BASE}/en/instruments/conventions`;
         const lijst = await haalHcchLijst();

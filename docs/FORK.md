@@ -130,6 +130,14 @@ Tests: `tests/fork-richtlijnen.test.ts`.
 
 Tests: `tests/rechtspraak-open-data.test.ts` (offline, met bewaking van de koppelingen); live: `npx tsx scripts/live-rechtspraak-zoeken.ts`.
 
+## Parameteraliassen (`src/fork/aliassen.ts`)
+
+Andere namen voor parameters, zodat een aanroep met de verwachte naam werkt in plaats van te falen of stil te worden genegeerd: `officiele_bekendmakingen_record_get` `id` → `identifier`; `rechtspraak_zoeken_open_data` `zoekterm` → `query`; `lido_relaties` `ecli` → `id`; `literatuur_document_get` `id`/`doi` → `werk`; `verdrag_get` `id`/`nummer` → `verdrag`. Toegepast op elke tool door de `registerTool`-wrapper van `installHallucinatieBeveiliging`: het alias komt in het schema, een verplicht doel wordt optioneel en ontbreekt het toch, dan een nette fout. `hcch_verdrag_get` neemt `verdrag` (verdragsnummer of titelwoorden) en `nummer` zelf (`src/fork/verdragen.ts`): nummer → cid uit de full-text-pagina's (eens per dag), meerdere of geen treffers → fout met de kandidaten, nooit stil de hele lijst. Tests: `tests/fork-aliassen.test.ts`.
+
+`wetsgeschiedenis_get` met `zoekterm` zoekt ook synoniemen van de wetgever (uitzonderingsclausule = exceptieclausule, ontsnappingsclausule, correctieclausule; …) en laat woorden over een regeleinde lopen; geen enkele treffer met de term → de passages over het artikelnummer, gemarkeerd `gevonden_op`. Kan geen enkel stuk worden opgehaald, dan een fout met `retry_after` in plaats van "geen passage".
+
+`mapSourceError` (`src/utils/response.ts`, gemarkeerd `FORK`) geeft bij een time-out en een netwerk- of serverfout `retry_after: 30` mee.
+
 ## Sleutels op de eigen computers (`src/load-env.ts`, `scripts/update-local.mjs`)
 
 Deze repository is openbaar, dus de sleutels van de bronnen van de fork (`OPENALEX_API_KEY`, `CORE_API_KEY`, `OPENAIRE_CLIENT_ID`, `OPENAIRE_CLIENT_SECRET`) staan er niet in.

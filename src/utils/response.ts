@@ -60,6 +60,8 @@ export function mapSourceError(
       return errorResponse({
         error: "timeout",
         message: `${sourceLabel} did not respond in time`,
+        retry_after: 30, // FORK (docs/FORK.md): a caller knows when to try again
+
         suggestion: fallbackUrl
           ? `Try again or visit ${fallbackUrl} directly`
           : "Try again with a narrower query",
@@ -103,6 +105,8 @@ export function mapSourceError(
       message: `${sourceLabel} request failed${
         error.status ? ` (HTTP ${error.status})` : ""
       }`,
+      retry_after: !error.status || error.status >= 500 ? 30 : undefined, // FORK (docs/FORK.md): network or server error
+
       suggestion: fallbackUrl
         ? `Try again or visit ${fallbackUrl} directly`
         : "Try again later",

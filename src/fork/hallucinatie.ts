@@ -29,6 +29,7 @@ import { WettenBwbSource, todayAmsterdam } from "../sources/wetten-bwb.js";
 import { findServerRoot } from "../load-env.js";
 import { WTI_URL } from "./wetsgeschiedenis.js";
 import { foutlog } from "./foutlog.js";
+import { ALIASSEN, pasAliassenToe, schemaMetAliassen } from "./aliassen.js";
 
 /* ---------- bekende valkuilen ---------- */
 
@@ -320,8 +321,17 @@ export function installHallucinatieBeveiliging(server: McpServer, analyse = (ged
       d.description = `${d.description ?? ""}${BESCHRIJVING}${n.startsWith("rechtspraak") ? "" : BESCHRIJVING_WET}`;
       if (n === "bwb_artikel_tekst") d.inputSchema = { ...d.inputSchema, peildatum: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Alias of datum: the day the article must be geldig (YYYY-MM-DD, default today); geldigheid compares it with today.") };
     }
+    // Other names for parameters (src/fork/aliassen.ts).
+    const aliasSchema = schemaMetAliassen(n, d.inputSchema);
+    if (aliasSchema.shape) d.inputSchema = aliasSchema.shape;
     const wrapped = async (args: Result, extra: unknown) => {
       foutlog().aanroep(n);
+      const viaAlias = pasAliassenToe(n, args, aliasSchema.vereist);
+      if (viaAlias.ontbreekt.length) {
+        const payload = { error: "unexpected", message: `Ontbrekende parameter: ${viaAlias.ontbreekt.join(", ")}.`, suggestion: `Geef ${viaAlias.ontbreekt.join(", ")}${Object.entries(ALIASSEN[n] ?? {}).filter(([, doel]) => viaAlias.ontbreekt.includes(doel)).map(([al]) => ` (of ${al})`).join("")}.` };
+        return { content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: payload, isError: true } as ToolPayload;
+      }
+      args = viaAlias.args as Result;
       const a = n === "bwb_artikel_tekst" && args?.peildatum && !args?.datum ? { ...args, datum: args.peildatum } : args;
       const payload = await h(a, extra);
       return analyse[n] ? verrijk(n, a ?? {}, payload, analyse) : payload;
