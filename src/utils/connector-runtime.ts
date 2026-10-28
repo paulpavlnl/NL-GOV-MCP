@@ -27,6 +27,8 @@ const CONNECTOR_CATEGORY: Record<string, ConnectorCategory> = {
   // and the Open Data ECLI index each have their own circuit, so refusals of the one cannot block the other.
   rechtspraak_zoek: "semi_live",
   rechtspraak_open_data: "semi_live",
+  // FORK (docs/FORK.md): the LiDO portal list, fallback when the LiDO services fail (src/fork/lido-robuust.ts).
+  lido_portaal: "semi_live",
   officiele_bekendmakingen: "semi_live",
   rijksoverheid: "semi_live",
   data_overheid: "semi_live",
@@ -126,6 +128,12 @@ const CONNECTOR_CATEGORY: Record<string, ConnectorCategory> = {
 
 const FAILURE_THRESHOLD = 3;
 const CIRCUIT_COOLDOWN_MS = 5 * 60 * 1000;
+/** FORK (docs/FORK.md): LiDO opens only after 5 different endpoints fail, and is half-open again after 60 s. */
+const CIRCUIT_PER_CONNECTOR: Record<string, { drempel: number; afkoelMs: number }> = {
+  lido: { drempel: 5, afkoelMs: 60_000 },
+  lido_portaal: { drempel: 5, afkoelMs: 60_000 },
+  rechtspraak: { drempel: 5, afkoelMs: 60_000 },
+};
 const MAX_CONCURRENT_PER_CONNECTOR = 3;
 const QUEUE_TIMEOUT_MS = 30_000;
 const CACHE_MAX_ENTRIES = 1000;
@@ -152,6 +160,8 @@ interface RuntimeState {
 
   circuitOpenUntil?: number;
   probeInFlight: boolean;
+  /** FORK (docs/FORK.md): failed endpoints since the last success, for circuits that count distinct ones. */
+  failedEndpoints?: Set<string>;
 
   inFlight: number;
   queue: QueueItem[];
@@ -284,6 +294,7 @@ export function markConnectorSuccess(connector: string, responseTimeMs: number):
   const state = getState(connector);
   state.lastSuccess = nowIso();
   state.consecutiveFailures = 0;
+  state.failedEndpoints?.clear(); // FORK (docs/FORK.md)
   state.circuitOpenUntil = undefined;
   state.probeInFlight = false;
   state.totalResponseTimeMs += Math.max(0, responseTimeMs);
@@ -303,7 +314,7 @@ export function markConnectorCacheHit(connector: string): void {
 
 export function markConnectorFailure(
   connector: string,
-  args: { countTowardCircuit: boolean; responseTimeMs?: number },
+  args: { countTowardCircuit: boolean; responseTimeMs?: number; endpoint?: string },
 ): void {
   const state = getState(connector);
   state.lastFailure = nowIso();
@@ -320,6 +331,17 @@ export function markConnectorFailure(
   }
 
   state.consecutiveFailures += 1;
+
+  // FORK (docs/FORK.md): own threshold and cooldown per connector; distinct endpoints only, so one identifier never opens it.
+  const eigen = CIRCUIT_PER_CONNECTOR[connector];
+  if (eigen) {
+    (state.failedEndpoints ??= new Set()).add(args.endpoint ?? String(state.consecutiveFailures));
+    if (state.probeInFlight || state.failedEndpoints.size >= eigen.drempel) {
+      state.circuitOpenUntil = Date.now() + eigen.afkoelMs;
+      state.probeInFlight = false;
+    }
+    return;
+  }
 
   if (state.probeInFlight || state.consecutiveFailures >= FAILURE_THRESHOLD) {
     state.circuitOpenUntil = Date.now() + CIRCUIT_COOLDOWN_MS;

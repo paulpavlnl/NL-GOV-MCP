@@ -22,6 +22,8 @@ import { registerToezicht } from "./toezicht.js";
 import { registerWetsgeschiedenis } from "./wetsgeschiedenis.js";
 import { registerRichtlijnen } from "./richtlijnen.js";
 import { registerRechtspraakOpenData } from "./rechtspraak-open-data.js";
+import { registerBronGezondheid } from "./bron-gezondheid.js";
+import { installLidoNetwerk } from "./lido-robuust.js";
 import { WettenBwbSource } from "../sources/wetten-bwb.js";
 import { BwbArtikelSource } from "../sources/bwb-artikel.js";
 import { CELLAR_CELEX, CELLAR_SPARQL, EURLEX_NL, EuTekstSource, type EuMetadata, type EuTekst } from "./eu-bron.js";
@@ -252,6 +254,9 @@ export function registerEuForkTools(server: McpServer, deps: EuForkDeps): (args:
   registerRichtlijnen(server, deps);
   // And searching rulings through Open Data van de Rechtspraak (src/fork/rechtspraak-open-data.ts), also as fallback of rechtspraak_search_ecli.
   registerRechtspraakOpenData(server, deps);
+  // And robust LiDO and rechtspraak_get_by_ecli plus the health check bronnen_status (src/fork/lido-robuust.ts, src/fork/bron-gezondheid.ts).
+  installLidoNetwerk();
+  registerBronGezondheid(server, deps.TOOL_ANNOTATIONS);
   const source = new EuTekstSource(deps.config);
   const result = (args: EuTekstArgs) => euTekstResult(source, deps.lido, args);
   server.registerTool("eurlex_tekst_get", {
@@ -342,6 +347,7 @@ function registerLidoRelaties(server: McpServer, deps: EuForkDeps): void {
       const data = {
         identifier: label,
         ...(naam ? { regeling: naam } : {}),
+        bron: r.bron,
         lido_id: r.lidoId,
         titel: r.titel,
         portal_url: r.portalUrl,
@@ -359,6 +365,7 @@ function registerLidoRelaties(server: McpServer, deps: EuForkDeps): void {
         records: [{ source_name: "lido", title: `LiDO-relaties: ${naam ?? r.titel ?? label}`, canonical_url: r.portalUrl ?? "https://linkeddata.overheid.nl", data, snippet: r.perType?.slice(0, 5).map((t) => `${t.type}: ${t.aantal}`).join(", ") }],
         provenance: prov,
         access_note:
+          (r.bron === "lido-portaal" ? `${r.opmerking} ` : "") +
           "Bron: LiDO-services (get-aantal-per-informatietype, get-links) van KOOP, CC0. richting: 'inkomend' = dat document verwijst naar het opgevraagde, 'uitgaand' = het opgevraagde verwijst ernaar. " +
           "Verwijzingen zijn grotendeels door de computer herkend ('Door computer herkende referentie'): een relatie zegt dát een document het noemt, niet hoe; open het document voor de inhoud. " +
           (r.volledig === false ? `Niet alles getoond: verhoog max (tot 500) of filter op type, instantie of jaar. ` : "") +

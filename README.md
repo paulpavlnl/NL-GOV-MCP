@@ -32,7 +32,7 @@ Examples:
 
 `NL-GOV-MCP` actively retrieves and normalizes data across many sources, can combine cross-source results, and returns a consistent MCP response contract ready for assistants and automations.
 
-## Sources (53 connectors, 91 tools upstream; 125 with this fork's additions)
+## Sources (53 connectors, 91 tools upstream; 126 with this fork's additions)
 
 | Source | What it covers |
 |---|---|
@@ -90,14 +90,15 @@ Examples:
 | NWO and ZonMw | Open calls and subsidy rounds of NWO (with SIA, NKO and Open Science NL) and ZonMw: status as the sites show it, budget, start and deadline; one call with all its dates, budget, documents and text |
 | EU Funding & Tenders Portal | EU calls for proposals (Horizon Europe, LIFE, Digital Europe, Creative Europe, ...), cascade funding and EuropeAid calls: status, all deadlines, budget per topic and the call's budget overview; outdated index copies left out and counted |
 
-### Additions in this fork (34 tools)
+### Additions in this fork (35 tools)
 
-Legal sources added by this fork (paulpavlnl), kept in their own files under `src/fork/` so upstream syncs stay clean (29 tools), plus 5 direct lookups registered in `src/tools.ts` (last row). Details, upstream hooks and tests: [docs/FORK.md](docs/FORK.md).
+Legal sources added by this fork (paulpavlnl), kept in their own files under `src/fork/` so upstream syncs stay clean (30 tools), plus 5 direct lookups registered in `src/tools.ts` (last row). Details, upstream hooks and tests: [docs/FORK.md](docs/FORK.md).
 
 | Source | Tools | What it covers |
 |---|---|---|
 | EUR-Lex (text) | `eurlex_tekst_get` | Dutch text of a CJEU judgment, AG opinion or EU act by ECLI, CELEX, case number or citation: paragraphs, operative part, articles and recitals, quote check |
-| LiDO (per document) | `lido_relaties` | All LiDO relations of a ruling, law, single article (`wet` + `artikel`), EU act or Staatsblad publication, grouped by type with direction, court and year filters |
+| LiDO (per document) | `lido_relaties` | All LiDO relations of a ruling, law, single article (`wet` + `artikel`), EU act or Staatsblad publication, grouped by type with direction, court and year filters; falls back to the LiDO portal when the services fail (`bron`) |
+| Source health | `bronnen_status` | Tests LiDO (services, portal) and the Rechtspraak API (content service, Open Data index) now: status, time, real cause, circuit state |
 | Woo (open.overheid.nl) | `woo_zoeken`, `woo_document_get`, `woo_index` | Documents published under the Woo: search with DiWoo facets, text of a document, and the Woo-index of a body (where it publishes, followed to its own site) |
 | PUC Open Data | `puc_zoeken`, `puc_document_get` | Implementation policy: SVB beleidsregels, IND werkinstructies, RSJ rulings, NZa beleidsregels; version valid on a date, Juriconnect relations |
 | ACOI Woo-jurisprudentie | `woo_jurisprudentie_zoeken` | Woo/Wob case law per ground for refusal (art. 5.1–5.3 Woo) |

@@ -2,6 +2,7 @@ import { ENV_KEYS } from "../config.js";
 import type { AppConfig } from "../types.js";
 import { getText, SourceRequestError } from "../utils/http.js";
 import { parseXml } from "../utils/xml-parser.js";
+import { LIDO_VERZOEK } from "../fork/lido-robuust.js"; // FORK (docs/FORK.md)
 
 /**
  * LiDO (Linked Data Overheid, KOOP/Logius) — verwijzingen.
@@ -282,8 +283,8 @@ export class LidoSource {
       query,
       connector: LIDO_CONNECTOR,
       timeoutMs: LIDO_TIMEOUT_MS,
-      retries: LIDO_RETRIES,
-      ...(headers ? { headers } : {}),
+      retries: Math.max(LIDO_RETRIES, LIDO_VERZOEK.retries), // FORK (docs/FORK.md)
+      retryDelaysMs: LIDO_VERZOEK.retryDelaysMs, cacheTtlMs: LIDO_VERZOEK.cacheTtlMs, headers: { ...LIDO_VERZOEK.headers, ...(headers ?? {}) }, // FORK (docs/FORK.md): backoff, cache, headers
     });
     return { root: lidoRoot(data), url: meta.url };
   }

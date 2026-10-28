@@ -13,6 +13,7 @@ import {
   setHttpCache,
 } from "./connector-runtime.js";
 import { logger } from "./logger.js";
+import { foutOorzaak, logBronFout } from "../fork/bron-fouten.js"; // FORK (docs/FORK.md)
 
 const MAX_ERROR_ENDPOINT_CHARS = 500;
 
@@ -69,6 +70,8 @@ export interface RequestOptions {
    * would evict everything useful in it.
    */
   responseType?: "text" | "binary";
+  /** FORK (docs/FORK.md): wait before retry n (ms), instead of the short exponential default. */
+  retryDelaysMs?: readonly number[];
 }
 
 export interface HttpMeta {
@@ -317,6 +320,7 @@ async function request(
   const fullUrl = withQuery(url, options.query);
   const safeUrl = redactUrl(fullUrl);
   const connector = options.connector ?? inferConnectorName(fullUrl);
+  const wacht = (fallbackMs: number) => sleep(options.retryDelaysMs?.[attempt - 1] ?? fallbackMs); // FORK (docs/FORK.md)
 
   const cacheEnabled =
     !binary && !options.disableCache && (method === "GET" || method === "POST");
@@ -440,7 +444,7 @@ async function request(
           const retryAfter = parseRetryAfter(response.headers.get("retry-after"));
           if (attempt <= retries) {
             const waitS = Math.min(retryAfter ?? Math.pow(2, attempt), MAX_RETRY_AFTER_S);
-            await sleep(waitS * 1000);
+            await (retryAfter === undefined ? wacht(waitS * 1000) : sleep(waitS * 1000)); // FORK (docs/FORK.md)
             continue;
           }
 
@@ -452,7 +456,7 @@ async function request(
             retryAfter,
           });
           markConnectorFailure(connector, {
-            countTowardCircuit: true,
+            countTowardCircuit: true, endpoint: fullUrl, // FORK (docs/FORK.md)
             responseTimeMs: totalElapsedMs,
           });
           throw error;
@@ -460,7 +464,7 @@ async function request(
 
         if (response.status >= 500) {
           if (attempt <= retries) {
-            await sleep(Math.pow(2, attempt) * 300);
+            await wacht(Math.pow(2, attempt) * 300); // FORK (docs/FORK.md)
             continue;
           }
 
@@ -471,7 +475,7 @@ async function request(
             status: response.status,
           });
           markConnectorFailure(connector, {
-            countTowardCircuit: true,
+            countTowardCircuit: true, endpoint: fullUrl, // FORK (docs/FORK.md)
             responseTimeMs: totalElapsedMs,
           });
           throw error;
@@ -543,16 +547,17 @@ async function request(
             error.code === "malformed_response"
           ) {
             markConnectorFailure(connector, {
-              countTowardCircuit: countsTowardCircuit(error),
+              countTowardCircuit: countsTowardCircuit(error), endpoint: fullUrl, // FORK (docs/FORK.md)
               responseTimeMs: Date.now() - queueStart,
             });
           }
           throw error;
         }
 
+        logBronFout(connector, safeUrl, attempt, error); // FORK (docs/FORK.md): the real cause, not just "fetch failed"
         if (error instanceof Error && error.name === "AbortError") {
           if (attempt <= retries) {
-            await sleep(Math.pow(2, attempt) * 250);
+            await wacht(Math.pow(2, attempt) * 250); // FORK (docs/FORK.md)
             continue;
           }
 
@@ -562,27 +567,27 @@ async function request(
             code: "timeout",
           });
           markConnectorFailure(connector, {
-            countTowardCircuit: true,
+            countTowardCircuit: true, endpoint: fullUrl, // FORK (docs/FORK.md)
             responseTimeMs: Date.now() - queueStart,
           });
           throw timeoutError;
         }
 
         if (attempt <= retries) {
-          await sleep(Math.pow(2, attempt) * 250);
+          await wacht(Math.pow(2, attempt) * 250); // FORK (docs/FORK.md)
           continue;
         }
 
         const networkError = new SourceRequestError({
           message:
             error instanceof Error
-              ? error.message
+              ? foutOorzaak(error) // FORK (docs/FORK.md)
               : "Network error while contacting source",
           endpoint: fullUrl,
           code: "network_error",
         });
         markConnectorFailure(connector, {
-          countTowardCircuit: true,
+          countTowardCircuit: true, endpoint: fullUrl, // FORK (docs/FORK.md)
           responseTimeMs: Date.now() - queueStart,
         });
         throw networkError;
@@ -599,7 +604,7 @@ async function request(
     code: "network_error",
   });
   markConnectorFailure(connector, {
-    countTowardCircuit: true,
+    countTowardCircuit: true, endpoint: fullUrl, // FORK (docs/FORK.md)
     responseTimeMs: Date.now() - queueStart,
   });
   throw fallbackError;

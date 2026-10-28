@@ -110,7 +110,7 @@ export function mapSourceError(
       suggestion: fallbackUrl
         ? `Try again or visit ${fallbackUrl} directly`
         : "Try again later",
-      details: { endpoint: error.endpoint, status: error.status },
+      details: { endpoint: error.endpoint, status: error.status, code: error.code, oorzaak: error.message }, // FORK (docs/FORK.md): real status and cause
     });
   }
 

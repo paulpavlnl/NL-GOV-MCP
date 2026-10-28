@@ -8,12 +8,12 @@
  */
 import { XMLParser } from "fast-xml-parser";
 import { getText } from "../utils/http.js";
+import { isBronStoring, LIDO_VERZOEK, lidoViaPortaal } from "./lido-robuust.js";
 
 export const LIDO_SERVICE = "https://linkeddata.overheid.nl/service";
 const PORTAL_LIST = "https://linkeddata.overheid.nl/front/portal/spiegel-lijstweergave";
 /** LiDO silently falls back to 20 rows above 100. */
 export const LIDO_PAGE_ROWS = 100;
-const TIMEOUT_MS = 15_000;
 
 type Node = Record<string, unknown>;
 const parser = new XMLParser({ htmlEntities: true, ignoreAttributes: false, attributeNamePrefix: "@_", textNodeName: "#text", removeNSPrefix: true, parseTagValue: false, trimValues: true });
@@ -186,6 +186,8 @@ export const CVDR_NOTE = "LiDO bevat geen decentrale regelgeving (CVDR): ook de 
 
 export interface LidoRelatiesResult {
   bekend: boolean;
+  /** Where the relations came from: the services, or the portal list when they failed. */
+  bron?: "lido-services" | "lido-portaal";
   opmerking?: string;
   geprobeerd?: string[];
   lidoId?: string;
@@ -204,16 +206,54 @@ export interface LidoRelatiesResult {
   rechtspraak?: LidoDocument[];
 }
 
-const fetchXml = async (url: string) => (await getText(url, { connector: "lido", timeoutMs: TIMEOUT_MS, retries: 1, headers: { Accept: "application/xml,text/xml" } })).data;
+const fetchXml = async (url: string) => (await getText(url, { connector: "lido", ...LIDO_VERZOEK })).data;
+
+/** When the services fail: the same relations from the portal list (one page, the direction the portal shows). */
+async function viaPortaal(identifier: string, lookup: LidoLookup, oorzaak: unknown, portaal: typeof lidoViaPortaal): Promise<LidoRelatiesResult> {
+  if ("juriconnect-ref" in lookup) throw oorzaak; // a BWB id needs get-id first; without the services there is no LiDO object
+  const p = await portaal(lookup);
+  const items: LidoDocument[] = p.items.map((d) => ({ lidoId: d.lidoId, id: d.id, titel: d.titel, type: d.type, instantie: null, gewijzigd: d.geldig_vanaf, url: d.url, richting: p.richting === "uitgaande" ? "uitgaand" : p.richting === "inkomende" ? "inkomend" : null, labels: [] }));
+  return {
+    bekend: true,
+    bron: "lido-portaal",
+    opmerking: `LiDO-services faalden (${oorzaak instanceof Error ? oorzaak.message : String(oorzaak)}); terugval op het portaal: ${p.totaal ?? items.length} ${p.richting ?? ""} relaties, zonder labels en facetten.`,
+    lidoId: "id" in lookup ? lookup.id : identifier,
+    titel: p.titel,
+    portalUrl: p.url,
+    endpoint: p.url,
+    totaal: p.totaal ?? items.length,
+    perType: p.perType,
+    perInstantie: [],
+    perJaar: [],
+    volledig: p.totaal !== null ? items.length >= p.totaal : null,
+    items,
+  };
+}
 
 /** All relations of a document: LiDO object, counts, then get-links per 100 up to `max`. */
 export async function lidoRelaties(
   identifier: string,
   opts: { type?: string; instantie?: string; jaar?: string; max?: number; lidoObject?: string | null } = {},
   fetchText: (url: string) => Promise<string> = fetchXml,
+  portaal: typeof lidoViaPortaal = lidoViaPortaal,
+): Promise<LidoRelatiesResult> {
+  const lookups: LidoLookup[] = opts.lidoObject ? [{ id: opts.lidoObject }] : lidoLookups(identifier);
+  try {
+    return { ...(await viaServices(identifier, lookups, opts, fetchText)), bron: "lido-services" };
+  } catch (error) {
+    if (!lookups.length || !isBronStoring(error)) throw error;
+    return viaPortaal(identifier, lookups[0], error, portaal);
+  }
+}
+
+async function viaServices(
+  identifier: string,
+  initial: LidoLookup[],
+  opts: { type?: string; instantie?: string; jaar?: string; max?: number },
+  fetchText: (url: string) => Promise<string>,
 ): Promise<LidoRelatiesResult> {
   const max = Math.max(1, Math.min(opts.max ?? 100, 500));
-  let lookups: LidoLookup[] = opts.lidoObject ? [{ id: opts.lidoObject }] : lidoLookups(identifier);
+  let lookups = initial;
   if (!lookups.length) return { bekend: false, endpoint: LIDO_SERVICE, items: [], opmerking: "Geen identificatie die LiDO kent: geef een ECLI, BWBR (met wet/artikel voor een artikel), CVDR, CELEX of stb-/stcrt-publicatie." };
   const first = lookups[0];
   if ("juriconnect-ref" in first) {

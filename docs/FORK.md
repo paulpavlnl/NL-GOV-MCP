@@ -138,6 +138,20 @@ Andere namen voor parameters, zodat een aanroep met de verwachte naam werkt in p
 
 `mapSourceError` (`src/utils/response.ts`, gemarkeerd `FORK`) geeft bij een time-out en een netwerk- of serverfout `retry_after: 30` mee.
 
+## LiDO en Rechtspraak bij storingen (`src/fork/lido-robuust.ts`, `src/fork/bron-fouten.ts`, `src/fork/bron-gezondheid.ts`)
+
+Aanleiding: op 21 en 28-10-2026 gaf `lido_relaties` "LiDO request failed" (en daarna `circuit_open`), terwijl Verwijzingscontrole dezelfde ECLI wel ophaalde; `rechtspraak_get_by_ecli` gaf soms "fetch failed". Een netwerkfout verloor zijn oorzaak, kwam niet in de log, werd één keer na 0,5 s herhaald en drie fouten op één ECLI zetten de circuit breaker vijf minuten open.
+
+- Elke LiDO-serviceaanroep (`LIDO_VERZOEK`, ook in `src/sources/lido.ts`, regel gemarkeerd `FORK`): headers van Verwijzingscontrole, 20 s per verzoek, 3 herhalingen na 2, 5 en 10 s (ook bij 429, 5xx en netwerkfouten), cache van 24 uur per URL. IPv4 eerst (`dns.setDefaultResultOrder`).
+- `src/utils/http.ts` (`FORK`): optie `retryDelaysMs`; een netwerkfout draagt de echte oorzaak (`fetch failed (ETIMEDOUT: connect ETIMEDOUT …)`, per adres bij een AggregateError) en elke mislukte poging komt als `source_request_failed` in de log.
+- `src/utils/connector-runtime.ts` (`FORK`, `CIRCUIT_PER_CONNECTOR`): voor `lido`, `lido_portaal` en `rechtspraak` gaat de breaker pas open na 5 verschillende mislukte endpoints (dezelfde ECLI telt één keer) en is hij na 60 s half-open.
+- `mapSourceError` geeft in `details` ook `code` en `oorzaak`.
+- Falen de services, dan leest `lido_relaties` de portaallijst (`spiegel-lijstweergave`, één pagina, de richting die het portaal toont, zonder labels en facetten); `bron` is dan `lido-portaal` en de access_note zegt waarom. Een BWB-id zonder artikel heeft get-id nodig en valt niet terug.
+- `rechtspraak_get_by_ecli`: eerst het oude directe verzoek; gooit dat of geeft het 5xx/429, dan de route van `rechtspraak_uitspraak_get` (gedeelde client, 3 herhalingen); `bron` zegt welke.
+- Tool `bronnen_status`: test nu, zonder cache, LiDO-services, LiDO-portaal, de content-service en de Open Data-index, met status, tijd, oorzaak en breakerstand.
+
+Tests: `tests/lido-robuust.test.ts`; live tegen de draaiende server (standaard de Funnel-URL, `LIVE_MCP_URL` om te wijzigen): `npx vitest run --config vitest.live.config.ts tests/lido-robuust.live.test.ts` (ECLI:NL:CRVB:2021:2984, ECLI:NL:CRVB:2024:2331, BWBR0005537 art. 7:2).
+
 ## Sleutels op de eigen computers (`src/load-env.ts`, `scripts/update-local.mjs`)
 
 Deze repository is openbaar, dus de sleutels van de bronnen van de fork (`OPENALEX_API_KEY`, `CORE_API_KEY`, `OPENAIRE_CLIENT_ID`, `OPENAIRE_CLIENT_SECRET`) staan er niet in.

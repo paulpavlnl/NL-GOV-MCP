@@ -101,7 +101,10 @@ jobs:
           grep -q 'connector: "rechtspraak_zoek", // FORK' src/sources/rechtspraak.ts || missing="$missing src/sources/rechtspraak.ts(rechtspraak_zoek)"
           grep -q 'async searchEcli(' src/sources/rechtspraak.ts || missing="$missing src/sources/rechtspraak.ts(searchEcli, Open Data-terugval)"
           grep -q 'rechtspraak_open_data: "semi_live"' src/utils/connector-runtime.ts || missing="$missing src/utils/connector-runtime.ts(rechtspraak_open_data)"
-          for f in src/fork/hallucinatie.ts src/fork/foutlog.ts data/bekende-valkuilen.json src/fork/eu-tekst.ts src/fork/eu-bron.ts src/fork/eu-tools.ts src/fork/lido-artikel.ts src/fork/lido-relaties.ts src/fork/rechtspraak-open-data.ts; do [ -f "$f" ] || missing="$missing $f"; done
+          grep -q 'retryDelaysMs' src/utils/http.ts || missing="$missing src/utils/http.ts(retryDelaysMs, oorzaak)"
+          grep -q 'CIRCUIT_PER_CONNECTOR' src/utils/connector-runtime.ts || missing="$missing src/utils/connector-runtime.ts(CIRCUIT_PER_CONNECTOR)"
+          grep -q 'LIDO_VERZOEK' src/sources/lido.ts || missing="$missing src/sources/lido.ts(LIDO_VERZOEK)"
+          for f in src/fork/hallucinatie.ts src/fork/foutlog.ts data/bekende-valkuilen.json src/fork/eu-tekst.ts src/fork/eu-bron.ts src/fork/eu-tools.ts src/fork/lido-artikel.ts src/fork/lido-relaties.ts src/fork/rechtspraak-open-data.ts src/fork/lido-robuust.ts src/fork/bron-fouten.ts src/fork/bron-gezondheid.ts; do [ -f "$f" ] || missing="$missing $f"; done
           echo "missing=$missing" >> "$GITHUB_OUTPUT"
 
       - name: Merge into main when everything passes
