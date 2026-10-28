@@ -115,7 +115,7 @@ No setup required — the following run automatically in-process:
 - Per-connector circuit breaker (auto-disables after repeated failures, probes for recovery). A source whose primary endpoint is expected to fail over gives its fallback its own connector name, so a degraded primary cannot lock out the path that still works (see Luchtmeetnet).
 - Per-connector concurrency limiter (default 3 in-flight, overflow queued with timeout)
 - In-process HTTP response cache with hardcoded TTL per source category
-- Per-connector health counters (exposed via `/health/sources` on SSE transport)
+- Per-connector health counters (exposed via `/health/sources` on the HTTP transports)
 
 ### Graceful error handling
 Typed errors:
@@ -198,7 +198,7 @@ npm run dev     # development
 npm run start   # production
 ```
 
-#### SSE/HTTP (Open WebUI, legacy MCP clients)
+#### SSE/HTTP (legacy MCP clients)
 
 ```bash
 npm run dev:sse    # development
@@ -212,7 +212,9 @@ npm run start:sse  # production
 | `GET /health` | Server health check |
 | `GET /health/sources` | Per-connector runtime health snapshot |
 
-#### Streamable HTTP
+#### Streamable HTTP (Open WebUI and current MCP clients)
+
+Open WebUI's native MCP support (v0.6.31 and later) speaks Streamable HTTP only. Add the server under Admin Panel > Settings > Integrations > External Tool Servers with type "MCP Streamable HTTP" and the URL including the path, e.g. `http://nl-gov-mcp:3333/mcp`.
 
 ```bash
 npm run dev:streamable-http    # development
@@ -255,6 +257,15 @@ docker run --rm -p 3333:3333 \
   -e DSO_API_KEY=your-key \
   nl-gov-mcp
 ```
+
+The image starts the SSE transport by default. For Open WebUI and other Streamable HTTP clients, override the command; `MCP_TRANSPORT` does not help here, because the `--sse` flag in the image wins over it:
+
+```bash
+docker run --rm -p 3333:3333 -e NL_GOV_HTTP_STATELESS=true \
+  nl-gov-mcp node dist/src/index.js --streamable-http
+```
+
+The image health check calls `GET /health`, which answers in every HTTP mode. Orchestrators such as Amazon ECS ignore the image's `HEALTHCHECK`; give them the same command (`wget -q -O /dev/null http://127.0.0.1:3333/health || exit 1`) or point a load balancer at `/health`.
 
 ### Claude Desktop integration
 
