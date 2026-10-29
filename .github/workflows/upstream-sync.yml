@@ -104,7 +104,9 @@ jobs:
           grep -q 'retryDelaysMs' src/utils/http.ts || missing="$missing src/utils/http.ts(retryDelaysMs, oorzaak)"
           grep -q 'CIRCUIT_PER_CONNECTOR' src/utils/connector-runtime.ts || missing="$missing src/utils/connector-runtime.ts(CIRCUIT_PER_CONNECTOR)"
           grep -q 'LIDO_VERZOEK' src/sources/lido.ts || missing="$missing src/sources/lido.ts(LIDO_VERZOEK)"
-          for f in src/fork/hallucinatie.ts src/fork/foutlog.ts data/bekende-valkuilen.json src/fork/eu-tekst.ts src/fork/eu-bron.ts src/fork/eu-tools.ts src/fork/lido-artikel.ts src/fork/lido-relaties.ts src/fork/rechtspraak-open-data.ts src/fork/lido-robuust.ts src/fork/bron-fouten.ts src/fork/bron-gezondheid.ts; do [ -f "$f" ] || missing="$missing $f"; done
+          grep -q 'lidoGetText' src/sources/lido.ts || missing="$missing src/sources/lido.ts(lidoGetText)"
+          grep -q 'options.dispatcher' src/utils/http.ts || missing="$missing src/utils/http.ts(dispatcher)"
+          for f in src/fork/hallucinatie.ts src/fork/foutlog.ts data/bekende-valkuilen.json src/fork/eu-tekst.ts src/fork/eu-bron.ts src/fork/eu-tools.ts src/fork/lido-artikel.ts src/fork/lido-relaties.ts src/fork/rechtspraak-open-data.ts src/fork/lido-robuust.ts src/fork/bron-fouten.ts src/fork/bron-gezondheid.ts src/fork/ip-herkansing.ts; do [ -f "$f" ] || missing="$missing $f"; done
           echo "missing=$missing" >> "$GITHUB_OUTPUT"
 
       - name: Merge into main when everything passes

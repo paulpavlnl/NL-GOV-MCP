@@ -353,6 +353,7 @@ function registerLidoRelaties(server: McpServer, deps: EuForkDeps): void {
         portal_url: r.portalUrl,
         totaal: r.totaal,
         per_type: r.perType,
+        ...(r.tellingen === "niet beschikbaar" ? { tellingen: r.tellingen } : {}), // FORK: totals from the get-links facets
         ...(r.filter ? { filter: r.filter, totaal_met_filter: r.totaalMetFilter } : {}),
         per_instantie: r.perInstantie?.slice(0, 20),
         per_jaar: r.perJaar?.slice(0, 15),
@@ -365,7 +366,7 @@ function registerLidoRelaties(server: McpServer, deps: EuForkDeps): void {
         records: [{ source_name: "lido", title: `LiDO-relaties: ${naam ?? r.titel ?? label}`, canonical_url: r.portalUrl ?? "https://linkeddata.overheid.nl", data, snippet: r.perType?.slice(0, 5).map((t) => `${t.type}: ${t.aantal}`).join(", ") }],
         provenance: prov,
         access_note:
-          (r.bron === "lido-portaal" ? `${r.opmerking} ` : "") +
+          (r.bron === "lido-portaal" || r.tellingen === "niet beschikbaar" ? `${r.opmerking} ` : "") +
           "Bron: LiDO-services (get-aantal-per-informatietype, get-links) van KOOP, CC0. richting: 'inkomend' = dat document verwijst naar het opgevraagde, 'uitgaand' = het opgevraagde verwijst ernaar. " +
           "Verwijzingen zijn grotendeels door de computer herkend ('Door computer herkende referentie'): een relatie zegt dát een document het noemt, niet hoe; open het document voor de inhoud. " +
           (r.volledig === false ? `Niet alles getoond: verhoog max (tot 500) of filter op type, instantie of jaar. ` : "") +

@@ -54,6 +54,27 @@ describe(`LiDO and Rechtspraak live (${URL_})`, () => {
     expect(r.records.length).toBe(1);
   }, 120_000);
 
+  // 29-10-2026 (tests/mcp-taken-2026-10-29.test.ts): the three improvements, live.
+  it("lido_relaties BW 7:658, with or without counts", async () => {
+    const r = await tool("lido_relaties", { id: "BWBR0005290", artikel: "7:658", max: 5 });
+    expect(r.error, JSON.stringify(r).slice(0, 400)).toBeUndefined();
+    expect(r.records[0].data.totaal).toBeGreaterThan(0);
+  }, 180_000);
+
+  it("wetsgeschiedenis_get BW 7:631 volgorde nieuwste reads the 2018 act, not 23 438", async () => {
+    const r = await tool("wetsgeschiedenis_get", { wet: "BW", artikel: "7:631", max_dossiers: 1, volgorde: "nieuwste", passages: false, aanhangig: false });
+    expect(r.error, JSON.stringify(r).slice(0, 400)).toBeUndefined();
+    expect(r.records.map((x: { data: { dossier: string } }) => x.data.dossier)).toEqual(["34766"]);
+  }, 180_000);
+
+  it("rechtspraak_richtlijnen: Rapport alimentatienormen passages with paragraph and page", async () => {
+    const r = await tool("rechtspraak_richtlijnen", { onderwerp: "alimentatienormen", zoek: "rapport alimentatienormen", lees: true, zoekterm: "woonlasten", max_chars: 2000 });
+    expect(r.error, JSON.stringify(r).slice(0, 400)).toBeUndefined();
+    const p = r.records[0].data.passages;
+    expect(p.length).toBeGreaterThan(0);
+    expect(p.every((x: { paragraaf?: string; pagina?: number }) => x.paragraaf && x.pagina)).toBe(true);
+  }, 180_000);
+
   it("bronnen_status: every source answers", async () => {
     const r = await tool("bronnen_status", {});
     expect(r.records.filter((x: { data: { ok: boolean } }) => !x.data.ok)).toEqual([]);

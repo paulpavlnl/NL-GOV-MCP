@@ -2,7 +2,7 @@ import { ENV_KEYS } from "../config.js";
 import type { AppConfig } from "../types.js";
 import { getText, SourceRequestError } from "../utils/http.js";
 import { parseXml } from "../utils/xml-parser.js";
-import { LIDO_VERZOEK } from "../fork/lido-robuust.js"; // FORK (docs/FORK.md)
+import { LIDO_VERZOEK, lidoGetText } from "../fork/lido-robuust.js"; // FORK (docs/FORK.md)
 
 /**
  * LiDO (Linked Data Overheid, KOOP/Logius) — verwijzingen.
@@ -279,7 +279,7 @@ export class LidoSource {
   constructor(private readonly config: AppConfig) {}
 
   private async fetchXml(service: string, query: Record<string, string>, headers?: Record<string, string>) {
-    const { data, meta } = await getText(`${LIDO_SERVICE_BASE}/${service}`, {
+    const { data, meta } = await lidoGetText(`${LIDO_SERVICE_BASE}/${service}`, { // FORK (docs/FORK.md): other IP address after a connection failure
       query,
       connector: LIDO_CONNECTOR,
       timeoutMs: LIDO_TIMEOUT_MS,

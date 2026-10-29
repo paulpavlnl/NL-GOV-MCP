@@ -149,6 +149,16 @@ function paginaVoor(tekst: string, passage: string): string | undefined {
   return p;
 }
 
+/**
+ * Which acts to read. "invoering" (default): the act that introduced the article, then the newest amendments.
+ * "nieuwste": only the newest amendments, for a part added later (BW 7:631 lid 8: 2018, not 23 438 of 1996/97).
+ */
+export function kiesDossiers(wijzigingen: Wijziging[], max: number, volgorde: "invoering" | "nieuwste" = "invoering"): string[] {
+  const nieuwsteEerst = [...wijzigingen].sort((a, b) => b.datum.localeCompare(a.datum)).flatMap((w) => w.dossiers);
+  const nieuw = volgorde === "invoering" ? wijzigingen.filter((w) => w.betreft === "nieuw").flatMap((w) => w.dossiers).slice(-1) : [];
+  return [...new Set([...nieuw, ...nieuwsteEerst])].slice(0, max);
+}
+
 const rec = (title: string, url: string, date: string | undefined, data: Record<string, unknown>): MCPRecord => ({ source_name: "officielebekendmakingen.nl", title, canonical_url: url, ...(date ? { date } : {}), data });
 const NOTE = "Wetsgeschiedenis uit de BWB (wetstechnische informatie: welke wet het artikel invoerde of wijzigde, dossier en Staatsblad) en de Kamerstukken van KOOP. De passages zijn gevonden op het artikelnummer: lees de stukken zelf voordat je citeert, en let erop dat een passage over een eerdere versie van het artikel kan gaan. Citeer als Kamerstukken II jaar/jaar, dossiernummer, nr., p. Wetsgeschiedenis is een uitlegbron, geen recht; de rechter weegt haar naast tekst, systeem en doel.";
 
@@ -169,7 +179,8 @@ export function registerWetsgeschiedenis(server: McpServer, deps: { config: AppC
     inputSchema: {
       wet: z.string().max(200).optional(), bwb_id: z.string().max(20).optional(), artikel: z.string().min(1).max(30),
       zoekterm: z.string().max(200).optional().describe("Search the papers for this term instead of the article number."),
-      max_dossiers: z.number().int().min(1).max(10).default(4).describe("How many acts to read: the one that introduced the article, then the newest amendments."),
+      max_dossiers: z.number().int().min(1).max(10).default(4).describe("How many acts to read: the one that introduced the article, then the newest amendments (see volgorde)."),
+      volgorde: z.enum(["invoering", "nieuwste"]).default("invoering").describe("invoering (default): the introducing act first, then the newest amendments. nieuwste: the newest amendments only, for a paragraph (lid) added later; with max_dossiers 1 the latest amending act."),
       passages: z.boolean().default(true).describe("Read the main papers and return the passages (slower)."),
       aanhangig: z.boolean().default(true).describe("Also list the bills still pending for this law."),
     },
@@ -191,9 +202,8 @@ export function registerWetsgeschiedenis(server: McpServer, deps: { config: AppC
 
       const { data: wti } = await getText(WTI_URL(bwbId), { connector: "wetten_bwb", timeoutMs: 60_000, maxResponseBytes: 80_000_000 });
       const { wijzigingen, aanhangig } = parseWti(wti, artikel.label_id);
-      // The act that introduced the article explains it most; then the newest amendments.
-      const nieuw = wijzigingen.filter((w) => w.betreft === "nieuw").flatMap((w) => w.dossiers);
-      const dossiers = [...new Set([...nieuw.slice(-1), ...wijzigingen.flatMap((w) => w.dossiers)])].slice(0, a.max_dossiers);
+      // The act that introduced the article explains it most; then the newest amendments (or, with volgorde nieuwste, only those).
+      const dossiers = kiesDossiers(wijzigingen, a.max_dossiers, a.volgorde);
       const stukken = dossiers.length ? await kamerstukken(dossiers) : [];
       const zoek = a.zoekterm ? zoektermPatroon(a.zoekterm) : undefined;
       const artRe = artikelPatroon(a.artikel);
@@ -260,8 +270,8 @@ export function registerWetsgeschiedenis(server: McpServer, deps: { config: AppC
       return toMcpToolPayload(successResponse({
         summary: `${artikel.titel_regeling ?? bwbId}, artikel ${artikel.artikel}: ${wijzigingen.length} versie(s) in de BWB, ${dossiers.length} wetgevingsdossier(s) gelezen${pending.length ? `; ${pending.length} aanhangig(e) wetsvoorstel(len) voor deze wet` : ""}`,
         records,
-        provenance: { tool: "wetsgeschiedenis_get", endpoint: WTI_URL(bwbId), query_params: Object.fromEntries(Object.entries({ wet: a.wet, bwb_id: bwbId, artikel: a.artikel, zoekterm: a.zoekterm }).filter(([, v]) => v).map(([k, v]) => [k, String(v)])), timestamp: nowIso(), returned_results: records.length, total_results: wijzigingen.length },
-        access_note: `${NOTE} Artikel: ${artikel.wetten_url}. Versies (nieuwste eerst): ${wijzigingen.map((w) => `${w.datum} ${w.betreft} (${w.dossiers.join(", ") || "geen dossier"}; ${w.staatsblad.join(", ")})`).join(" · ") || "geen"}.${wijzigingen.length > dossiers.length ? ` Meer dossiers: verhoog max_dossiers.` : ""} De BWB kent alleen de geschiedenis vanaf de opname in de huidige wet: voor een voorloper (bijv. het oude BW) zoek je de wetsgeschiedenis van die bepaling apart.${pending.length ? " De aanhangige wetsvoorstellen staan in het laatste record." : ""}${zoekNoot}${foutNoot}`,
+        provenance: { tool: "wetsgeschiedenis_get", endpoint: WTI_URL(bwbId), query_params: Object.fromEntries(Object.entries({ wet: a.wet, bwb_id: bwbId, artikel: a.artikel, zoekterm: a.zoekterm, volgorde: a.volgorde }).filter(([, v]) => v).map(([k, v]) => [k, String(v)])), timestamp: nowIso(), returned_results: records.length, total_results: wijzigingen.length },
+        access_note: `${NOTE} Artikel: ${artikel.wetten_url}. Versies (nieuwste eerst): ${wijzigingen.map((w) => `${w.datum} ${w.betreft} (${w.dossiers.join(", ") || "geen dossier"}; ${w.staatsblad.join(", ")})`).join(" · ") || "geen"}.${wijzigingen.length > dossiers.length ? ` Meer dossiers: verhoog max_dossiers${a.volgorde === "invoering" ? ", of kies volgorde 'nieuwste' voor een later ingevoegd lid" : ""}.` : ""} Gelezen (volgorde ${a.volgorde}): ${dossiers.join(", ") || "geen"}. De BWB kent alleen de geschiedenis vanaf de opname in de huidige wet: voor een voorloper (bijv. het oude BW) zoek je de wetsgeschiedenis van die bepaling apart.${pending.length ? " De aanhangige wetsvoorstellen staan in het laatste record." : ""}${zoekNoot}${foutNoot}`,
       }));
     } catch (e) { return toMcpToolPayload(mapSourceError(e, `BWB/KOOP (${label})`, "https://wetten.overheid.nl")); }
   });

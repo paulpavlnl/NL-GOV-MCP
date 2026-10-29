@@ -17,6 +17,7 @@ import { getConnectorHealth } from "../utils/connector-runtime.js";
 import { getText, SourceRequestError } from "../utils/http.js";
 import { nowIso, successResponse, toMcpToolPayload } from "../utils/response.js";
 import { foutOorzaak } from "./bron-fouten.js";
+import { metAndereAdressen } from "./ip-herkansing.js";
 import { LIDO_VERZOEK } from "./lido-robuust.js";
 
 const RECHTSPRAAK_CONTENT = "https://data.rechtspraak.nl/uitspraken/content";
@@ -68,7 +69,7 @@ export async function viaGedeeldeClient(args: { ecli: string; returnType?: "DOC"
 
 interface Proef { bron: string; url: string; connector: string; accept: string; verwacht: RegExp }
 const PROEVEN: Proef[] = [
-  { bron: "LiDO-services (get-aantal-per-informatietype)", url: "https://linkeddata.overheid.nl/service/get-aantal-per-informatietype?ext-id=ECLI%3ANL%3AHR%3A2019%3A2006", connector: "lido", accept: "application/xml", verwacht: /<lido\b/ },
+  { bron: "LiDO-services (get-aantal-per-informatietype)", url: "https://linkeddata.overheid.nl/service/get-aantal-per-informatietype?ext-id=ECLI%3ANL%3AHR%3A2019%3A2006", connector: "lido_telling", accept: "application/xml", verwacht: /<lido\b/ },
   { bron: "LiDO-services (get-links)", url: "https://linkeddata.overheid.nl/service/get-links?ext-id=ECLI%3ANL%3AHR%3A2019%3A2006&output=xml&start=0&rows=1", connector: "lido", accept: "application/xml", verwacht: /<lido\b/ },
   { bron: "LiDO-portaal (spiegel-lijstweergave)", url: "https://linkeddata.overheid.nl/front/portal/spiegel-lijstweergave?ext-id=ECLI%3ANL%3AHR%3A2019%3A2006", connector: "lido_portaal", accept: "text/html", verwacht: /relaties gevonden/i },
   { bron: "Rechtspraak content-service", url: `${RECHTSPRAAK_CONTENT}?id=ECLI%3ANL%3AHR%3A2019%3A2006&return=META`, connector: "rechtspraak", accept: "application/xml", verwacht: /ECLI:NL:HR:2019:2006/ },
@@ -79,7 +80,9 @@ export async function proefBronnen(fetchImpl: typeof fetch = fetch) {
   return Promise.all(PROEVEN.map(async (p) => {
     const t0 = Date.now();
     try {
-      const r = await fetchImpl(p.url, { headers: { ...LIDO_VERZOEK.headers, Accept: p.accept }, signal: AbortSignal.timeout(20_000) });
+      // FORK: LiDO through another IP address after a connection failure, as the tools do (src/fork/ip-herkansing.ts).
+      const poging = (dispatcher?: unknown) => fetchImpl(p.url, { headers: { ...LIDO_VERZOEK.headers, Accept: p.accept }, signal: AbortSignal.timeout(20_000), ...(dispatcher ? { dispatcher } : {}) } as RequestInit);
+      const r = p.connector.startsWith("lido") ? await metAndereAdressen(p.url, poging) : await poging();
       const body = await r.text();
       const ok = r.ok && p.verwacht.test(body);
       return { bron: p.bron, ok, status: r.status, ms: Date.now() - t0, ...(ok ? {} : { oorzaak: r.ok ? "onverwacht antwoord" : `HTTP ${r.status}` }), circuit: getConnectorHealth(p.connector).circuit_open ? "open" : "dicht" };

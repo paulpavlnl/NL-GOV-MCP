@@ -7,8 +7,7 @@
  * issuing body and year; it filters on each of them.
  */
 import { XMLParser } from "fast-xml-parser";
-import { getText } from "../utils/http.js";
-import { isBronStoring, LIDO_VERZOEK, lidoViaPortaal } from "./lido-robuust.js";
+import { isBronStoring, LIDO_VERZOEK, lidoGetText, lidoViaPortaal } from "./lido-robuust.js";
 
 export const LIDO_SERVICE = "https://linkeddata.overheid.nl/service";
 const PORTAL_LIST = "https://linkeddata.overheid.nl/front/portal/spiegel-lijstweergave";
@@ -204,9 +203,12 @@ export interface LidoRelatiesResult {
   items: LidoDocument[];
   /** Without a type filter: the newest case law separately, so it is not buried under laws and regulations. */
   rechtspraak?: LidoDocument[];
+  /** "niet beschikbaar" when get-aantal-per-informatietype failed: totaal and perType then come from the get-links facets. */
+  tellingen?: "get-aantal-per-informatietype" | "niet beschikbaar";
 }
 
-const fetchXml = async (url: string) => (await getText(url, { connector: "lido", ...LIDO_VERZOEK })).data;
+/** The counting service has its own circuit (lido_telling): when it fails, get-links still counts. */
+const fetchXml = async (url: string) => (await lidoGetText(url, { connector: /\/get-aantal-per-informatietype/.test(url) ? "lido_telling" : "lido", ...LIDO_VERZOEK })).data;
 
 /** When the services fail: the same relations from the portal list (one page, the direction the portal shows). */
 async function viaPortaal(identifier: string, lookup: LidoLookup, oorzaak: unknown, portaal: typeof lidoViaPortaal): Promise<LidoRelatiesResult> {
@@ -265,10 +267,26 @@ async function viaServices(
   let lookup: LidoLookup | null = null;
   let telling: LidoTelling | null = null;
   let endpoint = LIDO_SERVICE;
+  let tellingFout: unknown = null;
   for (const l of lookups) {
     endpoint = serviceUrl("get-aantal-per-informatietype", l as Record<string, string>);
-    const t = parseTelling(await fetchText(endpoint));
+    let t: LidoTelling;
+    try {
+      t = parseTelling(await fetchText(endpoint));
+    } catch (error) {
+      // 29-10-2026: the counting service timed out while get-links worked. Go on without counts.
+      if (!isBronStoring(error)) throw error;
+      tellingFout = error;
+      break;
+    }
     if (t.lidoId) { lookup = l; telling = t; break; }
+  }
+  if (tellingFout) {
+    for (const l of lookups) {
+      const url = serviceUrl("get-links", { ...(l as Record<string, string>), output: "xml", start: "0", rows: "1" });
+      const p = parseLinks(await fetchText(url));
+      if (p) { lookup = l; telling = { lidoId: p.lidoId, totaal: p.totaal ?? 0, perType: p.perType.map((f) => ({ type: f.naam, aantal: f.aantal })) }; break; }
+    }
   }
   if (!lookup || !telling) {
     const cvdr = /^CVDR/i.test(identifier.trim());
@@ -317,6 +335,8 @@ async function viaServices(
     volledig: totaalMetFilter !== null ? items.length >= totaalMetFilter : null,
     items,
     ...(rechtspraak ? { rechtspraak } : {}),
+    tellingen: tellingFout ? "niet beschikbaar" : "get-aantal-per-informatietype",
+    ...(tellingFout ? { opmerking: `Tellingen niet beschikbaar: get-aantal-per-informatietype faalde (${tellingFout instanceof Error ? tellingFout.message : String(tellingFout)}); totaal en perType komen uit de facetten van get-links.` } : {}),
   };
 }
 

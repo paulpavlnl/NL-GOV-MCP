@@ -94,6 +94,59 @@ export function actueel(docs: RichtlijnDoc[], peildatum: string): Set<RichtlijnD
   return uit;
 }
 
+export interface Paragraaf { pos: number; nummer: string; kopje: string }
+
+/**
+ * The numbered headings of a guideline's text ("3.2.6 Bijzondere kosten", "4.6.2 Lasten die …") and its page
+ * footers ("26Rapport Alimentatienormen januari 2026": the page number glued to a footer text that recurs). The
+ * table of contents (a heading followed by a page number) and footnotes (a number without a dot) are left out.
+ */
+export function structuur(tekst: string): { paragrafen: Paragraaf[]; paginas: Array<{ pos: number; pagina: number }> } {
+  const paragrafen: Paragraaf[] = [];
+  const kandidaten: Array<{ pos: number; pagina: number; rest: string }> = [];
+  let pos = 0;
+  for (const regel of tekst.split("\n")) {
+    const l = regel.trim();
+    const kop = /^(\d{1,2}\.(?:\d{1,2}\.?){0,3})\s+(\p{Lu}.{1,110})$/u.exec(l);
+    const hoofd = kop ? kop[1].split(".").filter(Boolean).length === 1 : false;
+    if (kop && !/\s\d{1,3}$/.test(kop[2]) && !/[€;]/.test(kop[2]) && !(hoofd && (kop[2].length > 70 || /[.,:]$/.test(kop[2])))) {
+      paragrafen.push({ pos, nummer: kop[1].replace(/\.$/, ""), kopje: kop[2].trim() });
+    }
+    const voet = /^(\d{1,3})(\p{L}.{5,})$/u.exec(l);
+    if (voet) kandidaten.push({ pos, pagina: Number(voet[1]), rest: voet[2].replace(/\s+/g, " ") });
+    pos += regel.length + 1;
+  }
+  // A footer is the same text after the number on at least three pages.
+  const tel = new Map<string, number>();
+  for (const k of kandidaten) tel.set(k.rest, (tel.get(k.rest) ?? 0) + 1);
+  const paginas = kandidaten.filter((k) => (tel.get(k.rest) ?? 0) >= 3).map(({ pos: p, pagina }) => ({ pos: p, pagina }));
+  // A number twice: the first is a table-of-contents line that wrapped (no page number at its end).
+  const laatste = new Map(paragrafen.map((p) => [p.nummer, p]));
+  return { paragrafen: paragrafen.filter((p) => laatste.get(p.nummer) === p), paginas };
+}
+
+/** The anchor of a position: the last numbered heading before it and the page whose footer follows it. */
+export function ankerVoor(st: ReturnType<typeof structuur>, pos: number): { paragraaf?: string; kopje?: string; pagina?: number } {
+  const par = st.paragrafen.filter((p) => p.pos <= pos).at(-1);
+  const pagina = st.paginas.find((p) => p.pos >= pos)?.pagina;
+  return { ...(par ? { paragraaf: par.nummer, kopje: par.kopje } : {}), ...(pagina ? { pagina } : {}) };
+}
+
+/** Passages with the term, each with its paragraph, page, a link to that page of the PDF and a citation. */
+export function passagesMetAnker(tekst: string, term: string, doc: Pick<RichtlijnDoc, "titel" | "url">, max = 30) {
+  const st = structuur(tekst);
+  let vanaf = 0;
+  return passages(tekst, term, max).map((p) => {
+    const i = tekst.indexOf(p, vanaf);
+    const pos = i >= 0 ? i : vanaf;
+    vanaf = pos + 1;
+    // The line with the term is the second of the passage (one line of context before it).
+    const a = ankerVoor(st, pos + Math.max(0, p.indexOf("\n")));
+    const citeer = `${doc.titel}${a.paragraaf ? `, par. ${a.paragraaf}${a.kopje ? ` (${a.kopje})` : ""}` : ""}${a.pagina ? `, p. ${a.pagina}` : ""}`;
+    return { tekst: p, ...a, ...(a.pagina ? { link: `${doc.url}#page=${a.pagina}` } : {}), citeer };
+  });
+}
+
 const woorden = (s: string) => s.toLowerCase().normalize("NFD").replace(/\p{M}/gu, "").split(/[^a-z0-9]+/).filter((w) => w.length > 2);
 const rec = (d: RichtlijnDoc, data: Record<string, unknown>): MCPRecord => ({ source_name: "rechtspraak.nl", title: d.titel, canonical_url: d.url, ...(d.vanaf ? { date: d.vanaf } : {}), data });
 const NOTE = "Richtlijnen, aanbevelingen en procesreglementen van de rechtspraak (LOVF, LOVCK&T, expertgroep alimentatienormen): geen wet, maar de rechter volgt ze in de regel; afwijken moet hij motiveren. Procesreglementen binden partijen in de procedure. Noem titel, versie (geldig vanaf) en paragraaf.";
@@ -128,12 +181,17 @@ export function registerRichtlijnen(server: McpServer, deps: { TOOL_ANNOTATIONS:
         const r = await fetchPdfText(doc.url, { connector: "rechtspraak_richtlijnen", timeoutMs: 60_000, retries: 1, maxChars: 1_500_000, headers: { "User-Agent": "Mozilla/5.0" } });
         if (!r.ok) return toMcpToolPayload(errorResponse({ error: "unexpected", message: `De PDF kon niet worden gelezen: ${r.message}`, suggestion: `Open ${doc.url}.` }));
         const body = a.zoekterm ? passages(r.text, a.zoekterm, 30).join("\n…\n") : r.text;
+        // FORK: per passage the paragraph (number and heading) and page, so the guideline is cited with its paragraph.
+        const metAnker = a.zoekterm ? passagesMetAnker(r.text, a.zoekterm, doc) : undefined;
+        const st = structuur(r.text);
         const andere = docs.filter((d) => d !== doc && d.reeks === doc.reeks).map((d) => ({ titel: d.titel, vanaf: d.vanaf, tot: d.tot, url: d.url }));
         return toMcpToolPayload(successResponse({
           summary: `${doc.titel}${nu.has(doc) ? ` (geldig op ${peildatum})` : " (let op: niet als geldig op de peildatum herkend)"}: ${r.text.length} tekens${a.zoekterm ? `, passages met '${a.zoekterm}'` : ""}`,
-          records: [rec(doc, { reeks: doc.reeks, geldig_vanaf: doc.vanaf, geldig_tot: doc.tot, actueel: nu.has(doc), tekst: body.length > a.max_chars ? `${body.slice(0, a.max_chars)}…` : body, ingekort: body.length > a.max_chars, andere_versies: andere })],
+          records: [rec(doc, { reeks: doc.reeks, geldig_vanaf: doc.vanaf, geldig_tot: doc.tot, actueel: nu.has(doc), tekst: body.length > a.max_chars ? `${body.slice(0, a.max_chars)}…` : body, ingekort: body.length > a.max_chars,
+            ...(metAnker ? { passages: metAnker } : { paragrafen: st.paragrafen.slice(0, 300).map((p) => ({ paragraaf: p.nummer, kopje: p.kopje, ...ankerVoor(st, p.pos) })).map(({ paragraaf, kopje, pagina }) => ({ paragraaf, kopje, ...(pagina ? { pagina } : {}) })) }),
+            andere_versies: andere })],
           provenance: { ...prov, returned_results: 1 },
-          access_note: `${NOTE} Gelezen: ${doc.url}. ${docs.length > 1 ? `Er passen ${docs.length} documenten bij de zoekopdracht; verfijn met zoek als dit niet het bedoelde is.` : ""}`,
+          access_note: `${NOTE} Gelezen: ${doc.url}. ${metAnker ? "Per passage staan paragraaf, kopje, pagina en een link naar die pagina (passages[].citeer). " : "De paragrafen met hun pagina staan in paragrafen. "}${docs.length > 1 ? `Er passen ${docs.length} documenten bij de zoekopdracht; verfijn met zoek als dit niet het bedoelde is.` : ""}`,
         }));
       }
       const lijst = a.alle_versies ? docs : docs.filter((d) => nu.has(d) || (!d.vanaf && !d.tot));

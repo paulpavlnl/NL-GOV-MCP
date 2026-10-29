@@ -150,7 +150,15 @@ Aanleiding: op 21 en 28-10-2026 gaf `lido_relaties` "LiDO request failed" (en da
 - `rechtspraak_get_by_ecli`: eerst het oude directe verzoek; gooit dat of geeft het 5xx/429, dan de route van `rechtspraak_uitspraak_get` (gedeelde client, 3 herhalingen); `bron` zegt welke.
 - Tool `bronnen_status`: test nu, zonder cache, LiDO-services, LiDO-portaal, de content-service en de Open Data-index, met status, tijd, oorzaak en breakerstand.
 
-Tests: `tests/lido-robuust.test.ts`; live tegen de draaiende server (standaard de Funnel-URL, `LIVE_MCP_URL` om te wijzigen): `npx vitest run --config vitest.live.config.ts tests/lido-robuust.live.test.ts` (ECLI:NL:CRVB:2021:2984, ECLI:NL:CRVB:2024:2331, BWBR0005537 art. 7:2).
+- Ander IP-adres (`src/fork/ip-herkansing.ts`, 29-10-2026; zoals commit c1d4f14 van Verwijzingscontrole): `linkeddata.overheid.nl` is een GSLB-naam met meerdere knooppunten. Bij een verbindings- of TLS-fout (ETIMEDOUT, ENETUNREACH, ECONNREFUSED, alert 112 …) probeert `lidoGetText` dezelfde URL via maximaal 3 andere adressen: eerst wat het lokale DNS nog meer geeft, dan de publieke resolvers 1.1.1.1 en 9.9.9.9, IPv4 voor IPv6; de SNI blijft de hostnaam. De melding noemt de echte foutcode en de geprobeerde adressen. Andere storingen (5xx, 429) krijgen de gewone herhalingen. Geldt voor alle LiDO-services, het portaal en de LiDO-proeven van `bronnen_status`; `src/utils/http.ts` kreeg daarvoor de optie `dispatcher` (`FORK`), en `undici` is een eigen afhankelijkheid.
+- `get-aantal-per-informatietype` heeft een eigen breaker (`lido_telling`); die en `lido_portaal` tellen elke mislukking (`telAlles`): na één verzoek dat op al zijn adressen faalde zijn ze 60 s dicht. Faalt de telling, dan gaat `lido_relaties` door met get-links: totaal en per_type komen uit de facetten, `tellingen: "niet beschikbaar"` en de access_note zegt waarom.
+
+## wetsgeschiedenis_get volgorde en richtlijn-paragrafen (29-10-2026)
+
+- `wetsgeschiedenis_get` optie `volgorde`: `invoering` (standaard, ongewijzigd: de invoeringswet eerst, dan de nieuwste wijzigingen) of `nieuwste` (alleen de nieuwste wijzigingswetten, voor een later ingevoegd lid; BW 7:631 met max_dossiers 1 leest dan 34 766 uit 2018 in plaats van 23 438). `kiesDossiers` in `src/fork/wetsgeschiedenis.ts`.
+- `rechtspraak_richtlijnen` met `lees` en `zoekterm`: per passage `paragraaf`, `kopje`, `pagina`, een `link` naar die pagina van de PDF (`#page=`) en `citeer` ("Rapport alimentatienormen, versie januari 2026, par. 4.2.2.4 (Woonbudget), p. 20"); zonder zoekterm de lijst `paragrafen`. De kopjes zijn de genummerde regels (inhoudsopgave en voetnoten vallen af), de pagina's komen uit de voettekst met het paginanummer.
+
+Tests: `tests/mcp-taken-2026-10-29.test.ts`, `tests/lido-robuust.test.ts`; live tegen de draaiende server (standaard de Funnel-URL, `LIVE_MCP_URL` om te wijzigen): `npx vitest run --config vitest.live.config.ts tests/lido-robuust.live.test.ts` (ECLI:NL:CRVB:2021:2984, ECLI:NL:CRVB:2024:2331, BWBR0005537 art. 7:2, BW 7:658, wetsgeschiedenis 7:631 nieuwste, Rapport alimentatienormen).
 
 ## Sleutels op de eigen computers (`src/load-env.ts`, `scripts/update-local.mjs`)
 

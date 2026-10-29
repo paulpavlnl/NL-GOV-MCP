@@ -29,6 +29,7 @@ const CONNECTOR_CATEGORY: Record<string, ConnectorCategory> = {
   rechtspraak_open_data: "semi_live",
   // FORK (docs/FORK.md): the LiDO portal list, fallback when the LiDO services fail (src/fork/lido-robuust.ts).
   lido_portaal: "semi_live",
+  lido_telling: "semi_live",
   officiele_bekendmakingen: "semi_live",
   rijksoverheid: "semi_live",
   data_overheid: "semi_live",
@@ -129,9 +130,14 @@ const CONNECTOR_CATEGORY: Record<string, ConnectorCategory> = {
 const FAILURE_THRESHOLD = 3;
 const CIRCUIT_COOLDOWN_MS = 5 * 60 * 1000;
 /** FORK (docs/FORK.md): LiDO opens only after 5 different endpoints fail, and is half-open again after 60 s. */
-const CIRCUIT_PER_CONNECTOR: Record<string, { drempel: number; afkoelMs: number }> = {
+// telAlles: every failure counts, also on one endpoint. For LiDO's counting service and the portal,
+// which lido_relaties can do without (get-links has the same totals in its facets): after one request
+// that failed on all its addresses (4 attempts) they stay closed for 60 s instead of costing every call
+// the full time-out again (29-10-2026).
+const CIRCUIT_PER_CONNECTOR: Record<string, { drempel: number; afkoelMs: number; telAlles?: boolean }> = {
   lido: { drempel: 5, afkoelMs: 60_000 },
-  lido_portaal: { drempel: 5, afkoelMs: 60_000 },
+  lido_telling: { drempel: 4, afkoelMs: 60_000, telAlles: true },
+  lido_portaal: { drempel: 4, afkoelMs: 60_000, telAlles: true },
   rechtspraak: { drempel: 5, afkoelMs: 60_000 },
 };
 const MAX_CONCURRENT_PER_CONNECTOR = 3;
@@ -335,7 +341,7 @@ export function markConnectorFailure(
   // FORK (docs/FORK.md): own threshold and cooldown per connector; distinct endpoints only, so one identifier never opens it.
   const eigen = CIRCUIT_PER_CONNECTOR[connector];
   if (eigen) {
-    (state.failedEndpoints ??= new Set()).add(args.endpoint ?? String(state.consecutiveFailures));
+    (state.failedEndpoints ??= new Set()).add(eigen.telAlles || !args.endpoint ? String(state.consecutiveFailures) : args.endpoint);
     if (state.probeInFlight || state.failedEndpoints.size >= eigen.drempel) {
       state.circuitOpenUntil = Date.now() + eigen.afkoelMs;
       state.probeInFlight = false;

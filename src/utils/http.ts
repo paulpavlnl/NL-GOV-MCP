@@ -72,6 +72,8 @@ export interface RequestOptions {
   responseType?: "text" | "binary";
   /** FORK (docs/FORK.md): wait before retry n (ms), instead of the short exponential default. */
   retryDelaysMs?: readonly number[];
+  /** FORK (docs/FORK.md): an undici dispatcher, e.g. pinned to another IP address (src/fork/ip-herkansing.ts). */
+  dispatcher?: unknown;
 }
 
 export interface HttpMeta {
@@ -419,7 +421,8 @@ async function request(
               ...(options.headers ?? {}),
             },
             body: body ? JSON.stringify(body) : undefined,
-          },
+            ...(options.dispatcher ? { dispatcher: options.dispatcher } : {}), // FORK (docs/FORK.md)
+          } as RequestInit,
           timeoutMs,
         );
 

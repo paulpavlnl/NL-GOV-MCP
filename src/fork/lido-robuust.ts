@@ -12,9 +12,12 @@
  * - When the services fail: the portal list (front/portal/spiegel-lijstweergave),
  *   the same relations as HTML, parsed per document type; result marked bron
  *   "lido-portaal".
+ * - A connection or TLS failure is retried on another IP address of the GSLB name
+ *   (src/fork/ip-herkansing.ts) before the slow retries on the same address.
  */
 import dns from "node:dns";
-import { getText, SourceRequestError } from "../utils/http.js";
+import { getText, type RequestOptions, SourceRequestError } from "../utils/http.js";
+import { metAndereAdressen } from "./ip-herkansing.js";
 
 export const LIDO_USER_AGENT = "Paul-van-Lange-NL-Legal-Reference-Checker/1.12 (nl-gov-mcp fork)";
 const DAG_MS = 24 * 60 * 60 * 1000;
@@ -35,6 +38,19 @@ export function isBronStoring(error: unknown): boolean {
 }
 
 const PORTAAL = "https://linkeddata.overheid.nl/front/portal/spiegel-lijstweergave";
+
+/**
+ * getText for LiDO: first one attempt; a connection or TLS failure then goes to up to 3 other
+ * addresses (one attempt each), any other source failure (5xx, 429, time-out) to the usual retries.
+ */
+export async function lidoGetText(url: string, options: RequestOptions) {
+  try {
+    return await metAndereAdressen(url, (dispatcher) => getText(url, { ...options, retries: 0, ...(dispatcher ? { dispatcher, disableCache: true } : {}) }));
+  } catch (error) {
+    if (!(error instanceof SourceRequestError) || error.code === "network_error" || error.code === "circuit_open" || !isBronStoring(error) || !options.retries) throw error;
+    return getText(url, { ...options, retries: options.retries - 1, retryDelaysMs: options.retryDelaysMs?.slice(1) });
+  }
+}
 
 export interface PortaalDocument { lidoId: string; id: string | null; titel: string; type: string; geldig_vanaf: string | null; url: string }
 export interface PortaalRelaties { titel: string | null; richting: string | null; totaal: number | null; perType: Array<{ type: string; aantal: number }>; items: PortaalDocument[] }
@@ -77,7 +93,7 @@ export async function lidoViaPortaal(lookup: { id: string } | { "ext-id": string
   const u = new URL(PORTAAL);
   if ("id" in lookup) u.searchParams.set("id", lookup.id);
   else u.searchParams.set("ext-id", lookup["ext-id"]);
-  const { data } = await getText(u.toString(), { ...LIDO_VERZOEK, connector: "lido_portaal", headers: { ...LIDO_VERZOEK.headers, Accept: "text/html,application/xhtml+xml" } });
+  const { data } = await lidoGetText(u.toString(), { ...LIDO_VERZOEK, connector: "lido_portaal", headers: { ...LIDO_VERZOEK.headers, Accept: "text/html,application/xhtml+xml" } });
   return { ...parsePortaal(data), url: u.toString() };
 }
 
