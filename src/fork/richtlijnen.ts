@@ -105,25 +105,29 @@ export function structuur(tekst: string): { paragrafen: Paragraaf[]; paginas: Ar
   const paragrafen: Paragraaf[] = [];
   const kandidaten: Array<{ pos: number; pagina: number; rest: string }> = [];
   let pos = 0;
-  for (const regel of tekst.split("\n")) {
+  const regels = tekst.split("\n");
+  regels.forEach((regel, i) => {
     const l = regel.trim();
     const kop = /^(\d{1,2}\.(?:\d{1,2}\.?){0,3})\s+(\p{Lu}.{1,110})$/u.exec(l);
     const hoofd = kop ? kop[1].split(".").filter(Boolean).length === 1 : false;
-    if (kop && !/\s\d{1,3}$/.test(kop[2]) && !/[€;]/.test(kop[2]) && !(hoofd && (kop[2].length > 70 || /[.,:]$/.test(kop[2])))) {
+    // A table-of-contents line ends in its page number, also when it wrapped onto the next line.
+    const inhoud = (s: string) => /\s\d{1,3}$/.test(s);
+    const volgende = regels[i + 1]?.trim() ?? "";
+    if (kop && !inhoud(kop[2]) && !(volgende.length < 90 && inhoud(volgende) && !/^\d/.test(volgende)) && !/[€;]/.test(kop[2]) && !(hoofd && (kop[2].length > 70 || /[.,:]$/.test(kop[2])))) {
       paragrafen.push({ pos, nummer: kop[1].replace(/\.$/, ""), kopje: kop[2].trim() });
     }
     const voet = /^(\d{1,3})(\p{L}.{5,})$/u.exec(l);
     if (voet) kandidaten.push({ pos, pagina: Number(voet[1]), rest: voet[2].replace(/\s+/g, " ") });
     pos += regel.length + 1;
-  }
+  });
   // A footer is the same text after the number on at least three pages.
   const tel = new Map<string, number>();
   for (const k of kandidaten) tel.set(k.rest, (tel.get(k.rest) ?? 0) + 1);
   const paginas = kandidaten.filter((k) => (tel.get(k.rest) ?? 0) >= 3).map(({ pos: p, pagina }) => ({ pos: p, pagina }));
-  // A number twice: the first is a table-of-contents line that wrapped (no page number at its end).
-  const laatste = new Map(paragrafen.map((p) => [p.nummer, p]));
-  return { paragrafen: paragrafen.filter((p) => laatste.get(p.nummer) === p), paginas };
+  return { paragrafen, paginas };
 }
+
+const vouw = (s: string) => s.toLowerCase().normalize("NFD").replace(/\p{M}/gu, "");
 
 /** The anchor of a position: the last numbered heading before it and the page whose footer follows it. */
 export function ankerVoor(st: ReturnType<typeof structuur>, pos: number): { paragraaf?: string; kopje?: string; pagina?: number } {
@@ -140,8 +144,12 @@ export function passagesMetAnker(tekst: string, term: string, doc: Pick<Richtlij
     const i = tekst.indexOf(p, vanaf);
     const pos = i >= 0 ? i : vanaf;
     vanaf = pos + 1;
-    // The line with the term is the second of the passage (one line of context before it).
-    const a = ankerVoor(st, pos + Math.max(0, p.indexOf("\n")));
+    // The anchor is the line with the term (usually the second: one line of context before it). A term in a
+    // heading ("4.6.2 Woonlasten …") then belongs to that heading's paragraph.
+    const lijnen = p.split("\n");
+    const t = vouw(term);
+    const k = Math.max(0, lijnen.findIndex((l) => vouw(l).includes(t)));
+    const a = ankerVoor(st, pos + lijnen.slice(0, k).reduce((n, l) => n + l.length + 1, 0));
     const citeer = `${doc.titel}${a.paragraaf ? `, par. ${a.paragraaf}${a.kopje ? ` (${a.kopje})` : ""}` : ""}${a.pagina ? `, p. ${a.pagina}` : ""}`;
     return { tekst: p, ...a, ...(a.pagina ? { link: `${doc.url}#page=${a.pagina}` } : {}), citeer };
   });

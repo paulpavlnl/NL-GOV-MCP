@@ -38,14 +38,19 @@ describe("V10: another IP address for LiDO (src/fork/ip-herkansing.ts)", () => {
     expect(poging).toHaveBeenCalledTimes(2);
     expect(poging.mock.calls[1][0]).toBeDefined();
     const altijd = vi.fn().mockRejectedValue(timeout("147.181.37.221"));
-    const err = await metAndereAdressen("https://linkeddata.overheid.nl/service/x", altijd, bronnen).catch((e) => e);
+    const err = (await metAndereAdressen("https://linkeddata.overheid.nl/service/x", altijd, bronnen).catch((e: unknown) => e)) as Error & { adressenGeprobeerd?: string[] };
     expect(altijd).toHaveBeenCalledTimes(4); // 1 + max 3 extra
     expect(err.message).toContain("ook geprobeerd via 147.181.13.83, 147.181.12.117, 147.181.37.238");
+    expect(err.adressenGeprobeerd).toHaveLength(3);
+    // No other address: the first error goes back unchanged, so the caller can do its usual retries.
+    const geen = (await metAndereAdressen("https://linkeddata.overheid.nl/service/x", vi.fn().mockRejectedValue(timeout("147.181.37.221")), { lookup: async () => [{ address: "147.181.37.221", family: 4 }], publiek: async () => [] }).catch((e: unknown) => e)) as Error & { adressenGeprobeerd?: string[] };
+    expect(geen.adressenGeprobeerd).toBeUndefined();
+    expect(isVerbindingsFout(new SourceRequestError({ message: "Source timeout after 20000ms", endpoint: "x", code: "timeout" }))).toBe(true);
   });
 
   it("the pinned dispatcher connects to that address and sends the host name as SNI", async () => {
-    let hello = Buffer.alloc(0);
-    const server = net.createServer((s) => s.on("data", (d) => { hello = Buffer.concat([hello, d]); s.destroy(); }));
+    let hello: Buffer = Buffer.alloc(0);
+    const server = net.createServer((s) => s.on("data", (d: Buffer) => { hello = Buffer.concat([hello, d]); s.destroy(); }));
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
     const { port } = server.address() as net.AddressInfo;
     const dispatcher = dispatcherVoorAdres("linkeddata.overheid.nl", { address: "127.0.0.1", family: 4 });
@@ -58,9 +63,9 @@ describe("V10: another IP address for LiDO (src/fork/ip-herkansing.ts)", () => {
     }
   });
 
-  it("the counting circuit opens after one request failed on all its addresses, and is half-open after 60 s", () => {
+  it("the counting circuit opens after two failed requests, also on one identifier, and is half-open after 60 s", () => {
     vi.useFakeTimers();
-    for (let i = 0; i < 4; i++) markConnectorFailure("lido_telling", { countTowardCircuit: true, endpoint: "https://linkeddata.overheid.nl/service/get-aantal-per-informatietype?ext-id=X" });
+    for (let i = 0; i < 2; i++) markConnectorFailure("lido_telling", { countTowardCircuit: true, endpoint: "https://linkeddata.overheid.nl/service/get-aantal-per-informatietype?ext-id=X" });
     expect(getCircuitDecision("lido_telling").open).toBe(true);
     expect(getCircuitDecision("lido").open).toBe(false);
     vi.advanceTimersByTime(60_001);
@@ -136,5 +141,10 @@ describe("V13: paragraph anchors in rechtspraak_richtlijnen (Rapport alimentatie
     expect(p[0]).toMatchObject({ paragraaf: "4.2.2.4", kopje: "Woonbudget", pagina: 20, link: "https://www.rechtspraak.nl/rapport.pdf#page=20" });
     expect(p[0].citeer).toBe("Rapport alimentatienormen, versie januari 2026, par. 4.2.2.4 (Woonbudget), p. 20");
     expect(p[1]).toMatchObject({ paragraaf: "4.6.2", pagina: 27 });
+  });
+
+  it("a term in a heading belongs to that heading's paragraph", () => {
+    const t = ["4.6.1 Inleiding", "Een inleidende alinea over lasten.", "4.6.2 Woonlasten voormalige echtelijke woning", "De lasten van de woning.", "27Rapport Alimentatienormen januari 2026", "28Rapport Alimentatienormen januari 2026", "29Rapport Alimentatienormen januari 2026"].join("\n");
+    expect(passagesMetAnker(t, "woonlasten", doc)[0]).toMatchObject({ paragraaf: "4.6.2", pagina: 27 });
   });
 });

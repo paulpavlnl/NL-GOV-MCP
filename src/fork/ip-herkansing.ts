@@ -21,10 +21,14 @@ const VERBINDING_RE = /ETIMEDOUT|ECONNREFUSED|ECONNRESET|ENETUNREACH|EHOSTUNREAC
 const PUBLIEKE_RESOLVERS = ["1.1.1.1", "9.9.9.9"];
 export const MAX_EXTRA_ADRESSEN = 3;
 
-/** Whether an error (or one of its causes) is a connection or TLS failure, not an HTTP answer. */
+/**
+ * Whether an error (or one of its causes) is a connection or TLS failure, not an HTTP answer. A time-out of the
+ * request (code "timeout": connected, but TLS or the answer stalled) counts too: another node may answer.
+ */
 export function isVerbindingsFout(error: unknown): boolean {
   let e = error as { code?: unknown; message?: unknown; cause?: unknown; status?: unknown; errors?: unknown[] } | undefined;
   for (let i = 0; e && i < 5; e = e.cause as typeof e, i++) {
+    if (e.code === "timeout") return true;
     if (typeof e.status === "number") return false;
     if (VERBINDING_RE.test(`${e.code ?? ""} ${e.message ?? ""}`)) return true;
     if (Array.isArray(e.errors) && e.errors.some((x) => isVerbindingsFout(x))) return true;
@@ -94,9 +98,12 @@ export async function metAndereAdressen<T>(url: string, poging: (dispatcher?: Ag
         dispatcher.close().catch(() => {});
       }
     }
+    // No other address: the caller decides (lidoGetText then does the usual retries on the same address).
     if (!geprobeerd.length) throw eerste;
     const melding = `${eerste instanceof Error ? eerste.message : String(eerste)} (ook geprobeerd via ${geprobeerd.join(", ")}${laatste !== eerste && laatste instanceof Error ? `; laatste: ${laatste.message}` : ""})`;
-    if (eerste instanceof Error) { eerste.message = melding; throw eerste; }
-    throw new Error(melding);
+    const fout = eerste instanceof Error ? eerste : new Error(melding);
+    fout.message = melding;
+    Object.assign(fout, { adressenGeprobeerd: geprobeerd });
+    throw fout;
   }
 }

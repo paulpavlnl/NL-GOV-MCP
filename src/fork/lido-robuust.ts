@@ -40,14 +40,17 @@ export function isBronStoring(error: unknown): boolean {
 const PORTAAL = "https://linkeddata.overheid.nl/front/portal/spiegel-lijstweergave";
 
 /**
- * getText for LiDO: first one attempt; a connection or TLS failure then goes to up to 3 other
- * addresses (one attempt each), any other source failure (5xx, 429, time-out) to the usual retries.
+ * getText for LiDO: first one attempt; a connection or TLS failure (or a time-out) then goes to up to 3 other
+ * addresses, one attempt each and outside the circuit breaker, so one request counts once. Any other source
+ * failure (5xx, 429), or a connection failure with no other address to try, gets the usual retries.
  */
 export async function lidoGetText(url: string, options: RequestOptions) {
   try {
-    return await metAndereAdressen(url, (dispatcher) => getText(url, { ...options, retries: 0, ...(dispatcher ? { dispatcher, disableCache: true } : {}) }));
+    return await metAndereAdressen(url, (dispatcher) => getText(url, { ...options, retries: 0, ...(dispatcher ? { dispatcher, buitenCircuit: true } : {}) }));
   } catch (error) {
-    if (!(error instanceof SourceRequestError) || error.code === "network_error" || error.code === "circuit_open" || !isBronStoring(error) || !options.retries) throw error;
+    const geprobeerd = (error as { adressenGeprobeerd?: string[] }).adressenGeprobeerd;
+    if (geprobeerd?.length || !(error instanceof SourceRequestError) || error.code === "circuit_open" || !isBronStoring(error) || !options.retries) throw error;
+    await new Promise((r) => setTimeout(r, options.retryDelaysMs?.[0] ?? 500));
     return getText(url, { ...options, retries: options.retries - 1, retryDelaysMs: options.retryDelaysMs?.slice(1) });
   }
 }

@@ -74,6 +74,11 @@ export interface RequestOptions {
   retryDelaysMs?: readonly number[];
   /** FORK (docs/FORK.md): an undici dispatcher, e.g. pinned to another IP address (src/fork/ip-herkansing.ts). */
   dispatcher?: unknown;
+  /**
+   * FORK (docs/FORK.md): outside the circuit breaker: not blocked by an open circuit and its failures do not
+   * count (the extra addresses of one request, src/fork/ip-herkansing.ts). A success still closes the circuit.
+   */
+  buitenCircuit?: boolean;
 }
 
 export interface HttpMeta {
@@ -370,7 +375,8 @@ async function request(
     }
   }
 
-  const circuit = getCircuitDecision(connector);
+  const telMee = !options.buitenCircuit; // FORK (docs/FORK.md)
+  const circuit = telMee ? getCircuitDecision(connector) : { open: false as const, probe: false };
   if (circuit.open) {
     throw new SourceRequestError({
       message: `Circuit open for connector '${connector}'`,
@@ -459,7 +465,7 @@ async function request(
             retryAfter,
           });
           markConnectorFailure(connector, {
-            countTowardCircuit: true, endpoint: fullUrl, // FORK (docs/FORK.md)
+            countTowardCircuit: telMee, endpoint: fullUrl, // FORK (docs/FORK.md)
             responseTimeMs: totalElapsedMs,
           });
           throw error;
@@ -478,7 +484,7 @@ async function request(
             status: response.status,
           });
           markConnectorFailure(connector, {
-            countTowardCircuit: true, endpoint: fullUrl, // FORK (docs/FORK.md)
+            countTowardCircuit: telMee, endpoint: fullUrl, // FORK (docs/FORK.md)
             responseTimeMs: totalElapsedMs,
           });
           throw error;
@@ -550,7 +556,7 @@ async function request(
             error.code === "malformed_response"
           ) {
             markConnectorFailure(connector, {
-              countTowardCircuit: countsTowardCircuit(error), endpoint: fullUrl, // FORK (docs/FORK.md)
+              countTowardCircuit: telMee && countsTowardCircuit(error), endpoint: fullUrl, // FORK (docs/FORK.md)
               responseTimeMs: Date.now() - queueStart,
             });
           }
@@ -570,7 +576,7 @@ async function request(
             code: "timeout",
           });
           markConnectorFailure(connector, {
-            countTowardCircuit: true, endpoint: fullUrl, // FORK (docs/FORK.md)
+            countTowardCircuit: telMee, endpoint: fullUrl, // FORK (docs/FORK.md)
             responseTimeMs: Date.now() - queueStart,
           });
           throw timeoutError;
@@ -590,7 +596,7 @@ async function request(
           code: "network_error",
         });
         markConnectorFailure(connector, {
-          countTowardCircuit: true, endpoint: fullUrl, // FORK (docs/FORK.md)
+          countTowardCircuit: telMee, endpoint: fullUrl, // FORK (docs/FORK.md)
           responseTimeMs: Date.now() - queueStart,
         });
         throw networkError;
@@ -607,7 +613,7 @@ async function request(
     code: "network_error",
   });
   markConnectorFailure(connector, {
-    countTowardCircuit: true, endpoint: fullUrl, // FORK (docs/FORK.md)
+    countTowardCircuit: telMee, endpoint: fullUrl, // FORK (docs/FORK.md)
     responseTimeMs: Date.now() - queueStart,
   });
   throw fallbackError;
