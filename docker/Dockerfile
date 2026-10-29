@@ -1,7 +1,7 @@
 FROM node:22-alpine
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci
+RUN npm ci --ignore-scripts
 COPY . .
 RUN npm run build
 
@@ -10,5 +10,5 @@ USER nodejs
 
 EXPOSE 3333
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:3333/mcp || exit 1
+  CMD wget -q -O /dev/null http://127.0.0.1:3333/health || exit 1
 CMD ["node", "dist/src/index.js", "--sse"]

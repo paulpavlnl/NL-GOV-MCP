@@ -269,8 +269,8 @@ All three transports expose the same 91 tools and are created by `server.ts`:
 | Mode | Protocol | Session model | Use case |
 |------|----------|---------------|----------|
 | **stdio** | stdin/stdout | Single session (process lifetime) | Claude Desktop, Claude Code |
-| **SSE** | `GET /mcp` + `POST /messages?sessionId=` | Per-connection, in-memory map | Open WebUI, legacy MCP clients |
-| **Streamable HTTP** | `POST /mcp` + `GET /mcp` + `DELETE /mcp` | `mcp-session-id` header, in-memory map; or none with `NL_GOV_HTTP_STATELESS=true` | Clients on MCP protocol 2024-10-07 up to 2025-11-25 |
+| **SSE** | `GET /mcp` + `POST /messages?sessionId=` | Per-connection, in-memory map | Legacy MCP clients |
+| **Streamable HTTP** | `POST /mcp` + `GET /mcp` + `DELETE /mcp` | `mcp-session-id` header, in-memory map; or none with `NL_GOV_HTTP_STATELESS=true` | Open WebUI and other clients on MCP protocol 2024-10-07 up to 2025-11-25 |
 
 HTTP transports also serve `/health` and `/health/sources` for monitoring.
 
