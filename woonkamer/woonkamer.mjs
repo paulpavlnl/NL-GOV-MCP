@@ -117,6 +117,8 @@ export function bijwerken(s) {
       return log(`${s.name}: ${eigen} eigen commit(s) en nieuwe upstream-commits botsen; niet bijgewerkt (handmatig samenvoegen)`), false;
     }
     log(`${s.name}: upstream ${naar.slice(0, 7)} samengevoegd met ${eigen} eigen commit(s) (${gewijzigd.length} bestanden)`);
+    // Back-up van de eigen versie (remote "prive", bijv. paulpavlnl/e-boekhouden-mcp) bijhouden, als die er is.
+    if (git(dir, ["remote", "get-url", "prive"]) !== null && git(dir, ["push", "--quiet", "prive", `HEAD:${s.branch}`]) === null) log(`${s.name}: push naar prive mislukt`);
   } else {
     if (git(dir, ["reset", "--hard", "--quiet", naar]) === null) return log(`${s.name}: bijwerken mislukt`), false;
     log(`${s.name}: ${van.slice(0, 7)} -> ${naar.slice(0, 7)} (${gewijzigd.length} bestanden)`);
