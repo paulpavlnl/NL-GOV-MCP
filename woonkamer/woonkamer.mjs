@@ -127,7 +127,13 @@ export function bijwerken(s) {
 function run(s) {
   const [cmd, ...args] = s.start.map((a) => (a === "{venvpy}" ? venvPy(s) : a));
   const p = spawn(cmd, args, { cwd: repoDir(s), env: omgeving(s), stdio: "inherit", windowsHide: true });
-  for (const sig of ["SIGINT", "SIGTERM", "SIGBREAK"]) process.on(sig, () => p.kill());
+  // Bij stoppen de hele boom van de server beëindigen, ook kleinkinderen: een overgebleven proces houdt de
+  // uitvoer van NSSM open, en dan blijft de dienst in StopPending hangen (29-10-2026, drie keer).
+  const stop = () => {
+    if (process.platform === "win32" && p.pid) spawnSync("taskkill", ["/pid", String(p.pid), "/T", "/F"], { windowsHide: true, timeout: 10_000 });
+    else p.kill();
+  };
+  for (const sig of ["SIGINT", "SIGTERM", "SIGBREAK"]) process.on(sig, stop);
   p.on("exit", (code) => process.exit(code ?? 1));
 }
 

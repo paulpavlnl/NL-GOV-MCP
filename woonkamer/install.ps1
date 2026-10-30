@@ -1,4 +1,4 @@
-<#
+﻿<#
   Zet alle MCP-servers op deze Windows-pc als Windows-diensten die bij het opstarten meteen starten,
   maakt ze publiek via Tailscale Funnel en werkt ze elk uur bij vanaf GitHub. Opnieuw draaien kan altijd.
 
@@ -111,7 +111,11 @@ function Zet-Dienst($naam, $argumenten, $beschrijving) {
   & $nssm set $naam AppStdout (Join-Path $Root "logs\$naam.log") | Out-Null
   & $nssm set $naam AppStderr (Join-Path $Root "logs\$naam.log") | Out-Null
   & $nssm set $naam AppRotateFiles 1 | Out-Null
-  & $nssm set $naam AppRotateOnline 1 | Out-Null
+  # Geen online rotatie: dan leest NSSM de uitvoer via een pipe en blijft de dienst in StopPending hangen zolang
+  # een overgebleven kindproces die pipe openhoudt (29-10-2026). Roteren gebeurt nu bij het starten.
+  & $nssm set $naam AppRotateOnline 0 | Out-Null
+  & $nssm set $naam AppStopMethodConsole 5000 | Out-Null
+  & $nssm set $naam AppKillProcessTree 1 | Out-Null
   & $nssm set $naam AppRotateBytes 5000000 | Out-Null
   & $nssm restart $naam | Out-Null
   Write-Host "  $naam"
