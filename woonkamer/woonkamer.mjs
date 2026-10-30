@@ -106,9 +106,21 @@ export function bijwerken(s) {
   if (git(dir, ["fetch", "--quiet", "origin", s.branch]) === null) return log(`${s.name}: GitHub niet bereikbaar`), true;
   const van = git(dir, ["rev-parse", "HEAD"]), naar = git(dir, ["rev-parse", "FETCH_HEAD"]);
   if (!van || !naar || van === naar) return true;
+  // Eigen commits op deze pc (bijv. e-Boekhouden, waarvan GitHub de repo van CodeMill is): niet wissen. Zit de
+  // upstream er al in, dan is er niets te doen; anders samenvoegen, en bij een conflict deze repo overslaan.
+  if (git(dir, ["merge-base", "--is-ancestor", naar, van]) !== null) return true;
+  const eigen = Number(git(dir, ["rev-list", "--count", `${naar}..${van}`]) ?? 0);
   const gewijzigd = (git(dir, ["diff", "--name-only", van, naar]) ?? "").split("\n").filter(Boolean);
-  if (git(dir, ["reset", "--hard", "--quiet", naar]) === null) return log(`${s.name}: bijwerken mislukt`), false;
-  log(`${s.name}: ${van.slice(0, 7)} -> ${naar.slice(0, 7)} (${gewijzigd.length} bestanden)`);
+  if (eigen > 0) {
+    if (git(dir, ["-c", "user.name=woonkamer-update", "-c", "user.email=woonkamer@localhost", "merge", "--no-edit", "--quiet", naar]) === null) {
+      git(dir, ["merge", "--abort"]);
+      return log(`${s.name}: ${eigen} eigen commit(s) en nieuwe upstream-commits botsen; niet bijgewerkt (handmatig samenvoegen)`), false;
+    }
+    log(`${s.name}: upstream ${naar.slice(0, 7)} samengevoegd met ${eigen} eigen commit(s) (${gewijzigd.length} bestanden)`);
+  } else {
+    if (git(dir, ["reset", "--hard", "--quiet", naar]) === null) return log(`${s.name}: bijwerken mislukt`), false;
+    log(`${s.name}: ${van.slice(0, 7)} -> ${naar.slice(0, 7)} (${gewijzigd.length} bestanden)`);
+  }
   // De woonkamer-scripts zelf zitten in NL-GOV-MCP: de proxy leest services.json alleen bij het starten.
   if (gewijzigd.some((f) => f.startsWith("woonkamer/"))) nssm("restart", "mcp-proxy");
   if (gewijzigd.every(zonderHerstart)) return true;
