@@ -166,7 +166,7 @@
     ],
     "build": [
       "npm run build",
-      "node -e \"require('fs').writeFileSync('gateway.mjs', Buffer.from(process.env.GATEWAY_B64,'base64'))\""
+      "node -e \"const fs=require('fs'); if (!fs.existsSync('gateway.mjs')) fs.writeFileSync('gateway.mjs', Buffer.from(process.env.GATEWAY_B64,'base64'))\""
     ],
     "start": [
       "node",
