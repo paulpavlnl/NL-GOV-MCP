@@ -25,10 +25,10 @@ describe("V10: another IP address for LiDO (src/fork/ip-herkansing.ts)", () => {
     expect(isVerbindingsFout(new SourceRequestError({ message: "Source request failed with status 503", endpoint: "x", code: "http_error", status: 503 }))).toBe(false);
   });
 
-  it("tries the other addresses: local DNS without the failed one, then public resolvers, IPv4 first", async () => {
+  it("tries the other addresses: local DNS without the failed one, then public resolvers, no IPv6", async () => {
     const lookup = async () => [{ address: "2a04:9a00:1002:4021::1", family: 6 }, { address: "147.181.37.221", family: 4 }];
     const publiek = async () => [{ address: "147.181.13.83", family: 4 }, { address: "147.181.37.221", family: 4 }, { address: "147.181.12.117", family: 4 }];
-    expect((await andereAdressen("linkeddata.overheid.nl", { lookup, publiek })).map((a) => a.address)).toEqual(["147.181.13.83", "147.181.12.117", "2a04:9a00:1002:4021::1"]);
+    expect((await andereAdressen("linkeddata.overheid.nl", { lookup, publiek })).map((a) => a.address)).toEqual(["147.181.13.83", "147.181.12.117"]);
   });
 
   it("succeeds on the second address, and names the cause and every address tried when all fail", async () => {

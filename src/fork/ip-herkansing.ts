@@ -54,6 +54,8 @@ export async function andereAdressen(host: string, bronnen: AdresBronnen = {}): 
   const gezien = new Set(eerste ? [eerste.address] : []);
   const uit: Adres[] = [];
   for (const r of [...lokaal, ...extra].sort((a, b) => a.family - b.family)) {
+    // This machine has no IPv6 route (ENETUNREACH, 29-10 and 03-11): an IPv6 attempt only costs time.
+    if (r.family === 6) continue;
     if (gezien.has(r.address)) continue;
     gezien.add(r.address);
     uit.push(r);
@@ -65,6 +67,8 @@ export async function andereAdressen(host: string, bronnen: AdresBronnen = {}): 
 export function dispatcherVoorAdres(host: string, adres: Adres): Agent {
   return new Agent({
     connect: {
+      // Explicit, so the SNI is the host name even if undici ever took it from the pinned address.
+      servername: host,
       lookup(hostname: string, opts: { all?: boolean }, cb: (err: NodeJS.ErrnoException | null, address: string | LookupAddress[], family?: number) => void) {
         if (hostname !== host) return dnsLookup(hostname, opts as never, cb as never);
         return opts?.all ? cb(null, [adres]) : cb(null, adres.address, adres.family);
