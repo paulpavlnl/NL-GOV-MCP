@@ -31,6 +31,9 @@ const server = http.createServer((req, res) => {
     res.writeHead(req.url === "/" ? 200 : 404, { "Content-Type": "application/json" });
     return res.end(JSON.stringify(req.url === "/" ? { woonkamer: "ok", routes: routes.map((r) => r.route) } : { error: "onbekende route" }));
   }
+  // Toegangslog: alleen tijd, route, status en duur. Nooit het pad of de query, want daar kan de sleutel in staan.
+  const start = Date.now();
+  res.on("close", () => console.log(JSON.stringify({ t: new Date(start).toISOString(), m: req.method, route: keuze.s.route, wk: req.url.startsWith("/.well-known/"), sessie: Boolean(req.headers["mcp-session-id"]), status: res.statusCode, ms: Date.now() - start })));
   const headers = { ...req.headers, "x-forwarded-prefix": keuze.s.route, "x-forwarded-proto": "https" };
   const uit = http.request({ host: "127.0.0.1", port: keuze.s.port, method: req.method, path: keuze.pad, headers }, (antwoord) => {
     res.writeHead(antwoord.statusCode || 502, antwoord.headers);
