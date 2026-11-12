@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BekendmakingenSource,
   SRU_MAX_START_RECORD,
+  bboxCql,
   bekendmakingSnippet,
   detectPlaces,
   extractSruDiagnostic,
@@ -9,14 +10,17 @@ import {
   normalizeSruDate,
   normalizeSruDateDetailed,
   parseLegalBasis,
+  parseRdBbox,
   placeSuggestionNote,
   publicationXmlToText,
   resolveAuthority,
   resolvePublicatiebladen,
   rewriteKeepingSyntax,
   sruTotal,
+  wktRepresentativePoint,
 } from "../src/sources/bekendmakingen.js";
 import { rewriteQuery } from "../src/utils/query-rewriter.js";
+import { rdToWgs84 } from "../src/utils/rd.js";
 import { clearHttpCache, markConnectorSuccess } from "../src/utils/connector-runtime.js";
 import { parseXml } from "../src/utils/xml-parser.js";
 import {
@@ -26,8 +30,10 @@ import {
   HANDELINGEN_RECORD,
   GMB_XML,
   KST_RECORD,
+  MARKING,
   SRU_DIAGNOSTIC,
   creatorRecord,
+  locatedRecord,
   sruResponse,
   utrechtRecord,
 } from "./helpers/bekendmakingen-fixtures.js";
@@ -979,5 +985,204 @@ describe("helpers", () => {
     expect(rewriteKeepingSyntax("Parkeerbeleid sortBy dt.date/sort.descending", moderate).rewritten).toBe(
       "parkeerbeleid sortBy dt.date/sort.descending",
     );
+  });
+});
+
+/** One gebiedsmarkering holding one element of the given kind. */
+function marking(kind: string, inner: string): string {
+  return `<overheidwetgeving:gebiedsmarkering scheme="OVERHEIDop.locatietype"><overheidwetgeving:${kind}>${inner}</overheidwetgeving:${kind}></overheidwetgeving:gebiedsmarkering>`;
+}
+
+describe("search — location (gebiedsmarkering) and bbox_rd", () => {
+  const KANALENEILAND: [number, number, number, number] = [134028.4, 453672.6, 135114.2, 454790.1];
+
+  it("ANDs the spatial clause with the other filters, corners NW then SE, rounded outward", async () => {
+    const fetchMock = stubFetch(() => xmlResponse(sruResponse([locatedRecord("gmb-2026-1", [MARKING.vlak])], 1)));
+    await source().search({
+      query: "",
+      maximumRecords: 100,
+      authority: "Utrecht",
+      authority_type: "gemeente",
+      bbox_rd: KANALENEILAND,
+      date_from: "2025-11-11",
+      sort: "date_newest",
+    });
+    expect(cql(fetchMock)).toBe(
+      'c.product-area="officielepublicaties" AND dt.creator="Utrecht" AND w.organisatietype="gemeente" AND ' +
+        'cd.afgeleideLocatieGebied within/nwse.rd "134028 454791 135115 453672" AND dt.date>=2025-11-11 sortBy dt.date/sort.descending',
+    );
+  });
+
+  it("keeps the CQL and the note unchanged without bbox_rd", async () => {
+    const fetchMock = stubFetch(() => xmlResponse(sruResponse([locatedRecord("gmb-2026-1", [MARKING.vlak])], 1)));
+    const out = await source().search({ query: "warmtepomp", maximumRecords: 5, authority: "Utrecht" });
+    expect(cql(fetchMock)).toBe('warmtepomp AND c.product-area="officielepublicaties" AND dt.creator="Utrecht"');
+    expect(out.access_note ?? "").not.toContain("bbox_rd");
+  });
+
+  it("says in the access_note what the rectangle selects", async () => {
+    stubFetch(() => xmlResponse(sruResponse([locatedRecord("gmb-2026-1", [MARKING.vlak])], 1)));
+    const out = await source().search({ query: "", maximumRecords: 5, bbox_rd: KANALENEILAND });
+    expect(out.access_note).toContain("bbox_rd 134028.4,453672.6,135114.2,454790.1");
+    expect(out.access_note).toContain("publicaties zonder locatie vallen erbuiten");
+  });
+
+  it("gives a Vlak its centroid in RD from geometrie, the same point in WGS84, and its area", async () => {
+    stubFetch(() => xmlResponse(sruResponse([locatedRecord("gmb-2026-1", [MARKING.vlak])], 1)));
+    const [item] = (await source().search({ query: "", maximumRecords: 5 })).items;
+    expect(item.location).toEqual({
+      kind: "Vlak",
+      lat: 52.0734589,
+      lon: 5.0900909,
+      rd_x: 134630,
+      rd_y: 453950,
+      area_m2: 400,
+      label: "Marshalllaan 289, 3527TH Utrecht",
+    });
+    expect(item).not.toHaveProperty("locations");
+    // The existing fields are untouched.
+    expect(item.identifier).toBe("gmb-2026-1");
+    expect(item.publication_type).toBe("omgevingsvergunning");
+  });
+
+  it("gives an Adres its point from locatiepunt (lat lon) and the address as text", async () => {
+    stubFetch(() => xmlResponse(sruResponse([locatedRecord("gmb-2026-2", [MARKING.adres])], 1)));
+    const [item] = (await source().search({ query: "", maximumRecords: 5 })).items;
+    const location = item.location as Record<string, unknown>;
+    expect(location).toMatchObject({ kind: "Adres", lat: 52.1019484, lon: 5.1096305, address: "Oude Pijlsweerdstraat 42a-bis, 3513GL Utrecht" });
+    expect(location.rd_x).toBeCloseTo(135981.72, 1);
+    expect(location.rd_y).toBeCloseTo(457114.4, 1);
+    expect(location).not.toHaveProperty("label");
+  });
+
+  it("puts a Weg at the middle of its line, with its length", async () => {
+    stubFetch(() => xmlResponse(sruResponse([locatedRecord("gmb-2026-3", [MARKING.weg], "verkeersbesluit of -mededeling")], 1)));
+    const [item] = (await source().search({ query: "", maximumRecords: 5 })).items;
+    expect(item.location).toEqual({ kind: "Weg", lat: 52.0825386, lon: 5.0634715, rd_x: 132809.5, rd_y: 454968, length_m: 523, label: "Zandweg, Utrecht" });
+  });
+
+  it("places a Weg in several pieces over all of them, lat/lon the same point as rd", async () => {
+    // As gmb-2026-516866 sends a road: one RD MULTILINESTRING, a LINESTRING per piece in locatiegebied.
+    // The first piece is a 100 m stub far from the rest.
+    const weg = marking(
+      "Weg",
+      "<overheidwetgeving:geometrie>MULTILINESTRING((130000 450000,130100 450000),(133000 452000,133000 453000),(133000 453000,133000 454000))</overheidwetgeving:geometrie>" +
+        "<overheidwetgeving:locatiegebied>LINESTRING(5.03 52.04,5.0315 52.04)</overheidwetgeving:locatiegebied>" +
+        "<overheidwetgeving:locatiegebied>LINESTRING(5.07 52.06,5.07 52.07)</overheidwetgeving:locatiegebied>" +
+        "<overheidwetgeving:geometrielabel>Lange weg</overheidwetgeving:geometrielabel>",
+    );
+    stubFetch(() => xmlResponse(sruResponse([locatedRecord("gmb-2026-5", [weg], "verkeersbesluit of -mededeling")], 1)));
+    const [item] = (await source().search({ query: "", maximumRecords: 5 })).items;
+    const location = item.location as Record<string, number>;
+    // The length-weighted centre of the pieces is (132859.5, 452857.14); the nearest point on them is on x = 133000.
+    expect(location.rd_x).toBe(133000);
+    expect(location.rd_y).toBeCloseTo(452857.14, 1);
+    expect(location.length_m).toBe(2100);
+    const back = rdToWgs84(location.rd_x, location.rd_y);
+    expect(location.lat).toBeCloseTo(back.lat, 6);
+    expect(location.lon).toBeCloseTo(back.lon, 6);
+  });
+
+  it("without an RD geometrie uses every locatiegebied piece, converted to RD", async () => {
+    const vlak = marking(
+      "Vlak",
+      "<overheidwetgeving:locatiegebied>POLYGON((5.0900 52.0734,5.0904 52.0734,5.0904 52.0736,5.0900 52.0736,5.0900 52.0734))</overheidwetgeving:locatiegebied>" +
+        "<overheidwetgeving:locatiegebied>POLYGON((5.1000 52.0734,5.1004 52.0734,5.1004 52.0736,5.1000 52.0736,5.1000 52.0734))</overheidwetgeving:locatiegebied>",
+    );
+    stubFetch(() => xmlResponse(sruResponse([locatedRecord("gmb-2026-6", [vlak])], 1)));
+    const [item] = (await source().search({ query: "", maximumRecords: 5 })).items;
+    const location = item.location as Record<string, number>;
+    // Two equal squares 680 m apart: their joint centroid lies between them, so the point goes inside one of them.
+    const inFirst = location.lon > 5.09 && location.lon < 5.0904;
+    const inSecond = location.lon > 5.1 && location.lon < 5.1004;
+    expect(inFirst || inSecond).toBe(true);
+    expect(location.lat).toBeGreaterThan(52.0734);
+    expect(location.lat).toBeLessThan(52.0736);
+    expect(location.rd_x).toBeGreaterThan(134000);
+    // Each square is about 27.4 m by 22.2 m.
+    expect(location.area_m2).toBeGreaterThan(1150);
+    expect(location.area_m2).toBeLessThan(1300);
+  });
+
+  it("adds no location to a record with only a Gemeente marking", async () => {
+    stubFetch(() => xmlResponse(sruResponse([GMB_RECORD], 1)));
+    const [item] = (await source().search({ query: "afval", maximumRecords: 5 })).items;
+    expect(item).not.toHaveProperty("location");
+    expect(item).not.toHaveProperty("locations");
+  });
+
+  it("lists every location of a publication with several, and with bbox_rd plots it at the first one inside", async () => {
+    const outside = MARKING.punt(134100, 453700, 52.071, 5.083, "Punt A");
+    const inside = MARKING.punt(134700, 454000, 52.074, 5.091, "Punt B");
+    const body = sruResponse([locatedRecord("gmb-2026-4", [MARKING.gemeente, outside, inside], "evenementenvergunning")], 1);
+    stubFetch(() => xmlResponse(body));
+    const [plain] = (await source().search({ query: "", maximumRecords: 5 })).items;
+    expect((plain.location as Record<string, unknown>).label).toBe("Punt A");
+    expect((plain.locations as Array<Record<string, unknown>>).map((location) => location.label)).toEqual(["Punt A", "Punt B"]);
+    const [boxed] = (await source().search({ query: "", maximumRecords: 5, bbox_rd: [134500, 453800, 135000, 454200] })).items;
+    expect(boxed.location).toEqual({ kind: "Punt", lat: 52.074, lon: 5.091, rd_x: 134700, rd_y: 454000, label: "Punt B" });
+    expect(boxed.locations).toHaveLength(2);
+  });
+});
+
+describe("parseRdBbox", () => {
+  it("takes four numbers or a comma- or space-separated string", () => {
+    expect(parseRdBbox([134028, 453672, 135114, 454790])).toEqual({ bbox: [134028, 453672, 135114, 454790] });
+    expect(parseRdBbox("134028,453672, 135114 ,454790")).toEqual({ bbox: [134028, 453672, 135114, 454790] });
+    expect(parseRdBbox("134028 453672 135114 454790")).toEqual({ bbox: [134028, 453672, 135114, 454790] });
+  });
+
+  it("rejects the wrong count, non-numbers, swapped corners and WGS84 degrees", () => {
+    expect(parseRdBbox([1, 2, 3])).toMatchObject({ invalid: expect.stringContaining("4 numbers") });
+    expect(parseRdBbox("a,b,c,d")).toMatchObject({ invalid: expect.stringContaining("4 numbers") });
+    expect(parseRdBbox([134028, 453672, Number.NaN, 454790])).toMatchObject({ invalid: expect.stringContaining("4 numbers") });
+    expect(parseRdBbox(["134028", 453672, 135114, 454790])).toMatchObject({ invalid: expect.stringContaining("4 numbers") });
+    expect(parseRdBbox([135114, 453672, 134028, 454790])).toMatchObject({ invalid: expect.stringContaining("minX must be below maxX") });
+    expect(parseRdBbox([5.08, 52.07, 5.09, 52.08])).toMatchObject({ invalid: expect.stringContaining("not WGS84 degrees") });
+    expect(parseRdBbox(undefined)).toMatchObject({ invalid: expect.any(String) });
+  });
+
+  it("bboxCql names the NW and SE corners", () => {
+    expect(bboxCql([134028, 453672, 135114, 454790])).toBe('cd.afgeleideLocatieGebied within/nwse.rd "134028 454790 135114 453672"');
+  });
+});
+
+describe("wktRepresentativePoint", () => {
+  it("returns a point as is, in its own coordinate order", () => {
+    expect(wktRepresentativePoint("POINT (138120.217 454459.312)")).toEqual([138120.217, 454459.312]);
+    expect(wktRepresentativePoint("POINT(5.1 52.1)")).toEqual([5.1, 52.1]);
+  });
+
+  it("puts a polygon at its area centroid, the hole subtracted", () => {
+    const [x, y] = wktRepresentativePoint("POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0), (1 1, 2 1, 2 2, 1 2, 1 1))")!;
+    expect(x).toBeCloseTo(30.5 / 15, 9);
+    expect(y).toBeCloseTo(30.5 / 15, 9);
+  });
+
+  it("keeps the point inside an L-shape whose centroid lies outside it", () => {
+    const [x, y] = wktRepresentativePoint("POLYGON ((0 0, 10 0, 10 1, 1 1, 1 10, 0 10, 0 0))")!;
+    // Inside one of the 1-wide arms, near its middle line.
+    expect(Math.min(x, y)).toBeGreaterThan(0.3);
+    expect(Math.min(x, y)).toBeLessThan(0.7);
+    expect(Math.max(x, y)).toBeLessThan(10);
+  });
+
+  it("counts every piece of a multipolygon and a multilinestring", () => {
+    // Joint centroid of a 1 m2 and a 16 m2 square, inside the large one.
+    const [px, py] = wktRepresentativePoint("MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((10 10, 14 10, 14 14, 10 14, 10 10)))")!;
+    expect(px).toBeCloseTo((0.5 + 12 * 16) / 17, 9);
+    expect(py).toBeCloseTo((0.5 + 12 * 16) / 17, 9);
+    // Two pieces: the point on them nearest their length-weighted centre (4.59, 4.55).
+    const [lx, ly] = wktRepresentativePoint("MULTILINESTRING ((0 0, 1 0), (0 5, 10 5))")!;
+    expect(lx).toBeCloseTo(50.5 / 11, 9);
+    expect(ly).toBe(5);
+    // One line: halfway along it.
+    expect(wktRepresentativePoint("LINESTRING (0 0, 3 0, 3 4)")).toEqual([3, 0.5]);
+  });
+
+  it("returns undefined for what it cannot read", () => {
+    expect(wktRepresentativePoint(undefined)).toBeUndefined();
+    expect(wktRepresentativePoint("GEOMETRYCOLLECTION EMPTY")).toBeUndefined();
+    expect(wktRepresentativePoint("POLYGON (())")).toBeUndefined();
   });
 });

@@ -69,6 +69,10 @@ const CONNECTOR_CATEGORY: Record<string, ConnectorCategory> = {
   cvdr: "static",
   bestuurlijke_gebieden: "static",
   brk_kadastrale_kaart: "semi_live",
+  // BAG panden and verblijfsobjecten per bbox: the fast WFS and, apart, the slow
+  // OGC API that alone holds the ended statuses (gesloopt, ingetrokken).
+  bag_panden_wfs: "semi_live",
+  bag_panden_ogc: "semi_live",
   bron_ongevallen: "static",
   nza_zorgbeeld: "live",
   overheidsorganisaties: "static",
@@ -77,6 +81,8 @@ const CONNECTOR_CATEGORY: Record<string, ConnectorCategory> = {
   ned: "live",
   ep_online: "semi_live",
   ns: "live",
+  // Gehoord.de: transcripts of debates that may still be running (status "live").
+  gehoord: "live",
   dnb: "static",
   tenderned: "semi_live",
   // Split from `tenderned` (rectified deadlines from the detail records), like
@@ -254,6 +260,7 @@ export function inferConnectorName(endpointUrl: string): string {
       return "pdok_bag";
     }
     if (host.includes("tenderned.nl")) return "tenderned";
+    if (host === "gehoord.de") return "gehoord";
     if (host.includes("verkiezingsuitslagen.nl")) return "verkiezingsuitslagen";
     if (host.includes("nationaalgeoregister.nl")) return "ngr";
     if (host.includes("ori") && host.includes("overheid")) return "ori";

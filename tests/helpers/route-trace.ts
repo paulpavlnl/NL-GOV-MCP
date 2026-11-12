@@ -79,6 +79,8 @@ export function sourceOfUrl(raw: string): string {
   // search on type gemeente) and the address or place for the DSO.
   if (host === "api.pdok.nl") return url.searchParams.get("fq") === "type:gemeente" ? "brp_gewaspercelen" : "dso_omgevingsdocumenten";
   if (host.endsWith("omgevingswet.overheid.nl")) return "dso_omgevingsdocumenten";
+  // Gehoord.de: transcripts of live and today's debates and the Eerste Kamer (with GEHOORD_KEY).
+  if (host === "gehoord.de") return "gehoord";
   if (host === "data.overheid.nl") return "data_overheid";
   return host;
 }
@@ -121,8 +123,8 @@ function emptyResponse(url: string): Response {
 export interface AskHarness {
   /** nl_gov_ask with dryRun. */
   plan(question: string): Promise<Record<string, any>>;
-  /** nl_gov_ask executed with fetch stubbed. */
-  trace(question: string): Promise<AskTrace>;
+  /** nl_gov_ask executed with fetch stubbed; `respond` may answer a request instead of the empty answer. */
+  trace(question: string, respond?: (url: URL) => Response | undefined): Promise<AskTrace & { body: Record<string, any> }>;
 }
 
 /** Fixed, so the time words in a question resolve the same on every run. */
@@ -149,7 +151,7 @@ export function createAskHarness(): AskHarness {
       return JSON.parse(out.content[0].text);
     },
 
-    async trace(question) {
+    async trace(question, respond) {
       // No cache hits and no open circuits from an earlier question.
       clearHttpCache();
       for (const connector of Object.keys(getAllConnectorHealth())) markConnectorSuccess(connector, 0);
@@ -170,7 +172,7 @@ export function createAskHarness(): AskHarness {
         // sources side by side sends all of them before the first answer.
         await new Promise((resolve) => setImmediate(resolve));
         delivered += 1;
-        return emptyResponse(url);
+        return respond?.(new URL(url)) ?? emptyResponse(url);
       }) as typeof fetch;
       try {
         const out = await call({ question, top: 5, reference_now: REFERENCE_NOW });
@@ -189,7 +191,7 @@ export function createAskHarness(): AskHarness {
           if (/KNMI_API_KEY/.test(error)) firstSources.push("knmi");
           else if (/OVERHEID_API_KEY/.test(error)) firstSources.push("api");
         }
-        return { requests, firstSources, summary: typeof body.summary === "string" ? body.summary : undefined, error };
+        return { requests, firstSources, summary: typeof body.summary === "string" ? body.summary : undefined, error, body };
       } finally {
         globalThis.fetch = realFetch;
         TTLCache.prototype.get = realCacheGet;

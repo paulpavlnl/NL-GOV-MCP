@@ -6,6 +6,16 @@ import { placeKey, placeVariants } from "../utils/place-aliases.js";
 import { rewriteNote, type RewriteResult } from "../utils/query-rewriter.js";
 import { extractSruRecords, parseXml } from "../utils/xml-parser.js";
 import { compoundSearchParts, escapeSruValue, freeTextCqlPlan } from "../utils/sru-cql.js";
+import {
+  geometryArea,
+  geometryLength,
+  mapGeometry,
+  mergeGeometries,
+  parseWkt,
+  representativePoint,
+  type Geometry,
+} from "../utils/geometry.js";
+import { rdToWgs84, wgs84ToRd } from "../utils/rd.js";
 
 /*
  * Officiële Bekendmakingen via the KOOP SRU endpoint (repository.overheid.nl/sru,
@@ -46,6 +56,17 @@ import { compoundSearchParts, escapeSruValue, freeTextCqlPlan } from "../utils/s
  *   same publisher (FORMER_CREATOR_SPELLING, publisherNote).
  * - CQL NOT is accepted but unusable for free text: `... NOT
  *   cql.textAndIndexes="x"` changes how the other bare terms match (259 -> 555).
+ * - Most Gemeenteblad publications carry one or more tpmeta gebiedsmarkering
+ *   elements with a geometry: Punt, Adres, Vlak, Perceel, GeometrieRef, Weg or
+ *   Lijn, each with `geometrie` (WKT in RD New) and `locatiegebied` (WGS84: WKT
+ *   in lon lat order, or "lat,lon" for a point), a point also with
+ *   `locatiepunt` ("lat lon"); 692 of 714 Utrecht publications of 30 days had
+ *   one (November 2026). A bare Gemeente marking has no geometry.
+ * - `cd.afgeleideLocatieGebied within/nwse.rd "minX maxY maxX minY"` (the NW
+ *   and SE corners in RD) selects publications whose geometry touches the
+ *   rectangle: a Vlak only half inside it matches too. The corners in another
+ *   order are an HTTP 200 with an XDMP-BADBOX diagnostic. `w.locatiepunt`
+ *   misses most omgevingsvergunningen (they carry a Vlak, not a point).
  */
 
 const SEARCH_PAGE = "https://zoek.officielebekendmakingen.nl/resultaten";
@@ -482,6 +503,204 @@ function manifestationUrls(enriched: Record<string, unknown>): Record<string, st
   return urls;
 }
 
+/* ------------------------------------------------------------------ */
+/*  Location (gebiedsmarkering)                                        */
+/* ------------------------------------------------------------------ */
+
+/** An RD New (EPSG:28992) bounding box: minX, minY, maxX, maxY. */
+export type RdBbox = [number, number, number, number];
+
+/** RD New extent of the Netherlands with a margin (RD_EXTENT in utils/geo.ts). */
+const RD_BOUNDS = { minX: -10_000, maxX: 310_000, minY: 290_000, maxY: 660_000 } as const;
+
+/**
+ * bbox_rd as the caller gave it: four numbers, or the "minX,minY,maxX,maxY"
+ * string the other bbox tools take (spaces or semicolons also separate).
+ */
+export function parseRdBbox(input: unknown): { bbox: RdBbox } | { invalid: string } {
+  const values = typeof input === "string"
+    ? input.split(/[\s,;]+/).filter(Boolean).map(Number)
+    : Array.isArray(input) ? input.map((value) => (typeof value === "number" ? value : Number.NaN)) : [];
+  if (values.length !== 4 || values.some((value) => !Number.isFinite(value))) {
+    return { invalid: "bbox_rd needs 4 numbers: minX, minY, maxX, maxY in RD New (EPSG:28992), e.g. [134028, 453672, 135114, 454790]." };
+  }
+  const [minX, minY, maxX, maxY] = values;
+  if (minX >= maxX || minY >= maxY) {
+    return { invalid: "bbox_rd: minX must be below maxX and minY below maxY (order minX, minY, maxX, maxY)." };
+  }
+  if (minX < RD_BOUNDS.minX || maxX > RD_BOUNDS.maxX || minY < RD_BOUNDS.minY || maxY > RD_BOUNDS.maxY) {
+    return {
+      invalid:
+        "bbox_rd lies outside the RD New extent of the Netherlands (x -10000..310000, y 290000..660000); " +
+        "give RD metres, not WGS84 degrees.",
+    };
+  }
+  return { bbox: [minX, minY, maxX, maxY] };
+}
+
+/**
+ * The spatial clause: the NW and SE corners in RD, rounded outward to whole
+ * metres (see the module comment for the corner order).
+ */
+export function bboxCql(bbox: RdBbox): string {
+  const [minX, minY, maxX, maxY] = bbox;
+  return `cd.afgeleideLocatieGebied within/nwse.rd "${Math.floor(minX)} ${Math.ceil(maxY)} ${Math.ceil(maxX)} ${Math.floor(minY)}"`;
+}
+
+/** One gebiedsmarkering with a geometry, reduced to a representative point. */
+export interface BekendmakingLocation {
+  /** The marking's element name: Punt, Adres, Vlak, Perceel, GeometrieRef, Weg, Lijn. */
+  kind: string;
+  /**
+   * The point in WGS84. A Punt or Adres keeps the source's locatiepunt; for a
+   * line or area it is the RD point below converted, so the two agree.
+   */
+  lat?: number;
+  lon?: number;
+  /**
+   * The point in RD New, over all pieces of the geometry: a line's middle (or,
+   * for a road in several pieces, the point on them nearest their centre), an
+   * area's centroid when it lies inside, else a point inside its largest part.
+   */
+  rd_x?: number;
+  rd_y?: number;
+  /** Areas only: total area in m2 of all polygons, holes subtracted (RD). */
+  area_m2?: number;
+  /** Lines only: total length in metres of all pieces (RD). */
+  length_m?: number;
+  /** The source's geometrielabel ("Marmerplein te Utrecht", "Perceel Utrecht (UTT00) O 12"). */
+  label?: string;
+  /** Adres only: "Oude Pijlsweerdstraat 42, 3513GL Utrecht". */
+  address?: string;
+}
+
+/** More locations than this on one publication are not listed. */
+const MAX_LOCATIONS = 50;
+
+type Coord = [number, number];
+
+/**
+ * A representative point of a WKT geometry, in its own coordinate order and
+ * over all its pieces (see representativePoint). Undefined for anything it
+ * cannot read.
+ */
+export function wktRepresentativePoint(wkt: string | undefined): Coord | undefined {
+  const geometry = parseWkt(wkt);
+  return geometry ? representativePoint(geometry) : undefined;
+}
+
+function rounded(value: number, digits: number): number {
+  const factor = 10 ** digits;
+  return Math.round(value * factor) / factor;
+}
+
+/** Two numbers, in the order given: "52.07 5.14" or "52.07,5.14". */
+function numberPair(text: string | undefined): Coord | undefined {
+  const parts = (text ?? "").trim().split(/[\s,]+/).filter(Boolean).map(Number);
+  return parts.length === 2 && parts.every(Number.isFinite) ? [parts[0], parts[1]] : undefined;
+}
+
+function validLatLon([lat, lon]: Coord): boolean {
+  return Math.abs(lat) <= 90 && Math.abs(lon) <= 180;
+}
+
+/** The source's own lat/lon for a point marking: locatiepunt ("lat lon") or a "lat,lon" locatiegebied. */
+function sourceLatLon(marking: Record<string, unknown>): Coord | undefined {
+  const point = numberPair(first(marking.locatiepunt)) ?? numberPair(first(marking.locatiegebied));
+  return point && validLatLon(point) ? point : undefined;
+}
+
+/**
+ * The marking's geometry in RD: its geometrie, or else every locatiegebied
+ * piece (WGS84 WKT in lon lat order) converted to RD. A road comes as one RD
+ * MULTILINESTRING but as many separate locatiegebied LINESTRINGs.
+ */
+function rdGeometry(marking: Record<string, unknown>): Geometry | undefined {
+  const own = parseWkt(first(marking.geometrie));
+  if (own) return own;
+  const pieces = mergeGeometries(strings(marking.locatiegebied).filter((text) => /[a-z]/i.test(text)).map(parseWkt));
+  if (!pieces) return undefined;
+  return mapGeometry(pieces, ([lon, lat]) => {
+    const { x, y } = wgs84ToRd(lon, lat);
+    return [x, y];
+  });
+}
+
+/** The point and measures of one marking; undefined when it has no usable geometry. */
+function placeOf(marking: Record<string, unknown>): Omit<BekendmakingLocation, "kind" | "label" | "address"> | undefined {
+  const geometry = rdGeometry(marking);
+  const rd = geometry ? representativePoint(geometry) : undefined;
+  let latLon = geometry?.type === "line" || geometry?.type === "polygon" ? undefined : sourceLatLon(marking);
+  if (!latLon && rd) {
+    const { lat, lon } = rdToWgs84(rd[0], rd[1]);
+    latLon = [lat, lon];
+  }
+  if (!rd && !latLon) return undefined;
+  const place: Omit<BekendmakingLocation, "kind" | "label" | "address"> = {};
+  if (latLon) Object.assign(place, { lat: rounded(latLon[0], 7), lon: rounded(latLon[1], 7) });
+  if (rd) {
+    Object.assign(place, { rd_x: rounded(rd[0], 2), rd_y: rounded(rd[1], 2) });
+  } else if (latLon) {
+    // A point with only a lat/lon: its RD twin, so a bbox can select it.
+    const { x, y } = wgs84ToRd(latLon[1], latLon[0]);
+    Object.assign(place, { rd_x: rounded(x, 2), rd_y: rounded(y, 2) });
+  }
+  if (geometry?.type === "polygon") place.area_m2 = Math.round(geometryArea(geometry));
+  if (geometry?.type === "line") place.length_m = rounded(geometryLength(geometry), 1);
+  return place;
+}
+
+function addressText(marking: Record<string, unknown>): string | undefined {
+  const street = first(marking.straatnaam);
+  if (!street) return undefined;
+  const number = first(marking.huisnummer);
+  const addition = first(marking.huisnummertoevoeging);
+  const line = number ? `${street} ${number}${first(marking.huisletter) ?? ""}${addition ? `-${addition}` : ""}` : street;
+  const place = [first(marking.postcode), first(marking.woonplaats)].filter(Boolean).join(" ");
+  return place ? `${line}, ${place}` : line;
+}
+
+/**
+ * Every gebiedsmarkering with a geometry, in record order. gebiedsmarkering
+ * repeats once per location, and each holds one element named after its kind.
+ */
+function extractLocations(tpmeta: Record<string, unknown>): BekendmakingLocation[] {
+  const markings = Array.isArray(tpmeta.gebiedsmarkering) ? tpmeta.gebiedsmarkering : [tpmeta.gebiedsmarkering];
+  const out: BekendmakingLocation[] = [];
+  for (const marking of markings) {
+    for (const [kind, value] of Object.entries(asObject(marking))) {
+      for (const entry of Array.isArray(value) ? value : [value]) {
+        const element = asObject(entry);
+        const place = placeOf(element);
+        if (!place) continue;
+        const location: BekendmakingLocation = { kind, ...place };
+        const label = first(element.geometrielabel);
+        if (label) location.label = label;
+        const address = kind === "Adres" ? addressText(element) : undefined;
+        if (address) location.address = address;
+        out.push(location);
+        if (out.length >= MAX_LOCATIONS) return out;
+      }
+    }
+  }
+  return out;
+}
+
+function inBbox(location: BekendmakingLocation, bbox: RdBbox): boolean {
+  return location.rd_x !== undefined && location.rd_y !== undefined &&
+    location.rd_x >= bbox[0] && location.rd_x <= bbox[2] && location.rd_y >= bbox[1] && location.rd_y <= bbox[3];
+}
+
+/**
+ * With a bbox, `location` is the first location inside it: a publication
+ * found by its third Punt should be plotted there, not at its first.
+ */
+function preferLocationIn(item: Record<string, unknown>, bbox: RdBbox): Record<string, unknown> {
+  const list = item.locations as BekendmakingLocation[] | undefined;
+  const inside = list?.find((location) => inBbox(location, bbox));
+  return inside && inside !== item.location ? { ...item, location: inside } : item;
+}
+
 interface BekendmakingMeta {
   identifier?: string;
   title?: string;
@@ -517,6 +736,8 @@ interface BekendmakingMeta {
   province?: string;
   canonical?: string;
   urls: Record<string, string>;
+  /** Every gebiedsmarkering with a geometry (Punt, Adres, Vlak, ...). */
+  locations: BekendmakingLocation[];
 }
 
 function extractMeta(record: Record<string, unknown>): BekendmakingMeta {
@@ -560,6 +781,7 @@ function extractMeta(record: Record<string, unknown>): BekendmakingMeta {
     province: first(area.ligtInProvincie),
     canonical: first(enriched.preferredUrl) ?? (identifier ? `${DOCUMENT_PAGE}/${identifier}` : undefined),
     urls: manifestationUrls(enriched),
+    locations: extractLocations(tpmeta),
   };
 }
 
@@ -664,6 +886,11 @@ function searchItem(m: BekendmakingMeta): Record<string, unknown> {
     html_url: m.urls.html,
     xml_url: m.urls.xml,
   };
+  // Added fields, only when the record has a geometry: `location` is a
+  // representative point (of the first location), `locations` lists them all
+  // when there are several.
+  if (m.locations.length) item.location = m.locations[0];
+  if (m.locations.length > 1) item.locations = m.locations;
   return item;
 }
 
@@ -932,6 +1159,12 @@ export interface BekendmakingenSearchArgs {
    * an empty result lets the router try another source.
    */
   expandCompounds?: boolean;
+  /**
+   * Only publications whose location (gebiedsmarkering) touches this RD
+   * rectangle; publications without a geometry drop out. Validate with
+   * parseRdBbox first.
+   */
+  bbox_rd?: RdBbox;
 }
 
 export interface BekendmakingenSearchResult {
@@ -1279,6 +1512,7 @@ export class BekendmakingenSource {
     }
     if (authority) filters.push(authorityCql(authority));
     if (typeClause) filters.push(typeClause);
+    if (args.bbox_rd) filters.push(bboxCql(args.bbox_rd));
     if (from.date) filters.push(`${dateIndex}>=${from.date}`);
     if (to.date) filters.push(`${dateIndex}<=${to.date}`);
 
@@ -1395,10 +1629,18 @@ export class BekendmakingenSource {
       );
     }
 
-    const { items } = page;
+    const bbox = args.bbox_rd;
+    const items = bbox ? page.items.map((item) => preferLocationIn(item, bbox)) : page.items;
     const total = page.total ?? null;
     if (total === null) {
       notes.push("De bron gaf geen totaal aantal treffers mee; het totaal is onbekend.");
+    }
+    if (bbox) {
+      notes.push(
+        `Alleen publicaties met een locatie (gebiedsmarkering) die de rechthoek bbox_rd ${bbox.join(",")} raakt; ` +
+          "een gebied dat er deels in valt telt mee, publicaties zonder locatie vallen erbuiten. " +
+          "location is een representatief punt (bij voorkeur binnen bbox_rd), locations noemt ze alle bij meer dan één.",
+      );
     }
 
     if (!items.length && startRecord === 1) {

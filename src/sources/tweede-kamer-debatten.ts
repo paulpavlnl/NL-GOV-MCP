@@ -24,8 +24,12 @@ export const DEBAT_DEFAULT_CHARS = 1_500;
 export const DEBAT_MAX_CHARS = 20_000;
 const CONCURRENCY = 4;
 const SNIPPET_RADIUS = 160;
-// A plenaire dag is megabytes of text even parsed: few are kept.
-const PARSED_CACHE_MAX = 12;
+// A plenaire dag is megabytes of text even parsed: few are kept. Room for one search
+// (DEBAT_MAX_VERSLAGEN) plus the verslagen of a Gehoord koppeling (4) right after it,
+// so the nl_gov_ask fallback does not download again what the search just read.
+const PARSED_CACHE_MAX = 24;
+// The Vergadering list of today: a plenaire vergadering gets a new tussenpublicatie every hour or so.
+const TODAY_LIST_TTL_MS = 60_000;
 const LIST_TIMEOUT_MS = 20_000;
 const VERSLAG_TIMEOUT_MS = 30_000;
 const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -49,9 +53,34 @@ export interface DebatFragment {
   /** "minister van Justitie en Veiligheid"; for a Kamerlid "lid Tweede Kamer". */
   functie?: string;
   spreker_soort?: string;
+  /** The TK Persoon GUID: the objectid of <spreker>; Gehoord.de's speakerLabel for the Tweede Kamer. */
+  persoon_id?: string;
   begin?: string;
   eind?: string;
   tekst: string;
+}
+
+/**
+ * One <activiteit> of a verslag: a debate, or the opening, the regeling van
+ * werkzaamheden, the sluiting. Its objectid is the Debat Direct id of the
+ * debate, which Gehoord.de calls tkDebateId: the direct link from a Gehoord
+ * debate to its part of the verslag. It is not the Activiteit Id of the
+ * OData API. A begrotingsdebat split over the day is one activiteit per part,
+ * each with its own objectid and the same parlisid.
+ */
+export interface DebatActiviteit {
+  objectid: string;
+  soort?: string;
+  titel: string;
+  onderwerp?: string;
+  /** The Activiteit Nummer ('2026A05087') when the verslag fills it; the commissievergadering page on tweedekamer.nl. */
+  parlisid?: string;
+  /** Local Amsterdam time, as written. */
+  aanvang?: string;
+  eind?: string;
+  /** Its fragments, nested activiteiten included: fragments[fragmentVan .. fragmentTot - 1]. */
+  fragmentVan: number;
+  fragmentTot: number;
 }
 
 export interface DebatVerslag {
@@ -68,7 +97,11 @@ export interface DebatVerslag {
   status?: string;
   /** Tussenpublicatie or Eindpublicatie. */
   publicatie?: string;
+  /** When the vergadering was closed (its Sluiting activiteit), local time: the verslag holds the whole vergadering. */
+  sluiting?: string;
   fragments: DebatFragment[];
+  /** Every activiteit in document order, with its block of fragments. */
+  activiteiten: DebatActiviteit[];
 }
 
 /* ------------------------------------------------------------------ */
@@ -137,8 +170,27 @@ export function sprekerNaam(voornaam: string, verslagnaam: string): string {
   return `${voornaam} ${verslagnaam.replace(TUSSENVOEGSELS, (m) => m.toLowerCase())}`;
 }
 
+/**
+ * The moties a woordvoerder reads out. VLOS puts each in a <draadboekfragment
+ * soort="Motie indiening"> inside the woordvoerder, after its <tekst>, and the
+ * woordvoerder's markeertijden cover the reading: without them a spreekbeurt
+ * of moties would be "Daarom deze moties." Only the motie itself, not the
+ * chair's note on its number (alineagroep Motieinfo).
+ */
+function motieTexts(node: XmlElement): string[] {
+  return elements(node, "draadboekfragment")
+    .filter((d) => /^motie/i.test(d.attrs.soort ?? ""))
+    .map((d) => {
+      const tekst = first(d, "tekst");
+      if (!tekst) return "";
+      const parts = elements(tekst).filter((c) => !(c.name === "alineagroep" && c.attrs.type === "Motieinfo"));
+      return paragraphs({ ...tekst, children: parts }).map((items) => items.join(" ")).filter(Boolean).join("\n");
+    })
+    .filter(Boolean);
+}
+
 function fragmentOf(node: XmlElement, debat: { titel: string; soort?: string }, volgnummer: number): DebatFragment | undefined {
-  const tekst = vlosText(first(node, "tekst"));
+  const tekst = [vlosText(first(node, "tekst")), ...motieTexts(node)].filter(Boolean).join("\n");
   if (!tekst) return undefined;
   const spreker = first(node, "spreker");
   const verslagnaam = childText(spreker, "verslagnaam");
@@ -155,6 +207,7 @@ function fragmentOf(node: XmlElement, debat: { titel: string; soort?: string }, 
     fractie: fractie || undefined,
     functie: functie || undefined,
     spreker_soort: spreker?.attrs.soort || undefined,
+    persoon_id: spreker?.attrs.objectid || undefined,
     begin: localTime(childText(node, "markeertijdbegin")),
     eind: localTime(childText(node, "markeertijdeind")),
     tekst,
@@ -164,8 +217,10 @@ function fragmentOf(node: XmlElement, debat: { titel: string; soort?: string }, 
 /**
  * A VLOS verslag as its vergadering and fragments. Woordvoerders and the
  * interrumpanten nested in them are taken in document order, each with the
- * activiteit (debat) around it; stemmingen, draadboekfragmenten and other
- * parts without spoken text yield nothing.
+ * activiteit (debat) around it; the moties a woordvoerder reads out are part of
+ * its text. Stemmingen, other draadboekfragmenten (the chair's procedural
+ * notes) and parts without spoken text yield nothing. Every activiteit is
+ * listed with its objectid, parlisid, times and the range of its fragments.
  */
 export function parseVerslag(xml: string, verslagId: string): DebatVerslag {
   const root = parseXmlTree(xml);
@@ -173,12 +228,31 @@ export function parseVerslag(xml: string, verslagId: string): DebatVerslag {
   const vergadering = first(doc, "vergadering");
   const titel = childText(vergadering, "titel");
   const fragments: DebatFragment[] = [];
+  const activiteiten: DebatActiviteit[] = [];
+  let sluiting: string | undefined;
 
   const walk = (node: XmlElement, debat: { titel: string; soort?: string }) => {
     for (const child of elements(node)) {
       if (child.name === "activiteit") {
+        if (child.attrs.soort === "Sluiting") sluiting = localTime(childText(child, "eindtijd")) ?? localTime(childText(child, "aanvangstijd")) ?? sluiting;
         const onderwerp = childText(child, "onderwerp") || childText(child, "titel");
+        const objectid = (child.attrs.objectid ?? "").trim();
+        const entry: DebatActiviteit | undefined = objectid
+          ? {
+            objectid,
+            soort: child.attrs.soort || undefined,
+            titel: childText(child, "titel") || onderwerp,
+            onderwerp: onderwerp || undefined,
+            parlisid: childText(child, "parlisid") || undefined,
+            aanvang: localTime(childText(child, "aanvangstijd")),
+            eind: localTime(childText(child, "eindtijd")),
+            fragmentVan: fragments.length,
+            fragmentTot: fragments.length,
+          }
+          : undefined;
+        if (entry) activiteiten.push(entry);
         walk(child, { titel: onderwerp || titel, soort: child.attrs.soort });
+        if (entry) entry.fragmentTot = fragments.length;
       } else if (child.name === "woordvoerder" || child.name === "interrumpant") {
         const fragment = fragmentOf(child, debat, fragments.length + 1);
         if (fragment) fragments.push(fragment);
@@ -201,7 +275,9 @@ export function parseVerslag(xml: string, verslagId: string): DebatVerslag {
     aanvang: localTime(childText(vergadering, "aanvangstijd")),
     status: doc.attrs.status || undefined,
     publicatie: doc.attrs.soort || undefined,
+    sluiting,
     fragments,
+    activiteiten,
   };
 }
 
@@ -246,6 +322,40 @@ export function textMatcher(query: string | undefined): TextMatcher | undefined 
       return at;
     },
   };
+}
+
+/**
+ * Where a Gehoord.de phrase falls in a text, by Gehoord's own rule: a phrase of
+ * more than 4 characters matches inside a longer word too ("stikstof" in
+ * "stikstofpakket"), a shorter one only as a whole word. Case, accents and the
+ * punctuation between words ("CO2-plafond") are ignored. -1 when it is not there.
+ */
+export function phrasePosition(text: string, phrase: string | undefined): number {
+  const words = foldText((phrase ?? "").replace(/"/g, " ")).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  if (!words.length) return -1;
+  const body = words.map(escapeRegExp).join("[^\\p{L}\\p{N}]+");
+  const re = words.join(" ").length <= 4 ? new RegExp(`(?<![\\p{L}\\p{N}])${body}(?![\\p{L}\\p{N}])`, "u") : new RegExp(body, "u");
+  return re.exec(foldText(text))?.index ?? -1;
+}
+
+/**
+ * Where the first of several Gehoord.de search terms falls in a text: the
+ * earliest position any of them has (each by phrasePosition), -1 when none is
+ * there. A string is one phrase. Excluded terms are not passed.
+ */
+export function termsPosition(text: string, terms: string | string[] | undefined): number {
+  const list = typeof terms === "string" ? [terms] : terms ?? [];
+  let at = -1;
+  for (const term of list) {
+    const pos = phrasePosition(text, term);
+    if (pos >= 0 && (at < 0 || pos < at)) at = pos;
+  }
+  return at;
+}
+
+/** The page of a commissievergadering on tweedekamer.nl by its Activiteit Nummer ('2026A05087'). */
+export function commissieUrlVoorNummer(nummer: string): string {
+  return `https://www.tweedekamer.nl/debat_en_vergadering/commissievergaderingen/details?id=${encodeURIComponent(nummer)}`;
 }
 
 /** The passage around a position, on word boundaries, with "…" where it is cut. */
@@ -304,6 +414,8 @@ export interface DebatVergadering {
   vergaderingnummer?: number;
   datum?: string;
   aanvangstijd?: string;
+  /** When the vergadering ended (v5 Eindtijd); empty while it runs. */
+  eindtijd?: string;
   verslag_status?: string;
   verslag_soort?: string;
   verslag_gewijzigd?: string;
@@ -379,8 +491,16 @@ export interface DebatSearchResult {
   params: Record<string, string>;
 }
 
+/** A request's own time budget: the koppeling gives what is left of its deadline, without a retry. */
+export interface DebatRequestOptions {
+  timeoutMs?: number;
+  retries?: number;
+}
+
 export class TweedeKamerDebattenSource {
   private readonly parsed = new Map<string, DebatVerslag>();
+  /** Downloads under way, so callers side by side share one (a plenaire dag is 1-3 MB). */
+  private readonly loading = new Map<string, Promise<DebatVerslag>>();
 
   constructor(private readonly config: AppConfig) {}
 
@@ -405,7 +525,7 @@ export class TweedeKamerDebattenSource {
     params: Record<string, string>;
     period: DebatSearchResult["period"];
   }> {
-    const select = "Id,Soort,Titel,Zaal,Vergaderjaar,VergaderingNummer,Datum,Aanvangstijd";
+    const select = "Id,Soort,Titel,Zaal,Vergaderjaar,Nummer,Datum,Aanvangstijd";
     const expand = "Verslag($filter=Verwijderd eq false;$select=Id,Soort,Status,GewijzigdOp,Verwijderd)";
     const vergaderingId = args.vergadering_id?.trim();
     if (vergaderingId) {
@@ -455,7 +575,8 @@ export class TweedeKamerDebattenSource {
       $top: String(top),
       $select: select,
       $filter: filter.join(" and "),
-      $orderby: "Datum desc,Aanvangstijd desc",
+      // Id orders vergaderingen that start at the same moment, so vergadering_offset pages are stable.
+      $orderby: "Datum desc,Aanvangstijd desc,Id",
       $expand: expand,
     };
     if (args.vergadering_offset) params.$skip = String(args.vergadering_offset);
@@ -472,10 +593,40 @@ export class TweedeKamerDebattenSource {
     };
   }
 
+  /**
+   * Every vergadering of one day (YYYY-MM-DD, Dutch date) with a verslag to
+   * read, plenary and committee: what a Gehoord.de debate is matched against
+   * (debat-koppeling). A day holds a few dozen at most. Datum is local
+   * midnight (+01:00/+02:00), so the filter is the Amsterdam day.
+   */
+  async vergaderingenOp(day: string, opts: DebatRequestOptions = {}): Promise<DebatVergadering[]> {
+    if (!DAY_RE.test(day)) throw new TweedeKamerInputError(`'${day}' is geen datum.`, "Gebruik YYYY-MM-DD.");
+    const range = tkDayRange(day, day);
+    const filter = ["Verwijderd eq false", "Verslag/any(v:v/Verwijderd eq false and v/Status ne 'Casco')"];
+    if (range.start) filter.push(`Datum ge ${range.start}`);
+    if (range.endExclusive) filter.push(`Datum lt ${range.endExclusive}`);
+    const { data } = await getJson<Record<string, unknown>>(`${this.apiBase}/Vergadering`, {
+      query: {
+        $top: "100",
+        $select: "Id,Soort,Titel,Zaal,Vergaderjaar,Nummer,Datum,Aanvangstijd,Eindtijd",
+        $filter: filter.join(" and "),
+        $orderby: "Aanvangstijd,Id",
+        $expand: "Verslag($filter=Verwijderd eq false;$select=Id,Soort,Status,GewijzigdOp,Verwijderd)",
+      },
+      timeoutMs: Math.min(LIST_TIMEOUT_MS, opts.timeoutMs ?? LIST_TIMEOUT_MS),
+      ...(opts.retries !== undefined ? { retries: opts.retries } : {}),
+      // Today's list points at the newest tussenpublicatie: not ten minutes old.
+      ...(day === todayAmsterdam() ? { cacheTtlMs: TODAY_LIST_TTL_MS } : {}),
+    });
+    const rows = Array.isArray(data.value) ? (data.value as Array<Record<string, unknown>>) : [];
+    return rows.map((row) => this.toVergadering(row)).filter((v): v is DebatVergadering => Boolean(v));
+  }
+
   private toVergadering(row: Record<string, unknown>): DebatVergadering | undefined {
     const verslag = pickVerslag(Array.isArray(row.Verslag) ? (row.Verslag as Array<Record<string, unknown>>) : []);
     if (!verslag || !str(row.Id) || !str(verslag.Id)) return undefined;
-    const nummer = Number(row.VergaderingNummer);
+    // API v5: Nummer (was VergaderingNummer).
+    const nummer = Number(row.Nummer);
     return {
       vergadering_id: str(row.Id),
       verslag_id: str(verslag.Id),
@@ -486,6 +637,7 @@ export class TweedeKamerDebattenSource {
       vergaderingnummer: Number.isFinite(nummer) ? nummer : undefined,
       datum: str(row.Datum).slice(0, 10) || undefined,
       aanvangstijd: str(row.Aanvangstijd) || undefined,
+      eindtijd: str(row.Eindtijd) || undefined,
       verslag_status: str(verslag.Status) || undefined,
       verslag_soort: str(verslag.Soort) || undefined,
       verslag_gewijzigd: str(verslag.GewijzigdOp) || undefined,
@@ -496,7 +648,7 @@ export class TweedeKamerDebattenSource {
    * One verslag, parsed. Kept parsed per version (a tussenpublicatie grows
    * during the day), not in the HTTP cache: a plenaire dag is megabytes of XML.
    */
-  async getVerslag(v: Pick<DebatVergadering, "verslag_id" | "verslag_gewijzigd">): Promise<DebatVerslag> {
+  async getVerslag(v: Pick<DebatVergadering, "verslag_id" | "verslag_gewijzigd">, opts: DebatRequestOptions = {}): Promise<DebatVerslag> {
     const key = `${v.verslag_id}|${v.verslag_gewijzigd ?? ""}`;
     const cached = this.parsed.get(key);
     if (cached) {
@@ -504,20 +656,30 @@ export class TweedeKamerDebattenSource {
       this.parsed.set(key, cached);
       return cached;
     }
-    const { data } = await getText(this.verslagUrl(v.verslag_id), {
-      timeoutMs: VERSLAG_TIMEOUT_MS,
-      retries: 1,
-      disableCache: true,
-      headers: { Accept: "application/xml, text/xml" },
-    });
-    const verslag = parseVerslag(data.replace(/^\uFEFF/, ""), v.verslag_id);
-    this.parsed.set(key, verslag);
-    while (this.parsed.size > PARSED_CACHE_MAX) {
-      const oldest = this.parsed.keys().next().value;
-      if (oldest === undefined) break;
-      this.parsed.delete(oldest);
+    const running = this.loading.get(key);
+    if (running) return running;
+    const load = (async () => {
+      const { data } = await getText(this.verslagUrl(v.verslag_id), {
+        timeoutMs: Math.min(VERSLAG_TIMEOUT_MS, opts.timeoutMs ?? VERSLAG_TIMEOUT_MS),
+        retries: opts.retries ?? 1,
+        disableCache: true,
+        headers: { Accept: "application/xml, text/xml" },
+      });
+      const verslag = parseVerslag(data.replace(/^\uFEFF/, ""), v.verslag_id);
+      this.parsed.set(key, verslag);
+      while (this.parsed.size > PARSED_CACHE_MAX) {
+        const oldest = this.parsed.keys().next().value;
+        if (oldest === undefined) break;
+        this.parsed.delete(oldest);
+      }
+      return verslag;
+    })();
+    this.loading.set(key, load);
+    try {
+      return await load;
+    } finally {
+      this.loading.delete(key);
     }
-    return verslag;
   }
 
   /**
@@ -594,9 +756,12 @@ export class TweedeKamerDebattenSource {
    * The page of a commissiedebat on tweedekamer.nl, found through the
    * activiteit that starts at the same moment (the verslag and the agenda do
    * not share an id). Undefined when there is not exactly one such activiteit
-   * or the lookup fails; the caller falls back to the verslag itself.
+   * or the lookup fails; the caller falls back to the verslag itself. A
+   * Gehoord.de hit needs no lookup: its tkActivityNumber is the Nummer
+   * (commissieUrlVoorNummer), else the parlisid of its activiteit in the
+   * verslag.
    */
-  async commissieUrl(v: Pick<DebatVergadering, "soort" | "aanvangstijd" | "titel">): Promise<string | undefined> {
+  async commissieUrl(v: Pick<DebatVergadering, "soort" | "aanvangstijd" | "titel">, opts: { timeoutMs?: number } = {}): Promise<string | undefined> {
     if (v.soort !== "Commissie" || !v.aanvangstijd || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/.test(v.aanvangstijd)) {
       return undefined;
     }
@@ -605,9 +770,12 @@ export class TweedeKamerDebattenSource {
         query: {
           $select: "Nummer,Onderwerp",
           $filter: `Aanvangstijd eq ${v.aanvangstijd} and Verwijderd eq false`,
-          $top: "10",
+          // Every activiteit of that moment (six at once is real), in a fixed
+          // order: a page cut by the default order could miss the debate.
+          $orderby: "Id",
+          $top: "100",
         },
-        timeoutMs: 10_000,
+        timeoutMs: Math.min(10_000, opts.timeoutMs ?? 10_000),
         retries: 0,
       });
       const rows = Array.isArray(data.value) ? (data.value as Array<Record<string, unknown>>) : [];
@@ -615,7 +783,7 @@ export class TweedeKamerDebattenSource {
       const same = rows.filter((r) => titel && foldText(str(r.Onderwerp)).startsWith(titel.slice(0, 40)));
       const pick = same.length === 1 ? same[0] : rows.length === 1 ? rows[0] : undefined;
       const nummer = str(pick?.Nummer);
-      return nummer ? `https://www.tweedekamer.nl/debat_en_vergadering/commissievergaderingen/details?id=${encodeURIComponent(nummer)}` : undefined;
+      return nummer ? commissieUrlVoorNummer(nummer) : undefined;
     } catch {
       return undefined;
     }

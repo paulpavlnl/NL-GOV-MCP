@@ -4,8 +4,9 @@ import { loadConfig, ENV_KEYS } from "./config.js";
 import { DataOverheidSource } from "./sources/data-overheid.js";
 import { CbsSource, cbsCatalogItemUrl } from "./sources/cbs.js";
 import { TweedeKamerSource, mapTweedeKamerError, tkRecordView, tkSubjectTitle } from "./sources/tweede-kamer.js";
-import { DEBAT_DEFAULT_CHARS, DEBAT_DEFAULT_DAYS, DEBAT_MAX_CHARS, DEBAT_MAX_VERSLAGEN, TweedeKamerDebattenSource, type DebatFragment, type DebatHit, type DebatSearchResult } from "./sources/tweede-kamer-debatten.js";
-import { BekendmakingenSource, AUTHORITY_TYPES, MAX_TEXT_CHARS, SRU_MAX_START_RECORD, bekendmakingSnippet, normalizeBekendmakingIdentifier, rewriteKeepingSyntax } from "./sources/bekendmakingen.js";
+import { DEBAT_DEFAULT_CHARS, DEBAT_DEFAULT_DAYS, DEBAT_MAX_CHARS, DEBAT_MAX_VERSLAGEN, TweedeKamerDebattenSource, commissieUrlVoorNummer, snippetAt, termsPosition, type DebatFragment, type DebatHit, type DebatSearchResult } from "./sources/tweede-kamer-debatten.js";
+import { koppelGehoord, koppelingCounts, KOPPELING_MAX_DAGEN, KOPPELING_MAX_VERSLAGEN, type Koppeling, type KoppelingMode, type KoppelingResult } from "./sources/debat-koppeling.js";
+import { BekendmakingenSource, AUTHORITY_TYPES, MAX_TEXT_CHARS, SRU_MAX_START_RECORD, bekendmakingSnippet, normalizeBekendmakingIdentifier, parseRdBbox, rewriteKeepingSyntax } from "./sources/bekendmakingen.js";
 import { RijksoverheidSource } from "./sources/rijksoverheid.js";
 import { RijksbegrotingSource } from "./sources/rijksbegroting.js";
 import { DuoSource } from "./sources/duo.js";
@@ -33,6 +34,7 @@ import { BWB_SRU_ENDPOINT, BWB_TEXT_DEFAULT_CHARS, BWB_TEXT_MAX_CHARS, BwbTekstE
 import { CvdrSource, CVDR_ORGANIZATION_TYPES, CvdrQueryError } from "./sources/cvdr.js";
 import { BestuurlijkeGebiedenSource } from "./sources/bestuurlijke-gebieden.js";
 import { BrkKadastraleKaartSource } from "./sources/brk-kadastrale-kaart.js";
+import { BagPandenSource, BAG_GEBRUIKSDOELEN, BAG_OGC_BASE, BAG_OGC_CONNECTOR, BAG_WFS_CONNECTOR, BAG_WFS_ENDPOINT, PAND_STATUSES, VBO_STATUSES, type BagObjectItem, type BagObjecttype } from "./sources/bag-panden.js";
 import { BronOngevallenSource } from "./sources/bron-ongevallen.js";
 import { NzaZorgbeeldSource } from "./sources/nza-zorgbeeld.js";
 import { OverheidsorganisatiesSource } from "./sources/overheidsorganisaties.js";
@@ -41,6 +43,7 @@ import { BroOndergrondSource } from "./sources/bro-ondergrond.js";
 import { NedSource } from "./sources/ned.js";
 import { EpOnlineSource } from "./sources/ep-online.js";
 import { NsReisinformatieSource } from "./sources/ns-reisinformatie.js";
+import { GehoordSource, type GehoordContribution, type GehoordDebateRef, GEHOORD_BASE_NOTE, GEHOORD_LINK_NOTE, GEHOORD_INDEX_NOTE, GEHOORD_DEFAULT_CHARS, GEHOORD_MAX_CHARS, GEHOORD_DEFAULT_CONTEXT, GEHOORD_MAX_CONTEXT, GEHOORD_MAX_LIMIT, GEHOORD_SEGMENT_MAX_PAGES, GEHOORD_SPREKER_MAX_PAGES, GEHOORD_MATCHES, GEHOORD_STATUSES, GEHOORD_STATUS_LABEL, gehoordPersoonUrl, KAMER_LABEL, gehoordCaveats, gehoordContributionRecord, gehoordDebateRecord, gehoordMissingKey, gehoordSearchNotes, gehoordSnippet, mapGehoordError, summarizeGehoordSearch, type GehoordListArgs, type GehoordSearchArgs } from "./sources/gehoord.js";
 import { DnbStatisticsSource } from "./sources/dnb-statistics.js";
 import { TenderNedSource, TENDERNED_MAX_REACHABLE, TenderNedInputError, planUpstreamWindow, tenderNedRecordFields } from "./sources/tenderned.js";
 import { KoopCollectieSource } from "./sources/koop-collecties.js";
@@ -62,7 +65,7 @@ import { mapSourceError, nowIso, successResponse, toMcpToolPayload, errorRespons
 import { SourceRequestError } from "./utils/http.js";
 import { applyOutputFormat } from "./utils/output-format.js";
 import { buildFormattedResponse, dryRunPayload, mergeAccessNotes, singleConnectorVerbose } from "./utils/tool-runner.js";
-import type { MCPRecord, ToolResult } from "./types.js";
+import type { MCPErrorResponse, MCPRecord, ToolResult } from "./types.js";
 import { rewriteQuery, rewriteNote } from "./utils/query-rewriter.js";
 import { logger } from "./utils/logger.js";
 import { registerNlGovAsk } from "./router/nl-gov-ask.js";
@@ -102,6 +105,7 @@ const wettenBwb = new WettenBwbSource(config);
 const cvdr = new CvdrSource(config);
 const bestuurlijkeGebieden = new BestuurlijkeGebiedenSource(config);
 const brkKadastraleKaart = new BrkKadastraleKaartSource(config);
+const bagPanden = new BagPandenSource(config);
 const bronOngevallen = new BronOngevallenSource(config);
 const nzaZorgbeeld = new NzaZorgbeeldSource(config);
 const overheidsorganisaties = new OverheidsorganisatiesSource(config);
@@ -256,6 +260,346 @@ function debatNotes(out: DebatSearchResult, single: boolean): string | undefined
       ? "Debatten van vóór deze periode: verruim date_from, of zoek in de Handelingen met officiele_bekendmakingen_search (type 'Handelingen')."
       : undefined,
   );
+}
+
+/** The Gehoord.de client with GEHOORD_KEY, or the not_configured answer: missing, or a key no header can carry. */
+function gehoordClient(): GehoordSource | MCPErrorResponse {
+  const key = process.env[ENV_KEYS.GEHOORD_KEY]?.trim();
+  if (!key) return gehoordMissingKey();
+  // Only visible ASCII goes into a header; the value itself is never echoed.
+  if (!/^[\x21-\x7e]+$/.test(key)) return errorResponse({ error: "not_configured", message: "GEHOORD_KEY bevat ongeldige tekens (spatie, regeleinde of niet-ASCII)", suggestion: "Zet alleen de sleutel zelf in GEHOORD_KEY, zonder 'Bearer' en zonder aanhalingstekens." });
+  return new GehoordSource(config, key);
+}
+
+/**
+ * The passage of an official spreekbeurt to show: all of it when it fits,
+ * else maxChars around the first search term found (as Gehoord finds it, also
+ * inside a compound; a string is one phrase, excluded terms are not passed),
+ * or around where the middle of the hit falls in time (positie 0..1) when the
+ * verslag words it differently.
+ */
+export function officialPassage(text: string, maxChars: number, terms: string | string[] | undefined, positie: number): { tekst?: string; ingekort?: true; at: number } {
+  const found = termsPosition(text, terms);
+  const at = found >= 0 ? found : Math.round(Math.min(1, Math.max(0, positie)) * text.length);
+  if (maxChars <= 0) return { at };
+  if (text.length <= maxChars) return { tekst: text, at };
+  let start = Math.max(0, Math.min(at - Math.floor(maxChars / 3), text.length - maxChars));
+  if (start > 0) {
+    const space = text.indexOf(" ", start);
+    if (space >= 0 && space < at) start = space + 1;
+  }
+  let end = Math.min(text.length, start + maxChars);
+  if (end < text.length) {
+    const space = text.lastIndexOf(" ", end);
+    if (space > start) end = space;
+  }
+  return { tekst: `${start > 0 ? "… " : ""}${text.slice(start, end)}${end < text.length ? " …" : ""}`, ingekort: true, at };
+}
+
+/** data.koppeling of a record: the status and, when known, the vergadering and verslag. */
+function koppelingData(k: Koppeling): Record<string, unknown> {
+  return {
+    status: k.status,
+    reden: k.reden,
+    methode: k.methode,
+    vergadering_id: k.vergadering?.vergadering_id,
+    verslag_id: k.verslag?.verslag_id ?? k.vergadering?.verslag_id,
+    verslag_status: k.verslag?.status,
+    publicatie: k.verslag?.publicatie,
+    overlap_s: k.overlap_s,
+  };
+}
+
+/**
+ * A Gehoord hit with its koppeling. Officieel: the verslag's text, speaker
+ * and link come first and the transcript is kept in data.gehoord_tekst;
+ * otherwise the transcript record with data.koppeling saying why.
+ */
+function gehoordLinkedRecord(
+  c: GehoordContribution,
+  k: Koppeling | undefined,
+  opts: { query?: string | string[]; maxChars: number; pageUrl?: string; sameAs?: string | number },
+): MCPRecord {
+  const base = gehoordContributionRecord(c, opts);
+  if (!k) return base;
+  if (k.status !== "officieel" || !k.fragment || !k.vergadering) {
+    return { ...base, data: { ...base.data, koppeling: koppelingData(k) } };
+  }
+  const f = k.fragment;
+  const v = k.vergadering;
+  const verslagUrl = debatten.verslagUrl(v.verslag_id);
+  // The same official fragment as an earlier hit: the text is there already.
+  const passage = opts.sameAs !== undefined ? { at: 0 } : officialPassage(f.tekst, opts.maxChars, opts.query, k.positie ?? 0);
+  // The transcript only as the passage it was found by: the text to read is the verslag's.
+  const transcript = gehoordSnippet(c.text, opts.query);
+  return {
+    source_name: "tweedekamer",
+    title: `${debatSprekerLabel(f)}: ${f.debat}`,
+    canonical_url: opts.pageUrl ?? verslagUrl,
+    date: c.startTime,
+    snippet: snippetAt(f.tekst, passage.at),
+    data: {
+      koppeling: { ...koppelingData(k), zelfde_fragment_als: opts.sameAs },
+      fragment_id: c.id,
+      debat_id: c.debate.id,
+      kamer: c.debate.chamber,
+      kamer_naam: KAMER_LABEL[c.debate.chamber] ?? c.debate.chamber,
+      debat: f.debat,
+      debat_gehoord: c.debate.title,
+      debat_status: c.debate.status,
+      vergadering: v.titel,
+      vergadering_soort: v.soort,
+      zaal: v.zaal ?? c.debate.hall ?? null,
+      debat_soort: c.debate.debateType ?? null,
+      persoon_id: c.persoonId,
+      persoon_url: gehoordPersoonUrl(c.persoonId),
+      spreker: f.spreker,
+      fractie: f.fractie ?? null,
+      functie: f.functie ?? null,
+      voorzitter: f.voorzitter,
+      rol: f.rol,
+      begin: f.begin ?? null,
+      eind: f.eind ?? null,
+      start_time: c.startTime ?? null,
+      end_time: c.endTime ?? null,
+      tekst: passage.tekst,
+      tekst_lengte: f.tekst.length,
+      tekst_ingekort: passage.tekst !== undefined && "ingekort" in passage ? passage.ingekort : undefined,
+      tekst_bron: `verslag Tweede Kamer (${[k.verslag?.status, k.verslag?.publicatie].filter(Boolean).join(", ").toLowerCase() || "Gegevensmagazijn"})`,
+      verslag_url: verslagUrl,
+      gehoord_tekst: transcript,
+      // About the transcript in gehoord_tekst; data.tekst is the verslag's.
+      ondertiteling_samengevat: c.debate.subtitlesCondensed ?? null,
+      gehoord_url: c.fragmentUrl,
+      debat_url: c.debate.url ?? null,
+      bron: "Tweede Kamer, verslag (Gegevensmagazijn); gevonden via Gehoord.de",
+    },
+  };
+}
+
+/** The koppeling of Gehoord hits, never failing: every lookup error leaves the transcript. Each hit carries its debate (type, status, start, zaal). */
+async function koppelHits(items: GehoordContribution[]): Promise<KoppelingResult> {
+  return koppelGehoord(items, { debatten });
+}
+
+/**
+ * The official page per vergadering of the officieel hits: the plenary verslag
+ * on tweedekamer.nl; a commissiedebat's page straight from the Gehoord
+ * debate's tkActivityNumber (debates[i], parallel to koppelingen) or, when
+ * Gehoord has none, the parlisid of its activiteit in the verslag; else when
+ * its activiteit is found in what is left of the koppeling's deadline (else
+ * the verslag itself).
+ */
+export async function koppelingPages(koppelingen: Koppeling[], deadlineAt: number, debates: Array<Pick<GehoordDebateRef, "tkActivityNumber"> | undefined> = []): Promise<Map<string, string | undefined>> {
+  const pages = new Map<string, string | undefined>();
+  // Vergaderingen whose page came from a tkActivityNumber or parlisid: a lookup never overrides it.
+  const direct = new Set<string>();
+  const lookups: Array<Promise<void>> = [];
+  const left = deadlineAt - Date.now();
+  for (const [i, k] of koppelingen.entries()) {
+    const v = k.status === "officieel" ? k.vergadering : undefined;
+    if (!v || direct.has(v.vergadering_id)) continue;
+    const nummer = v.soort === "Commissie" ? debates[i]?.tkActivityNumber ?? k.activiteit?.parlisid : undefined;
+    if (nummer) {
+      pages.set(v.vergadering_id, commissieUrlVoorNummer(nummer));
+      direct.add(v.vergadering_id);
+      continue;
+    }
+    if (pages.has(v.vergadering_id)) continue;
+    const plenair = TweedeKamerDebattenSource.plenairUrl(v);
+    pages.set(v.vergadering_id, plenair);
+    if (!plenair && v.soort === "Commissie" && left >= 1_000 && lookups.length < KOPPELING_MAX_VERSLAGEN) {
+      lookups.push(debatten.commissieUrl(v, { timeoutMs: left }).then((url) => void (direct.has(v.vergadering_id) || pages.set(v.vergadering_id, url))));
+    }
+  }
+  if (lookups.length) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([Promise.all(lookups), new Promise<void>((resolve) => { timer = setTimeout(resolve, left); })]);
+    if (timer) clearTimeout(timer);
+  }
+  return pages;
+}
+
+/** First in access_note when records hold the verslag's text: what may be quoted and what not. */
+const KOPPELING_OFFICIEEL_NOTE =
+  "Records met data.koppeling.status 'officieel' (source_name 'tweedekamer'): data.tekst, de spreker en de link komen uit het verslag van de Tweede Kamer (Gegevensmagazijn), niet van Gehoord.de; citeer ze met de verslag_status uit data.koppeling (ongecorrigeerd = voorlopige tekst; het definitieve verslag zijn de Handelingen).";
+
+/** The access_note lines of a koppeling: counts per status, what the fields mean, the budget. */
+function koppelingNotes(r: KoppelingResult, duplicates: boolean): string[] {
+  const notes = [
+    `Koppeling met het officiële verslag van de Tweede Kamer: ${koppelingCounts(r.counts) || "geen treffers"}. ` +
+      "Bij status officieel komen data.tekst, de spreker en de link uit het verslag (Gegevensmagazijn) en staat de Gehoord-transcriptie in data.gehoord_tekst (video: data.gehoord_url); " +
+      "bij de andere statussen is data.tekst de automatische transcriptie en zegt data.koppeling.reden waarom (nog_geen_verslag: debat live of recent, of het verslag loopt nog niet tot dit moment; geen_verslag_verwacht: technische briefing, procedurevergadering, rondetafelgesprek of constituerende vergadering; eerste_kamer: geen verslag, citeer uit de Handelingen; niet_gekoppeld: geen passend fragment, limiet of fout).",
+  ];
+  if (r.koppelingen.some((k) => k.status === "officieel" && k.verslag?.status === "Ongecorrigeerd")) {
+    notes.push("Ongecorrigeerd verslag: de voorlopige tekst; het officiële verslag zijn de Handelingen.");
+  }
+  if (r.koppelingen.some((k) => k.reden?.startsWith("limiet"))) {
+    notes.push(`Per aanroep worden hooguit ${KOPPELING_MAX_VERSLAGEN} verslagen gelezen (en de vergaderingen van ${KOPPELING_MAX_DAGEN} dagen opgezocht); treffers daarbuiten houden hun transcriptie (reden 'limiet'). Koppel die door met een kortere periode (date_from/date_to rond hun datum) of vraag minder treffers (top).`);
+  }
+  if (duplicates) {
+    notes.push("Meer treffers in hetzelfde verslagfragment: de tekst staat bij de eerste, de volgende verwijzen ernaar met data.koppeling.zelfde_fragment_als.");
+  }
+  return notes;
+}
+
+/** Records for linked hits, the official text of one fragment shown once. */
+async function gehoordLinkedRecords(items: GehoordContribution[], r: KoppelingResult, opts: { query?: string | string[]; maxChars: number }): Promise<{ records: MCPRecord[]; duplicates: boolean }> {
+  const pages = await koppelingPages(r.koppelingen, r.deadlineAt, items.map((c) => c.debate));
+  const seen = new Map<string, string | number>();
+  let duplicates = false;
+  const records = items.map((c, i) => {
+    const k = r.koppelingen[i];
+    let sameAs: string | number | undefined;
+    if (k?.status === "officieel" && k.fragment && k.verslag) {
+      const key = `${k.verslag.verslag_id}|${k.fragment.volgnummer}`;
+      sameAs = seen.get(key);
+      if (sameAs === undefined) seen.set(key, c.id);
+      else duplicates = true;
+    }
+    return gehoordLinkedRecord(c, k, { ...opts, sameAs, pageUrl: k?.vergadering ? pages.get(k.vergadering.vergadering_id) : undefined });
+  });
+  return { records, duplicates };
+}
+
+/** gehoord_debatten_search: full-text search over the Gehoord.de transcripts, each Tweede Kamer hit linked to the official verslag; also the debate routes of nl_gov_ask. */
+async function gehoordSearchResult(args: GehoordSearchArgs & { max_chars: number; koppeling?: KoppelingMode }): Promise<ToolResult> {
+  const src = gehoordClient();
+  if (!(src instanceof GehoordSource)) return src;
+  try {
+    const out = await src.search(args);
+    const total = out.filtered ? null : out.upstreamTotal;
+    let notes = gehoordSearchNotes(out, args);
+    let records: MCPRecord[];
+    let summary = summarizeGehoordSearch(out, args.query.trim());
+    // The snippet and the official passage centre on the first search term found; excluded terms do not count.
+    const terms = out.terms.include;
+    if (args.koppeling !== "uit" && out.items.length) {
+      const linked = await koppelHits(out.items);
+      const built = await gehoordLinkedRecords(out.items, linked, { query: terms, maxChars: args.max_chars });
+      records = built.records;
+      summary += `; officieel verslag gekoppeld: ${linked.counts.officieel} van ${out.items.length}`;
+      // With official text: that first, then the provider's caveat scoped to the transcript; the
+      // gehoord.de link note only when a record still links there. Then the search details.
+      const rest = notes.filter((n) => n !== GEHOORD_BASE_NOTE && n !== GEHOORD_LINK_NOTE);
+      const transcripts = records.some((r) => r.source_name === "gehoord");
+      notes = [
+        ...(linked.counts.officieel ? [KOPPELING_OFFICIEEL_NOTE, GEHOORD_INDEX_NOTE] : [GEHOORD_BASE_NOTE]),
+        ...(transcripts ? [GEHOORD_LINK_NOTE] : []),
+        ...koppelingNotes(linked, built.duplicates),
+        ...rest,
+      ];
+    } else {
+      records = out.items.map((c) => gehoordContributionRecord(c, { query: terms, maxChars: args.max_chars }));
+    }
+    return successResponse({
+      summary,
+      records,
+      provenance: prov("gehoord_debatten_search", out.endpoint, out.params, records.length, total),
+      access_note: mergeAccessNotes(...notes),
+      pagination: { offset: args.offset, limit: args.top, total, has_more: out.hasMore },
+    });
+  } catch (e) {
+    return mapGehoordError(e);
+  }
+}
+
+/** gehoord_debatten_list: debates by kamer, status and date; also the live-debate route of nl_gov_ask. */
+async function gehoordListResult(args: GehoordListArgs): Promise<ToolResult> {
+  const src = gehoordClient();
+  if (!(src instanceof GehoordSource)) return src;
+  try {
+    const out = await src.listDebates(args);
+    const records = out.items.map((d) => gehoordDebateRecord(d));
+    const live = out.items.filter((d) => d.status === "live").length;
+    const n = records.length;
+    const summary = n
+      ? `${n} debat${n === 1 ? "" : "ten"}${out.total !== null && out.total > n ? ` van ${out.total}` : ""}${live ? `, waarvan ${live} nu live` : ""}`
+      : args.status === "live"
+        ? "Er is nu geen debat live bij Gehoord.de"
+        : "Geen debatten gevonden bij Gehoord.de";
+    return successResponse({
+      summary,
+      records,
+      provenance: prov("gehoord_debatten_list", out.endpoint, out.params, n, out.total),
+      access_note: mergeAccessNotes(
+        GEHOORD_BASE_NOTE,
+        "De link is de officiële Kamerpagina van het debat (debatdirect.tweedekamer.nl of eerstekamer.nl); data.gehoord_url is de transcriptie op gehoord.de. Lees een debat met gehoord_debat_get (debat_id), zoek in wat er gezegd is met gehoord_debatten_search.",
+        ...gehoordCaveats(out.items),
+        out.hasMore ? `Meer debatten: offset=${args.offset + n}.` : undefined,
+      ),
+      pagination: { offset: args.offset, limit: args.top, total: out.total, has_more: out.hasMore },
+    });
+  } catch (e) {
+    return mapGehoordError(e);
+  }
+}
+
+/** gehoord_debat_get: one debate with its speakers, its fragments in debate order or the window around one fragment. */
+async function gehoordDebatResult(args: { debate_id: string; segment_id?: string; context: number; top: number; offset: number; max_chars: number; koppeling?: KoppelingMode }): Promise<ToolResult> {
+  const src = gehoordClient();
+  if (!(src instanceof GehoordSource)) return src;
+  try {
+    const detail = await src.getDebate(args.debate_id);
+    const d = detail.debate;
+    const label = `'${d.title}' (${[KAMER_LABEL[d.chamber] ?? d.chamber, d.debateType, GEHOORD_STATUS_LABEL[d.status] ?? d.status].filter(Boolean).join(", ")})`;
+    const head = gehoordDebateRecord(d, detail.speakers);
+    const notes: Array<string | undefined> = [
+      GEHOORD_BASE_NOTE,
+      GEHOORD_LINK_NOTE,
+      `Het eerste record is het debat zelf (data.sprekers: ${detail.speakers.length} sprekers met persoon_id); de andere zijn fragmenten in de volgorde van het debat (data.positie telt vanaf 0).`,
+      ...gehoordCaveats([d]),
+    ];
+    const params: Record<string, string> = { debate_id: args.debate_id };
+    if (args.segment_id) {
+      const around = await src.getContributionsAround(args.debate_id, args.segment_id, args.context);
+      // The segment itself goes to its official fragment, when there is one (one verslag at most).
+      const segment = around.items.find((c) => String(c.id) === String(args.segment_id));
+      let segmentRecord: MCPRecord | undefined;
+      if (segment && args.koppeling !== "uit") {
+        // The debate as gehoord_debat_get read it: the koppeling needs nothing more of Gehoord.
+        const linked = await koppelHits([{ ...segment, debate: d }]);
+        segmentRecord = (await gehoordLinkedRecords([segment], linked, { maxChars: args.max_chars })).records[0];
+        const k = linked.koppelingen[0];
+        notes.splice(2, 0, k.status === "officieel"
+          ? `Het fragment (segment_id ${args.segment_id}) is gekoppeld aan het officiële verslag: data.tekst is de tekst uit het verslag (${[k.verslag?.status, k.verslag?.publicatie].filter(Boolean).join(", ").toLowerCase()}), de transcriptie staat in data.gehoord_tekst. De fragmenten eromheen zijn transcriptie.`
+          : `Koppeling met het officiële verslag: ${k.status}${k.reden ? ` (${k.reden})` : ""}; de tekst is de automatische transcriptie.`);
+      }
+      const records = [head, ...around.items.map((c, i) =>
+        segmentRecord && c === segment
+          ? { ...segmentRecord, data: { ...segmentRecord.data, positie: around.windowStart + i, is_segment: true } }
+          : gehoordContributionRecord(c, { maxChars: args.max_chars, segmentId: args.segment_id, position: around.windowStart + i }))];
+      const of = around.total !== null ? ` van ${around.total}` : "";
+      const summary = around.found
+        ? `Debat ${label}: fragment ${around.windowStart + 1}-${around.windowStart + around.items.length}${of} rond fragment ${args.segment_id} (positie ${(around.position ?? 0) + 1})`
+        : `Fragment ${args.segment_id} niet gevonden in debat ${label} (${around.scanned}${of} fragmenten gelezen)`;
+      if (!around.found) {
+        notes.push(around.capped
+          ? `Alleen de eerste ${around.scanned} fragmenten zijn doorzocht (hooguit ${GEHOORD_SEGMENT_MAX_PAGES} pagina's van ${GEHOORD_MAX_LIMIT}); blader met offset zonder segment_id, of controleer of het fragment bij dit debat hoort (data.debat_id in gehoord_debatten_search).`
+          : "Dit debat heeft geen fragment met dat id; controleer debate_id en segment_id (debat_id en fragment_id uit gehoord_debatten_search). Bij een live debat kan een fragment nog zijn vervangen.");
+      }
+      return successResponse({
+        summary,
+        records,
+        provenance: prov("gehoord_debat_get", around.endpoint || detail.endpoint, { ...params, segment_id: args.segment_id, context: String(args.context) }, records.length, around.total),
+        access_note: mergeAccessNotes(...notes),
+      });
+    }
+    const page = await src.getContributions(args.debate_id, { limit: args.top, offset: args.offset });
+    const records = [head, ...page.items.map((c, i) => gehoordContributionRecord(c, { maxChars: args.max_chars, position: args.offset + i }))];
+    const n = page.items.length;
+    const of = page.total !== null ? ` van ${page.total}` : "";
+    if (page.hasMore) notes.push(`Volgende fragmenten: offset=${args.offset + n}.`);
+    return successResponse({
+      summary: n ? `Debat ${label}: fragment ${args.offset + 1}-${args.offset + n}${of}` : `Debat ${label}: geen fragmenten op deze pagina (offset ${args.offset}${of})`,
+      records,
+      provenance: prov("gehoord_debat_get", page.endpoint, { ...params, limit: String(args.top), offset: String(args.offset) }, records.length, page.total),
+      access_note: mergeAccessNotes(...notes),
+      pagination: { offset: args.offset, limit: args.top, total: page.total, has_more: page.hasMore },
+    });
+  } catch (e) {
+    return mapGehoordError(e, `Debat ${args.debate_id}`);
+  }
 }
 
 /**
@@ -586,7 +930,7 @@ export function registerTools(server: McpServer): void {
     } catch(e){ return toMcpToolPayload(mapTweedeKamerError(e)); }
   });
 
-  server.registerTool("tweede_kamer_search", { description: "Advanced OData search on Tweede Kamer entities (Document, Zaak, Activiteit, Agendapunt, Besluit, Stemming, Persoon, Fractie, Commissie, Kamerstukdossier, Vergadering, Toezegging, and the other entity sets of the Gegevensmagazijn). 'query' is an AND keyword search on the entity's text fields (Document and Zaak: Titel and Onderwerp; same word rules as tweede_kamer_documents) and is optional when 'filter' or a date is given. 'filter' and 'orderby' take raw OData v4 expressions with the entity's field names. date_from/date_to filter the entity's own date (Document.Datum, Zaak.GestartOp, Activiteit.Datum, Vergadering.Datum, Toezegging.Aanmaakdatum, Agendapunt/Besluit/Stemming via the meeting or voting session). Agendapunt, Besluit and Stemming records carry that meeting date as 'vergaderdatum', which is also their record date; GewijzigdOp is when the record last changed. An unknown entity, an unsupported query/date or a rejected expression returns an explicit error, never an unfiltered fallback.", inputSchema: { query: z.string().optional().describe("Topic keywords, all required. Examples: 'zorg', 'migratie', 'ICT onderwijs'. Do NOT pass full questions. Optional when filter or a date is given."), entity: z.string().default("Document").describe("Entity set, e.g. Document, Zaak, Activiteit, Besluit, Stemming, Persoon, Fractie, Kamerstukdossier (case-insensitive)."), top: z.number().int().min(1).max(config.limits.maxRows).default(25), filter: z.string().optional().describe("Raw OData $filter, e.g. \"Soort eq 'Motie'\". Combined with query using AND."), orderby: z.string().optional().describe("Raw OData $orderby; default 'GewijzigdOp desc'. To sort by meeting date: 'Activiteit/Datum desc' (Agendapunt), 'Agendapunt/Activiteit/Datum desc' (Besluit), 'Besluit/Agendapunt/Activiteit/Datum desc' (Stemming)."), skip: z.number().int().min(0).optional(), date_from: z.string().optional().describe("YYYY-MM-DD, on or after (Dutch local date) on the entity's date field."), date_to: z.string().optional().describe("YYYY-MM-DD, on or before (Dutch local date) on the entity's date field."), ...paginationInputSchema, outputFormat: outputFormatSchema, verbose: z.boolean().default(false), dryRun: z.boolean().default(false) }, annotations: TOOL_ANNOTATIONS }, async ({ query, entity, top, filter, orderby, skip, date_from, date_to, offset, limit, outputFormat, verbose, dryRun }) => {
+  server.registerTool("tweede_kamer_search", { description: "Advanced OData search on Tweede Kamer entities (Document, Zaak, Activiteit, Agendapunt, Besluit, Stemming, Persoon, Fractie, Commissie, Kamerstukdossier, Vergadering, Toezegging, and the other entity sets of the Gegevensmagazijn). 'query' is an AND keyword search on the entity's text fields (Document and Zaak: Titel and Onderwerp; same word rules as tweede_kamer_documents) and is optional when 'filter' or a date is given. 'filter' and 'orderby' take raw OData expressions with the entity's field names in API version v5 of the Gegevensmagazijn (e.g. Document.Nummer, Zaak.Datum, Stemming.FractieNaam, Besluit.Soort; field list: https://gegevensmagazijn.tweedekamer.nl/OData/v5/$metadata); names of the old v4/2.0 API (DocumentNummer, GestartOp, ActorFractie, BesluitSoort, ...) are translated and the access_note says so, a field v5 dropped is an explicit error. date_from/date_to filter the entity's own date (Document.Datum, Zaak.Datum, Activiteit.Datum, Vergadering.Datum, Toezegging.Aanmaakdatum, Agendapunt/Besluit/Stemming via the meeting or voting session). Agendapunt, Besluit and Stemming records carry that meeting date as 'vergaderdatum', which is also their record date; GewijzigdOp is when the record last changed. An unknown entity, an unsupported query/date or a rejected expression returns an explicit error, never an unfiltered fallback.", inputSchema: { query: z.string().optional().describe("Topic keywords, all required. Examples: 'zorg', 'migratie', 'ICT onderwijs'. Do NOT pass full questions. Optional when filter or a date is given."), entity: z.string().default("Document").describe("Entity set, e.g. Document, Zaak, Activiteit, Besluit, Stemming, Persoon, Fractie, Kamerstukdossier (case-insensitive)."), top: z.number().int().min(1).max(config.limits.maxRows).default(25), filter: z.string().optional().describe("Raw OData $filter, e.g. \"Soort eq 'Motie'\". Combined with query using AND."), orderby: z.string().optional().describe("Raw OData $orderby; default 'GewijzigdOp desc,Id'. To sort by meeting date: 'Activiteit/Datum desc' (Agendapunt), 'Agendapunt/Activiteit/Datum desc' (Besluit), 'Besluit/Agendapunt/Activiteit/Datum desc' (Stemming)."), skip: z.number().int().min(0).optional(), date_from: z.string().optional().describe("YYYY-MM-DD, on or after (Dutch local date) on the entity's date field."), date_to: z.string().optional().describe("YYYY-MM-DD, on or before (Dutch local date) on the entity's date field."), ...paginationInputSchema, outputFormat: outputFormatSchema, verbose: z.boolean().default(false), dryRun: z.boolean().default(false) }, annotations: TOOL_ANNOTATIONS }, async ({ query, entity, top, filter, orderby, skip, date_from, date_to, offset, limit, outputFormat, verbose, dryRun }) => {
     const effectiveOffset = skip ?? offset;
     const effectiveLimit = limit ?? top;
     try {
@@ -716,7 +1060,7 @@ export function registerTools(server: McpServer): void {
     try { const out = await tk.getMembers({ fractie, active, top }); const records = out.items.map((x)=>record("tweedekamer", String(x.name ?? x.id ?? "Kamerlid"), String(x.persoon_url ?? "https://www.tweedekamer.nl"), x, String(x.fractie ?? ""), String(x.start_date ?? ""))); return toMcpToolPayload(successResponse({ summary: `${records.length} Kamerleden`, records, provenance: prov("tweede_kamer_members", out.endpoint, out.params, records.length, null) })); } catch(e){ return toMcpToolPayload(mapSourceError(e, "Tweede Kamer", "https://www.tweedekamer.nl")); }
   });
 
-  server.registerTool("tweede_kamer_debatten", { description: `Search what was said in Tweede Kamer debates, plenary and committee: the verslagen (stenograms) in the Gegevensmagazijn, one record per spreekbeurt or interruptie with speaker, fractie or function, time and text. Filter by words in the text (query; all required, same word rules as tweede_kamer_documents, accents ignored), spreker (name or function: 'Klaver', 'van Weel', 'minister', 'voorzitter'), fractie ('VVD', 'PRO'), debat (words in the debate subject), soort (plenair or commissie) and date or date_from/date_to (YYYY-MM-DD; default the last ${DEBAT_DEFAULT_DAYS} days). There is no full-text index: each call reads the verslagen of at most ${DEBAT_MAX_VERSLAGEN} vergaderingen in the period, newest first, and vergadering_offset continues with the next ones; the access_note says how many there are. vergadering_id (from an earlier result) reads one vergadering: a plenary day with all its debates, or one committee debate. A debate's verslag appears the same day, uncorrected; the corrected one follows weeks later and the official record is the Handelingen (officiele_bekendmakingen_search, type Handelingen, also for debates long ago). Not live.`, inputSchema: { query: z.string().optional().describe("Words in what was said, all required. Examples: 'stikstof', 'medische isotopen', '\"gehoord de beraadslaging\"'. Do NOT pass full questions."), spreker: z.string().optional().describe("Speaker name or function, e.g. 'Klaver', 'Van Campen', 'minister', 'staatssecretaris'."), fractie: z.string().optional().describe("Fractie of the speaker, e.g. 'VVD', 'CDA', 'PRO'. The chair never counts for a fractie."), debat: z.string().optional().describe("Words in the debate subject, e.g. 'Pallas', 'Oekraïne', 'begroting'."), soort: z.enum(["plenair", "commissie"]).optional().describe("Only plenary days or only committee debates."), vergadering_id: z.string().optional().describe("Vergadering GUID from an earlier result: read that one vergadering (no date needed)."), date: z.string().optional().describe("YYYY-MM-DD: vergaderingen on this day."), date_from: z.string().optional().describe("YYYY-MM-DD: vergaderingen on or after this day."), date_to: z.string().optional().describe("YYYY-MM-DD: vergaderingen on or before this day."), vergadering_offset: z.number().int().min(0).default(0).describe(`Skip this many vergaderingen (newest first): the next ${DEBAT_MAX_VERSLAGEN} when the period holds more.`), max_chars: z.number().int().min(0).max(DEBAT_MAX_CHARS).default(DEBAT_DEFAULT_CHARS).describe("Characters of text per fragment in data.tekst (0: only the snippet)."), top: z.number().int().min(1).max(config.limits.maxRows).default(25), offset: z.number().int().min(0).default(0) }, annotations: TOOL_ANNOTATIONS }, async ({ query, spreker, fractie, debat, soort, vergadering_id, date, date_from, date_to, vergadering_offset, max_chars, top, offset }) => {
+  server.registerTool("tweede_kamer_debatten", { description: `Search what was said in Tweede Kamer debates, plenary and committee: the verslagen (stenograms) in the Gegevensmagazijn, one record per spreekbeurt or interruptie with speaker, fractie or function, time and text. Filter by words in the text (query; all required, same word rules as tweede_kamer_documents, accents ignored), spreker (name or function: 'Klaver', 'van Weel', 'minister', 'voorzitter'), fractie ('VVD', 'PRO'), debat (words in the debate subject), soort (plenair or commissie) and date or date_from/date_to (YYYY-MM-DD; default the last ${DEBAT_DEFAULT_DAYS} days). There is no full-text index: each call reads the verslagen of at most ${DEBAT_MAX_VERSLAGEN} vergaderingen in the period, newest first, and vergadering_offset continues with the next ones; the access_note says how many there are. vergadering_id (from an earlier result) reads one vergadering: a plenary day with all its debates, or one committee debate. A debate's verslag appears the same day, uncorrected; the corrected one follows weeks later and the official record is the Handelingen (officiele_bekendmakingen_search, type Handelingen, also for debates long ago). Not live. For real full-text search over all debates since 31 March 2026, debates still live, the Eerste Kamer or a link to the video moment: gehoord_debatten_search (automatic transcripts of Gehoord.de, not for quoting; requires GEHOORD_KEY).`, inputSchema: { query: z.string().optional().describe("Words in what was said, all required. Examples: 'stikstof', 'medische isotopen', '\"gehoord de beraadslaging\"'. Do NOT pass full questions."), spreker: z.string().optional().describe("Speaker name or function, e.g. 'Klaver', 'Van Campen', 'minister', 'staatssecretaris'."), fractie: z.string().optional().describe("Fractie of the speaker, e.g. 'VVD', 'CDA', 'PRO'. The chair never counts for a fractie."), debat: z.string().optional().describe("Words in the debate subject, e.g. 'Pallas', 'Oekraïne', 'begroting'."), soort: z.enum(["plenair", "commissie"]).optional().describe("Only plenary days or only committee debates."), vergadering_id: z.string().optional().describe("Vergadering GUID from an earlier result: read that one vergadering (no date needed)."), date: z.string().optional().describe("YYYY-MM-DD: vergaderingen on this day."), date_from: z.string().optional().describe("YYYY-MM-DD: vergaderingen on or after this day."), date_to: z.string().optional().describe("YYYY-MM-DD: vergaderingen on or before this day."), vergadering_offset: z.number().int().min(0).default(0).describe(`Skip this many vergaderingen (newest first): the next ${DEBAT_MAX_VERSLAGEN} when the period holds more.`), max_chars: z.number().int().min(0).max(DEBAT_MAX_CHARS).default(DEBAT_DEFAULT_CHARS).describe("Characters of text per fragment in data.tekst (0: only the snippet)."), top: z.number().int().min(1).max(config.limits.maxRows).default(25), offset: z.number().int().min(0).default(0) }, annotations: TOOL_ANNOTATIONS }, async ({ query, spreker, fractie, debat, soort, vergadering_id, date, date_from, date_to, vergadering_offset, max_chars, top, offset }) => {
     try {
       const out = await debatten.search({ query, spreker, fractie, debat, soort, vergadering_id, date, date_from, date_to, vergadering_offset });
       const page = out.hits.slice(offset, offset + top);
@@ -731,11 +1075,61 @@ export function registerTools(server: McpServer): void {
     } catch(e){ return toMcpToolPayload(mapTweedeKamerError(e)); }
   });
 
+  // Gehoord.de: automatic transcripts of TK and EK debates (third party, with the maker's key). A finding aid next to the verslagen, never instead of them.
+  const gehoordCaveat = "Automatic transcript without human correction: fine for finding, NOT for quoting (quote from the Handelingen: officiele_bekendmakingen_search type Handelingen, or the verslagen: tweede_kamer_debatten). In a live debate speakers and boundaries can still change; vragenuur and big debates may have condensed, non-literal subtitles (subtitlesCondensed); Eerste Kamer text has no capitals or punctuation. Third-party source (Gehoord.de by Jeroen Wollaars), not official. Requires GEHOORD_KEY.";
+  const kamerSchema = z.enum(["tk", "ek"]).optional().describe("tk = Tweede Kamer, ek = Eerste Kamer. Default both.");
+  const koppelingSchema = z.enum(["officieel", "uit"]).default("officieel").describe(`'officieel' (default): link each Tweede Kamer hit to its fragment in the official verslag (at most ${KOPPELING_MAX_VERSLAGEN} verslagen per call); 'uit' = Gehoord transcript only (faster).`);
+  const koppelingDescription = `Each Tweede Kamer hit is linked to the official verslag by persoon_id and time (koppeling, default); data.koppeling.status: 'officieel' = data.tekst, speaker and url come from the verslag (verslag_status, publicatie in data.koppeling), the transcript passage in data.gehoord_tekst, the video moment in data.gehoord_url; 'nog_geen_verslag' = live or recent, no verslag yet for this moment; 'geen_verslag_verwacht' = technische briefing, procedurevergadering, rondetafelgesprek, constituerende vergadering or a cancelled debate; 'eerste_kamer' = no verslag exists, quote the Handelingen; 'niet_gekoppeld' = no matching fragment, the limit (${KOPPELING_MAX_VERSLAGEN} verslagen/call) or an error (data.koppeling.reden). Then data.tekst is the transcript, the url the fragment on gehoord.de.`;
+
+  server.registerTool("gehoord_debatten_search", {
+    description: `Full-text search in what was said in Tweede Kamer and Eerste Kamer debates via Gehoord.de: speech-to-text of the official Kamer video streams of every debate since 31 March 2026, newest first, live debates included. For 'who said what about X', debates the verslagen do not have yet, and the Eerste Kamer. query: key words; match 'alle' (default) needs every word in any order, 'een' any one (with both a "quoted phrase" stays together, -word excludes), 'woordgroep' the whole query as one literal phrase; a word of 4 characters or fewer matches whole words only. kamer, fractie, debat_id, the dates (vergaderdag) and a spreker persoon_id are filtered by Gehoord; a spreker name by this server, over up to ${GEHOORD_SPREKER_MAX_PAGES * GEHOORD_MAX_LIMIT} hits per call. ${koppelingDescription} gehoord_debat_get with segment_id gives the fragments around a hit. ${gehoordCaveat}`, inputSchema: {
+    query: z.string().min(1).max(SEARCH_QUERY_MAX).describe("Key words, e.g. 'stikstof', 'stikstof provincie', '\"medische isotopen\" -Pallas'. Not a whole question."),
+    match: z.enum(GEHOORD_MATCHES).default("alle").describe("'alle' (default): every word, any order; 'een': any one of them; 'woordgroep': the whole query as one exact phrase."),
+    date_from: z.string().optional().describe("YYYY-MM-DD: vergaderdag on or after this day, as the Kamer dates it (a night sitting counts for the day it began). Gehoord starts 2026-03-31."),
+    date_to: z.string().optional().describe("YYYY-MM-DD: vergaderdag on or before this day."),
+    kamer: kamerSchema,
+    fractie: z.string().optional().describe("Party label of the speaker, e.g. 'VVD', 'PVV', 'CU', 'PvdD' (exact, case-insensitive). GroenLinks-PvdA ('GL-PvdA', since late Sept 2026 'PRO': give either) and ChristenUnie ('CU', in the EK 'ChristenUnie') are searched under all their labels."),
+    spreker: z.string().optional().describe("A persoon_id from a hit (TK GUID or Eerste Kamer id), or words of the name or function, e.g. 'Klaver', 'van Weel', 'minister'."),
+    debat_id: z.union([z.string(), z.number()]).optional().describe("Only this debate: debat_id from gehoord_debatten_list or a hit, or its tk_debat_id."),
+    max_chars: z.number().int().min(0).max(GEHOORD_MAX_CHARS).default(GEHOORD_DEFAULT_CHARS).describe("Characters of text per fragment in data.tekst (0: only the snippet)."),
+    top: z.number().int().min(1).max(GEHOORD_MAX_LIMIT).default(25),
+    offset: z.number().int().min(0).default(0).describe("Skip this many hits (with a spreker name: hits read upstream; use the offset access_note gives)."),
+    koppeling: koppelingSchema,
+  }, annotations: TOOL_ANNOTATIONS }, async ({ query, match, date_from, date_to, kamer, fractie, spreker, debat_id, max_chars, top, offset, koppeling }) => {
+    return toMcpToolPayload(await gehoordSearchResult({ query, match, date_from, date_to, kamer, fractie, spreker, debat_id, max_chars, top, offset, koppeling }));
+  });
+
+  server.registerTool("gehoord_debatten_list", {
+    description: `List Tweede Kamer and Eerste Kamer debates transcribed by Gehoord.de, newest first: what is being debated now (status 'live'), was today or on a date, is planned ('scheduled') or was dropped from the agenda ('cancelled'), with kamer, debate type (Plenair debat, Commissiedebat, Technische briefing, Procedurevergadering, ...), zaal, start and end, number of fragments, whether the subtitles are condensed, and the official Kamer page as url. For 'wat wordt er nu/vandaag besproken in de Kamer'. Read a debate with gehoord_debat_get, search what was said with gehoord_debatten_search. ${gehoordCaveat}`, inputSchema: {
+    kamer: kamerSchema,
+    status: z.enum(GEHOORD_STATUSES).optional().describe("live = running now; ended = finished; scheduled = planned, not begun; cancelled = dropped from the agenda, not held. Default: every status."),
+    date_from: z.string().optional().describe("YYYY-MM-DD: debates on or after this vergaderdag (today: the same day as date_to)."),
+    date_to: z.string().optional().describe("YYYY-MM-DD: debates on or before this vergaderdag."),
+    top: z.number().int().min(1).max(GEHOORD_MAX_LIMIT).default(25),
+    offset: z.number().int().min(0).default(0),
+  }, annotations: TOOL_ANNOTATIONS }, async ({ kamer, status, date_from, date_to, top, offset }) => {
+    return toMcpToolPayload(await gehoordListResult({ kamer, status, date_from, date_to, top, offset }));
+  });
+
+  server.registerTool("gehoord_debat_get", {
+    description: `Read one debate transcribed by Gehoord.de (Tweede or Eerste Kamer): the first record is the debate with its speakers (name, fractie, function, persoon_id) and the official url; the others are its fragments in debate order, paged with top/offset. With segment_id (a fragment_id from gehoord_debatten_search) it returns the ${GEHOORD_DEFAULT_CONTEXT} fragments before and after that fragment instead (context sets how many), to read what was said around a hit; it pages through the debate to find it (at most ${GEHOORD_SEGMENT_MAX_PAGES * GEHOORD_MAX_LIMIT} fragments), and links that one fragment to the official verslag as gehoord_debatten_search does (data.koppeling; the fragments around it stay transcript). ${gehoordCaveat}`, inputSchema: {
+    debate_id: z.union([z.string(), z.number()]).describe("debat_id from gehoord_debatten_list or gehoord_debatten_search, e.g. '312905'."),
+    segment_id: z.union([z.string(), z.number()]).optional().describe("fragment_id from gehoord_debatten_search: return the fragments around it."),
+    context: z.number().int().min(0).max(GEHOORD_MAX_CONTEXT).default(GEHOORD_DEFAULT_CONTEXT).describe("With segment_id: fragments before and after it."),
+    max_chars: z.number().int().min(0).max(GEHOORD_MAX_CHARS).default(GEHOORD_DEFAULT_CHARS).describe("Characters of text per fragment in data.tekst (0: only the snippet)."),
+    top: z.number().int().min(1).max(GEHOORD_MAX_LIMIT).default(25).describe("Without segment_id: fragments per page."),
+    offset: z.number().int().min(0).default(0).describe("Without segment_id: skip this many fragments."),
+    koppeling: koppelingSchema.describe("With segment_id: 'officieel' (default) links that fragment to the official verslag; 'uit' = transcript only."),
+  }, annotations: TOOL_ANNOTATIONS }, async ({ debate_id, segment_id, context, max_chars, top, offset, koppeling }) => {
+    return toMcpToolPayload(await gehoordDebatResult({ debate_id: String(debate_id), segment_id: segment_id === undefined ? undefined : String(segment_id), context, max_chars, top, offset, koppeling }));
+  });
+
   server.registerTool("officiele_bekendmakingen_search", {
     description:
       "Search Officiële Bekendmakingen (Dutch official publications: Gemeenteblad, Staatscourant, Staatsblad, Provinciaal blad, Waterschapsblad, Kamerstukken, Handelingen). Use legal/policy topic keywords; every word must occur (Dutch stopwords such as 'en' are ignored; a quoted phrase such as \"zorg en veiligheid\" and a citation such as '2016/679' match exactly; for a hyphenated term like 'OV-visie' the publications with that exact term come first, followed by those where both words occur separately). " +
       "To find what one municipality, province or water board published, set 'authority' (and 'authority_type') rather than putting the place name in the query: a place name in the query also matches national documents that merely mention it, and the response suggests the filter when it spots one. " +
-      "Filter by 'publicatieblad' (journal), 'type' (document kind) and a date range, and use sort='date_newest' for the latest publications. Each record carries the document date (date, dagtekening), the publication date, the citation (vindplaats) and direct PDF/HTML/XML links. Only the first ~10,000 hits of a result set can be paged through (upstream limit).",
+      "Filter by 'publicatieblad' (journal), 'type' (document kind) and a date range, and use sort='date_newest' for the latest publications. Each record carries the document date (date, dagtekening), the publication date, the citation (vindplaats) and direct PDF/HTML/XML links. Only the first ~10,000 hits of a result set can be paged through (upstream limit). " +
+      "For what was published about one place (permits, verkeersbesluiten, evenementen in a neighbourhood or around an address), set 'bbox_rd' together with 'authority': most municipal publications carry a location, and each record that has one gets 'location' (lat, lon, rd_x, rd_y, kind, label, address; area_m2 for an area, length_m for a road or line) to put it on a map.",
     inputSchema: {
       query: z.string().describe("Legal or policy topic keywords. Examples: 'bestemmingsplan', 'subsidieregeling', 'parkeerbeleid'. Do NOT pass full questions, and put an organisation name in 'authority' instead."),
       top: z.number().int().min(1).max(100).default(20),
@@ -748,13 +1142,18 @@ export function registerTools(server: McpServer): void {
       date_to: z.string().optional().describe("YYYY-MM-DD (YYYY and YYYY-MM are widened, DD-MM-YYYY is accepted). Applies to date_field."),
       date_field: z.enum(["dagtekening", "publicatiedatum"]).default("dagtekening").describe("Date used by date_from/date_to and sort: 'dagtekening' = the date on the document (field date); 'publicatiedatum' = the date it was published (field publication_date). They differ for e.g. Kamerstukken and Handelingen."),
       sort: z.enum(["relevance", "date_newest", "date_oldest"]).default("relevance").describe("Use 'date_newest' for recent/latest publications (sorted server-side on date_field). 'relevance' for general searches."),
+      bbox_rd: z.union([z.array(z.number()), z.string()]).optional().describe("Only publications whose location touches this RD New (EPSG:28992) rectangle: [minX, minY, maxX, maxY] in metres, or the string 'minX,minY,maxX,maxY'. Example (Kanaleneiland-Noord, Utrecht): [134028, 453672, 135114, 454790]. An area partly inside counts; publications without a location (most national ones) drop out. query may then be empty."),
       ...paginationInputSchema,
       outputFormat: outputFormatSchema,
       verbose: z.boolean().default(false),
       dryRun: z.boolean().default(false),
     },
     annotations: TOOL_ANNOTATIONS,
-  }, async ({ query, top, startRecord, type, publicatieblad, authority, authority_type, date_from, date_to, date_field, sort, offset, limit, outputFormat, verbose, dryRun }) => {
+  }, async ({ query, top, startRecord, type, publicatieblad, authority, authority_type, date_from, date_to, date_field, sort, bbox_rd, offset, limit, outputFormat, verbose, dryRun }) => {
+    const bbox = bbox_rd === undefined ? undefined : parseRdBbox(bbox_rd);
+    if (bbox && "invalid" in bbox) {
+      return toMcpToolPayload(errorResponse({ error: "unexpected", message: bbox.invalid, suggestion: "Give bbox_rd as [minX, minY, maxX, maxY] in RD New metres, e.g. [134028, 453672, 135114, 454790], or leave it out." }));
+    }
     // The rewriter strips question frames but also every quote, slash and
     // apostrophe; phrases, citations and words like 's-Gravenhage are kept out of it.
     const rw = rewriteKeepingSyntax(query, (text) => rewriteQuery(text, "moderate"));
@@ -775,6 +1174,7 @@ export function registerTools(server: McpServer): void {
       // The rewriter lowercases; place-name detection needs the caller's casing.
       originalQuery: query,
       expandCompounds: true,
+      ...(bbox ? { bbox_rd: bbox.bbox } : {}),
     };
 
     if (dryRun) {
@@ -793,6 +1193,7 @@ export function registerTools(server: McpServer): void {
           date_to,
           date_field,
           sort,
+          ...(bbox ? { bbox_rd: bbox.bbox.join(",") } : {}),
         },
       });
     }
@@ -1259,12 +1660,12 @@ export function registerTools(server: McpServer): void {
     }
   });
 
-  server.registerTool("bag_lookup_address", { inputSchema: { query: z.string().optional(), postcode: z.string().optional(), huisnummer: z.string().optional(), rows: z.number().int().min(1).max(config.limits.maxRows).default(10) }, description: "Lookup BAG (Basisregistratie Adressen en Gebouwen) address details via PDOK Locatieserver. Search by free text, postcode, or house number.", annotations: TOOL_ANNOTATIONS }, async ({ query, postcode, huisnummer, rows }) => {
+  server.registerTool("bag_lookup_address", { inputSchema: { query: z.string().optional(), postcode: z.string().optional(), huisnummer: z.string().optional(), woonplaats: z.string().describe("Only addresses in this woonplaats (exact BAG name, e.g. 'Utrecht'). The free-text search is fuzzy and otherwise also returns the same street and number in other places.").optional(), rows: z.number().int().min(1).max(config.limits.maxRows).default(10) }, description: "Lookup BAG (Basisregistratie Adressen en Gebouwen) address details via PDOK Locatieserver. Search by free text, postcode, or house number; pass woonplaats to keep the results in one place.", annotations: TOOL_ANNOTATIONS }, async ({ query, postcode, huisnummer, woonplaats, rows }) => {
     if (!query && !postcode) {
       return toMcpToolPayload(errorResponse({ error: "unexpected", message: "Geef minimaal query of postcode op", suggestion: "Gebruik query='Damrak 1 Amsterdam' of postcode+huisnummer" }));
     }
     try {
-      const out = await pdok.bagLookupAddress({ query, postcode, huisnummer, rows });
+      const out = await pdok.bagLookupAddress({ query, postcode, huisnummer, woonplaats, rows });
       const records = out.items.map((x) => record("bag", String(x.weergavenaam ?? x.id ?? "BAG adres"), "https://www.pdok.nl", x, String(x.straatnaam ?? "")));
       return toMcpToolPayload(successResponse({ summary: `${records.length} BAG adressen`, records, provenance: prov("bag_lookup_address", out.endpoint, out.params, records.length, out.total) }));
     } catch {
@@ -2234,7 +2635,7 @@ export function registerTools(server: McpServer): void {
   };
 
   const euTekstResult = registerEuForkTools(server, { config, TOOL_ANNOTATIONS, lido }); // FORK (docs/FORK.md)
-  registerNlGovAsk(server, { euTekstResult, config, euFunding, euFundingRecord, onderzoekscalls, onderzoekscallRecord, rvoSubsidies, rvoRecord, TOOL_ANNOTATIONS, dataOverheid, cbs, tk, debatten, bekend, rijksoverheid, rijksbegroting, duo, ori, luchtmeetnet, rechtspraak, tenderned, tuchtrecht, samenwerkendeCatalogi, brpGewaspercelen, verkiezingsuitslagen, euCellar, algoritmeregister, record, algoritmeRecord, wodc, wodcRecord, uitspraakResult, wettenTekstResult, debatRecords, debatSummary, debatNotes, dsoRecord, kaartbeeldAnswer, prov, outputFormatSchema, paginationInputSchema });
+  registerNlGovAsk(server, { euTekstResult, config, euFunding, euFundingRecord, onderzoekscalls, onderzoekscallRecord, rvoSubsidies, rvoRecord, TOOL_ANNOTATIONS, dataOverheid, cbs, tk, debatten, bekend, rijksoverheid, rijksbegroting, duo, ori, luchtmeetnet, rechtspraak, tenderned, tuchtrecht, samenwerkendeCatalogi, brpGewaspercelen, verkiezingsuitslagen, euCellar, algoritmeregister, record, algoritmeRecord, wodc, wodcRecord, uitspraakResult, wettenTekstResult, debatRecords, debatSummary, debatNotes, gehoordSearchResult, gehoordListResult, dsoRecord, kaartbeeldAnswer, prov, outputFormatSchema, paginationInputSchema });
 
   server.registerTool("data_politie_search", {
     description: "Search Dutch registered crime statistics (data.politie.nl / CBS dataderden OData). Filter by region (RegioS gemeente/wijk/buurt code or name), crime type (SoortMisdrijf code or name) and period. Set 'dimension' to explore valid filter values.",
@@ -2826,7 +3227,7 @@ export function registerTools(server: McpServer): void {
   });
 
   server.registerTool("brk_kadastrale_kaart_search", {
-    description: "Search Dutch cadastral parcels and map objects (BRK Kadastrale Kaart) via PDOK OGC API Features. bbox-driven (EPSG:28992). Collections: perceel, kadastralegrens, openbareruimtenaam, bebouwing, nummeraanduidingreeks. Returns kadastrale aanduiding (gemeente/sectie/perceelnummer), grootte, bbox/centroid and optional GeoJSON geometry.",
+    description: "Search Dutch cadastral parcels and map objects (BRK Kadastrale Kaart) via PDOK OGC API Features. bbox-driven (EPSG:28992). Collections: perceel, kadastralegrens, openbareruimtenaam, bebouwing, nummeraanduidingreeks. Returns kadastrale aanduiding (gemeente/sectie/perceelnummer), grootte, bbox/centroid (centroid is the bbox middle, which can fall outside a strip or bent parcel), interior_point {lat, lon} (a point inside the polygon, for putting the parcel on a map) and optional GeoJSON geometry.",
     inputSchema: {
       collectie: z.enum(["perceel", "kadastralegrens", "openbareruimtenaam", "bebouwing", "nummeraanduidingreeks"]).default("perceel").describe("BRK collection to query."),
       bbox: z.string().describe("Required RD New (EPSG:28992) bounding box 'minx,miny,maxx,maxy'. Keep it small; this API is bbox-driven."),
@@ -2853,7 +3254,7 @@ export function registerTools(server: McpServer): void {
         "brk_kadastrale_kaart",
         x.title,
         x.url,
-        { id: x.id, collectie: x.collectie, kadastrale_aanduiding: x.kadastraleAanduiding, kadastrale_gemeente: x.kadastraleGemeente, sectie: x.sectie, perceelnummer: x.perceelnummer, kadastrale_grootte_m2: x.kadastraleGrootteM2, tekst: x.tekst, bronhouder: x.bronhouder, bbox: x.bbox, centroid: x.centroid, ...(x.geometry ? { geometry: x.geometry } : {}) },
+        { id: x.id, collectie: x.collectie, kadastrale_aanduiding: x.kadastraleAanduiding, kadastrale_gemeente: x.kadastraleGemeente, sectie: x.sectie, perceelnummer: x.perceelnummer, kadastrale_grootte_m2: x.kadastraleGrootteM2, tekst: x.tekst, bronhouder: x.bronhouder, bbox: x.bbox, centroid: x.centroid, ...(x.interiorPoint ? { interior_point: x.interiorPoint } : {}), ...(x.geometry ? { geometry: x.geometry } : {}) },
         x.kadastraleAanduiding ?? x.collectie,
       ));
       const response = buildFormattedResponse({
@@ -2887,6 +3288,137 @@ export function registerTools(server: McpServer): void {
     }
   });
 
+  /** One BAG pand or verblijfsobject as bag_panden_search and bag_verblijfsobjecten_search show it. */
+  const bagObjectRecord = (x: BagObjectItem): MCPRecord => {
+    const data: Record<string, unknown> = {
+      identificatie: x.identificatie,
+      objecttype: x.objecttype,
+      status: x.status,
+      bouwjaar: x.bouwjaar,
+      gebruiksdoel: x.gebruiksdoel,
+      gebruiksdoelen: x.gebruiksdoelen,
+      ...(x.objecttype === "pand"
+        ? { oppervlakte_min_m2: x.oppervlakteMinM2, oppervlakte_max_m2: x.oppervlakteMaxM2, aantal_verblijfsobjecten: x.aantalVerblijfsobjecten }
+        : { oppervlakte_m2: x.oppervlakteM2, adres: x.adres, postcode: x.postcode, woonplaats: x.woonplaats, pand_identificatie: x.pandIdentificatie, pand_status: x.pandStatus }),
+      documentdatum: x.documentdatum,
+      documentnummer: x.documentnummer,
+      geconstateerd: x.geconstateerd,
+      lat: x.lat,
+      lon: x.lon,
+      bbox: x.bbox,
+      bag_uri: x.bagUri,
+      bag_viewer_url: x.url,
+      bron: x.bron === "wfs" ? "PDOK BAG WFS" : "PDOK BAG OGC API",
+      ...(x.geometry ? { geometry: x.geometry } : {}),
+    };
+    const snippet = [x.status, x.bouwjaar !== undefined ? `bouwjaar ${x.bouwjaar}` : "", x.gebruiksdoelen.join(", ")].filter(Boolean).join(" · ");
+    return record(x.objecttype === "pand" ? "bag_panden" : "bag_verblijfsobjecten", x.title, x.url, data, snippet, x.documentdatum);
+  };
+
+  const registerBagObjectTool = (
+    name: "bag_panden_search" | "bag_verblijfsobjecten_search",
+    objecttype: BagObjecttype,
+    statuses: readonly [string, ...string[]],
+    endedNote: string,
+    description: string,
+  ) => {
+    server.registerTool(name, {
+      description,
+      inputSchema: {
+        bbox: z.string().describe("Required bounding box 'minx,miny,maxx,maxy': RD New (EPSG:28992) metres by default, or 'minlon,minlat,maxlon,maxlat' with bbox_crs=WGS84."),
+        bbox_crs: z.enum(["EPSG:28992", "WGS84"]).default("EPSG:28992").describe("Coordinate system of bbox."),
+        status: z.array(z.enum(statuses as [string, ...string[]])).min(1).max(statuses.length).optional().describe("Only these BAG statuses (exact BAG spelling). Omit for every existing object."),
+        inclusief_beeindigd: z.boolean().default(false).describe(`Without status: also return ${endedNote} (slower PDOK OGC API).`),
+        bouwjaar_min: z.number().int().min(1000).max(2100).optional().describe("Only objects with bouwjaar >= this year."),
+        bouwjaar_max: z.number().int().min(1000).max(2100).optional().describe("Only objects with bouwjaar <= this year."),
+        gebruiksdoel: z.enum(BAG_GEBRUIKSDOELEN).optional().describe("Only objects with this gebruiksdoel (a pand matches when any of its verblijfsobjecten has it)."),
+        includeGeometry: z.boolean().default(false).describe("Include the GeoJSON geometry in WGS84 (footprint polygon for a pand, point for a verblijfsobject)."),
+        beeindigd_timeout_ms: z.number().int().min(1000).max(60000).optional().describe("Optional time budget in ms for the ended statuses from the OGC API, all pages together, without retry. A status not complete in time is reported in failures. Omit for the default (30 s per page, one retry)."),
+        top: z.number().int().min(1).max(config.limits.maxRows).default(50),
+        ...paginationInputSchema,
+        outputFormat: outputFormatSchema,
+        verbose: z.boolean().default(false),
+        dryRun: z.boolean().default(false),
+      },
+      annotations: TOOL_ANNOTATIONS,
+    }, async ({ bbox, bbox_crs, status, inclusief_beeindigd, bouwjaar_min, bouwjaar_max, gebruiksdoel, includeGeometry, beeindigd_timeout_ms, top, offset, limit, outputFormat, verbose, dryRun }) => {
+      const connector = objecttype === "pand" ? "bag_panden" : "bag_verblijfsobjecten";
+      try {
+        const effectiveLimit = Math.min(config.limits.maxRows, limit ?? top);
+        if (dryRun) {
+          const plan = bagPanden.plan({ objecttype, statuses: status, includeEnded: inclusief_beeindigd });
+          const ogc = plan.ogcStatuses.map((s) => ({
+            connector: BAG_OGC_CONNECTOR,
+            url: `${BAG_OGC_BASE}/collections/${objecttype}/items`,
+            params: { bbox, bbox_crs, status: s, limit: 1000 },
+          }));
+          const wfs = {
+            connector: BAG_WFS_CONNECTOR,
+            url: BAG_WFS_ENDPOINT,
+            params: { typeNames: `bag:${objecttype}`, bbox, bbox_crs, status: status ?? [], bouwjaar_min, bouwjaar_max, gebruiksdoel, startIndex: offset, count: effectiveLimit },
+          };
+          return plan.wfs || !ogc.length ? dryRunPayload({ ...wfs, also: ogc }) : dryRunPayload({ ...ogc[0], also: ogc.slice(1) });
+        }
+        const started = Date.now();
+        const out = await bagPanden.search({
+          objecttype,
+          bbox,
+          bboxCrs: bbox_crs,
+          statuses: status,
+          includeEnded: inclusief_beeindigd,
+          bouwjaarMin: bouwjaar_min,
+          bouwjaarMax: bouwjaar_max,
+          gebruiksdoel,
+          offset,
+          limit: effectiveLimit,
+          includeGeometry,
+          endedTimeoutMs: beeindigd_timeout_ms,
+        });
+        const responseTimeMs = Date.now() - started;
+        const records = out.items.map(bagObjectRecord);
+        const noun = objecttype === "pand" ? "panden" : "verblijfsobjecten";
+        const failures = out.failures.map((f) => {
+          const mapped = mapSourceError(f.error, "PDOK BAG OGC API", BAG_OGC_BASE);
+          return { connector: f.connector, error_type: mapped.error, message: mapped.message };
+        });
+        const response = buildFormattedResponse({
+          summary: out.total !== null ? `${records.length} van ${out.total} BAG ${noun}` : `${records.length} BAG ${noun}`,
+          records,
+          provenance: prov(name, out.endpoint, out.params, records.length, out.total),
+          outputFormat,
+          // The source pages upstream (WFS startIndex), so this page goes out whole
+          // and the pagination is set from the source below.
+          offset: 0,
+          limit: effectiveLimit,
+          total: null,
+          access_note: out.access_note,
+          ...(failures.length ? { failures } : {}),
+          verbose: singleConnectorVerbose({ enabled: verbose, connector, endpoint: out.endpoint, responseTimeMs }),
+        });
+        response.pagination = { offset, limit: effectiveLimit, total: out.total, has_more: out.hasMore };
+        return toMcpToolPayload(response);
+      } catch (e) {
+        return toMcpToolPayload(mapSourceError(e, "PDOK BAG", BAG_WFS_ENDPOINT));
+      }
+    });
+  };
+
+  registerBagObjectTool(
+    "bag_panden_search",
+    "pand",
+    PAND_STATUSES,
+    "'Pand gesloopt', 'Niet gerealiseerd pand' and 'Pand ten onrechte opgevoerd'",
+    "Search BAG buildings (panden) in a bbox with bouwjaar, status and gebruiksdoel, via PDOK (Kadaster, keyless). For permits, supervision and enforcement (VTH): filter on status such as 'Bouwvergunning verleend', 'Bouw gestart', 'Verbouwing pand', 'Sloopvergunning verleend', 'Pand in gebruik (niet ingemeten)' or 'Pand gesloopt'. Existing panden come from the BAG WFS (fast, exact total); 'Pand gesloopt', 'Niet gerealiseerd pand' and 'Pand ten onrechte opgevoerd' only from the slower BAG OGC API (ask them by status, or inclusief_beeindigd=true), and those records add documentdatum, documentnummer and geconstateerd. Optional filters bouwjaar_min/max and gebruiksdoel. Ordered by identificatie (existing first, then ended); offset/limit page through the whole bbox and pagination.total is the exact count. Returns per pand: identificatie, status, bouwjaar, gebruiksdoelen, oppervlakte_min/max_m2 (of its verblijfsobjecten), aantal_verblijfsobjecten, lat/lon on the pand (its area centroid, or a point inside it when the centroid falls outside, e.g. in a courtyard), bbox, BAG URI and a BAG viewer link (canonical_url); the footprint with includeGeometry. No addresses: use bag_verblijfsobjecten_search or bag_lookup_address for those.",
+  );
+
+  registerBagObjectTool(
+    "bag_verblijfsobjecten_search",
+    "verblijfsobject",
+    VBO_STATUSES,
+    "'Verblijfsobject ingetrokken', 'Niet gerealiseerd verblijfsobject' and 'Verblijfsobject ten onrechte opgevoerd'",
+    "Search BAG verblijfsobjecten (units with an address: dwellings, shops, offices) in a bbox with status, gebruiksdoel, oppervlakte and the bouwjaar and status of their pand, via PDOK (Kadaster, keyless). For permits, supervision and enforcement (VTH): filter on status such as 'Verblijfsobject gevormd' (registered, not yet in use), 'Verblijfsobject in gebruik (niet ingemeten)', 'Verbouwing verblijfsobject' or 'Verblijfsobject buiten gebruik'. Existing objects come from the BAG WFS (fast, exact total); 'Verblijfsobject ingetrokken', 'Niet gerealiseerd verblijfsobject' and 'Verblijfsobject ten onrechte opgevoerd' only from the slower BAG OGC API (ask them by status, or inclusief_beeindigd=true). Optional filters bouwjaar_min/max (of the pand) and gebruiksdoel. Ordered by identificatie (existing first, then ended); offset/limit page through the whole bbox and pagination.total is the exact count. Returns per object: identificatie, status, gebruiksdoelen, oppervlakte_m2, adres, postcode, woonplaats, pand_identificatie, pand_status, bouwjaar, point lat/lon, BAG URI and a BAG viewer link (canonical_url).",
+  );
+
   server.registerTool("bron_ongevallen_search", {
     inputSchema: {
       bbox: z.string().optional().describe("RD New (EPSG:28992) bounding box 'minx,miny,maxx,maxy'. REQUIRED — searching the full dataset is not allowed. Example: '190000,442000,195000,445000'."),
@@ -2900,7 +3432,7 @@ export function registerTools(server: McpServer): void {
       verbose: z.boolean().default(false),
       dryRun: z.boolean().default(false),
     },
-    description: "Search Dutch road traffic accidents (Rijkswaterstaat BRON, verkeersongevallen) via WFS GetFeature within an EPSG:28992 bbox. Returns severity (afloop), crash type (aard), involved vehicle types, location and RD coordinates as GeoJSON-capable records. Keywords: verkeersongeval, ongeval, letsel, dodelijk, aanrijding.",
+    description: "Search Dutch road traffic accidents (Rijkswaterstaat BRON, verkeersongevallen) via WFS GetFeature within an EPSG:28992 bbox. Returns severity (afloop), crash type (aard), involved vehicle types, location and RD coordinates as GeoJSON-capable records, plus niveauKoppelen, wegvakId and junctieId: the point is the middle of the NWB wegvak or the junction the crash is coupled to, and with 'Ongeval gekoppeld op straat niveau.' only the street is known. Keywords: verkeersongeval, ongeval, letsel, dodelijk, aanrijding.",
     annotations: TOOL_ANNOTATIONS,
   }, async ({ bbox, jaar, afloop, gemeente, query, top, offset, limit, outputFormat, verbose, dryRun }) => {
     try {
@@ -2914,7 +3446,7 @@ export function registerTools(server: McpServer): void {
         "bron_ongevallen",
         x.title,
         x.url,
-        { id: x.id, jaar: x.jaar, afloop: x.afloop, aardOngeval: x.aardOngeval, aantalPartijen: x.aantalPartijen, vervoerswijzen: x.vervoerswijzen, straatnaam: x.straatnaam, woonplaats: x.woonplaats, gemeente: x.gemeente, provincie: x.provincie, maximumSnelheid: x.maximumSnelheid, rd: x.rd },
+        { id: x.id, jaar: x.jaar, afloop: x.afloop, aardOngeval: x.aardOngeval, aantalPartijen: x.aantalPartijen, vervoerswijzen: x.vervoerswijzen, straatnaam: x.straatnaam, woonplaats: x.woonplaats, gemeente: x.gemeente, provincie: x.provincie, maximumSnelheid: x.maximumSnelheid, rd: x.rd, ...(x.niveauKoppelen ? { niveauKoppelen: x.niveauKoppelen } : {}), ...(x.wegvakId !== undefined ? { wegvakId: x.wegvakId } : {}), ...(x.junctieId !== undefined ? { junctieId: x.junctieId } : {}) },
         `${x.afloop} — ${x.aardOngeval} — ${x.gemeente}`.trim(),
         String(x.jaar ?? ""),
       ));
@@ -3588,7 +4120,7 @@ server.registerTool(
   });
 
   server.registerTool("brp_gewaspercelen_search", {
-    description: "Search Dutch agricultural parcels (BRP Gewaspercelen, RVO) — the crop grown on every registered farm parcel, with polygon, area and year. Query by gemeente (auto-converted to a bbox) or by an EPSG:28992 bbox, and filter on crop name, category (bouwland/grasland/natuurterrein/landschapselement/braakland) or year. Use for land use, nitrogen, water quality and agriculture questions.",
+    description: "Search Dutch agricultural parcels (BRP Gewaspercelen, RVO) — the crop grown on every registered farm parcel, with polygon, area, year, centroid (bbox middle, RD) and interior_point {lat, lon, rd_x, rd_y} (a point inside the parcel). Query by gemeente (auto-converted to a bbox) or by an EPSG:28992 bbox, and filter on crop name, category (bouwland/grasland/natuurterrein/landschapselement/braakland) or year. Use for land use, nitrogen, water quality and agriculture questions.",
     inputSchema: {
       gemeente: z.string().optional().describe("Municipality name; resolved to a bbox via the PDOK Locatieserver. Example: 'Dronten'."),
       bbox: z.string().optional().describe("RD New (EPSG:28992) bounding box 'minx,miny,maxx,maxy'. Takes precedence over gemeente."),
@@ -3615,7 +4147,7 @@ server.registerTool(
         "brp_gewaspercelen",
         x.title,
         x.url,
-        { id: x.id, gewas: x.gewas, gewascode: x.gewascode, categorie: x.categorie, jaar: x.jaar, status: x.status, oppervlakte_m2: x.oppervlakteM2, oppervlakte_ha: x.oppervlakteHa, centroid: x.centroid, bbox: x.bbox, ...(x.geometry ? { geometry: x.geometry } : {}) },
+        { id: x.id, gewas: x.gewas, gewascode: x.gewascode, categorie: x.categorie, jaar: x.jaar, status: x.status, oppervlakte_m2: x.oppervlakteM2, oppervlakte_ha: x.oppervlakteHa, centroid: x.centroid, ...(x.interiorPoint ? { interior_point: x.interiorPoint } : {}), bbox: x.bbox, ...(x.geometry ? { geometry: x.geometry } : {}) },
         `${x.categorie}${x.oppervlakteHa !== null ? ` — ${x.oppervlakteHa} ha` : ""}`,
         x.jaar,
       ));

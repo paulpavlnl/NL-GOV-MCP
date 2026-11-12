@@ -32,12 +32,13 @@ Examples:
 
 `NL-GOV-MCP` actively retrieves and normalizes data across many sources, can combine cross-source results, and returns a consistent MCP response contract ready for assistants and automations.
 
-## Sources (53 connectors, 91 tools upstream; 126 with this fork's additions)
+## Sources (55 connectors, 96 tools upstream; 131 with this fork's additions)
 
 | Source | What it covers |
 |---|---|
 | CBS | Statistics Netherlands (demographics, economy, housing, labour; v4/v3 + fallback) |
 | Tweede Kamer | Parliamentary documents (AND keyword search on title and subject), OData search on every entity, votes linked to their decision and zaak, member info, and what was said in plenary and committee debates (the verslagen: speaker, fractie, time and text per spreekbeurt); single-document retrieval can resolve resource URLs and extract text from PDF and Word files |
+| Gehoord.de (third party) | Full-text search in automatic transcripts of every Tweede Kamer and Eerste Kamer debate since 31 March 2026, newest first, including debates still live; the debates now or on a day; one debate with its speakers and the fragments around a hit, with a link to the video moment. Each Tweede Kamer hit comes back with its fragment from the official verslag (Gegevensmagazijn) where there is one; otherwise the transcript with a status saying why. Made by Jeroen Wollaars from the official public broadcasts, used with his permission; the transcript is not an official source and not for quoting (requires `GEHOORD_KEY`) |
 | Officiële Bekendmakingen | Official publications (SRU/XML): search by topic, publisher, journal (publicatieblad) and date, sorted by relevance or date; lookup with PDF/HTML/XML links and optional text |
 | Rijksoverheid | National government news/document search via the Rijksoverheid.nl RSS platform (server-side keyword and date filter) + school holidays |
 | Rijksbegroting | National budget data + chapter helper |
@@ -64,6 +65,7 @@ Examples:
 | CBS Iv3 | Municipal & provincial finances — budgets, annual accounts, task fields (dataderden OData) |
 | PDOK Bestuurlijke Gebieden | Official municipality/province boundaries and codes (OGC API Features) |
 | PDOK Kadastrale Kaart (BRK) | Cadastral parcels, boundaries and designations (OGC API Features) |
+| PDOK BAG panden en verblijfsobjecten | Buildings and units per bbox with bouwjaar, status and gebruiksdoel, filterable on status (bouwvergunning verleend, bouw gestart, verbouwing, gesloopt, gevormd), bouwjaar and gebruiksdoel, with an exact count (BAG WFS; ended statuses from the BAG OGC API) |
 | wetten.overheid.nl (BWB) | Consolidated national laws, decrees and regulations (KOOP SRU): one current version per regeling, or the version on a peildatum; the text of an artikel (or lid), the artikelen with a term or the table of contents, as geldig on any day |
 | CVDR | Local & regional regulations of municipalities, provinces and water authorities, filterable by issuing organisation (KOOP SRU) |
 | NED | National Energy Dashboard — generation/consumption per source + forecasts (requires `NED_API_KEY`) |
@@ -225,7 +227,7 @@ npm run test:live    # integration test suite (live API calls)
 
 ### Transport modes
 
-Three transport modes are supported. All expose the same 119 tools.
+Three transport modes are supported. All expose the same 131 tools.
 
 #### stdio (Claude Desktop, Claude Code)
 
@@ -365,6 +367,7 @@ Keys can come from the client (the `env` block in `claude_desktop_config.json`, 
 | `OPENALEX_API_KEY` | — | Optional, for `literatuur_zoeken` / `literatuur_document_get` (OpenAlex). Without it OpenAlex works with a smaller daily budget. The key never appears in tool output. ([free key](https://openalex.org/settings/api)) |
 | `CORE_API_KEY` | — | Optional, for `literatuur_zoeken` with `bron: "core"` and the CORE fallback of `literatuur_document_get` (repository full texts). Without it CORE gives no full text and a tight limit. ([free key](https://core.ac.uk/services/api)) |
 | `OPENAIRE_CLIENT_ID` / `OPENAIRE_CLIENT_SECRET` | — | Optional, for `literatuur_zoeken` with `bron: "openaire"`: a registered service at [develop.openaire.eu](https://develop.openaire.eu/apis) (7200 instead of 60 requests per hour). `OPENAIRE_REFRESH_TOKEN` (personal, valid one month) works too. |
+| `GEHOORD_KEY` | — | Required for `gehoord_debatten_search`, `gehoord_debatten_list` and `gehoord_debat_get` (Gehoord.de debate transcripts), and for the Gehoord.de steps of `nl_gov_ask`. Sent as `Authorization: Bearer <key>`; the API allows 120 requests a minute. Keys are given on request by the maker of Gehoord.de. Without it the tools return `not_configured` and `nl_gov_ask` routes debate questions as before. ([gehoord.de](https://gehoord.de)) |
 | `LIDO_USERNAME` / `LIDO_PASSWORD` | — | Optional LiDO account for LiDO's non-public services, used by `lido_verwijzingen_lijst` (`get-links`). LiDO does not enforce it today, so the tool works without it. When both are set they are sent as HTTP Basic auth on `get-links` only. ([request via the LiDO feedback page](https://linkeddata.overheid.nl)) |
 | `MCP_TRANSPORT` | `stdio` | Transport mode: `stdio`, `sse`, or `streamable-http` (alternative to CLI flags) |
 | `LOG_LEVEL` | `info` | Pino log level (`debug`, `info`, `warn`, `error`, `silent`) |
@@ -393,6 +396,7 @@ Node ≥ 22 prints an "experimental" warning for this flag; it works. Symptom to
 - `nl_gov_ask` may automatically deepen the top Tweede Kamer match when the user explicitly asks for content/summary rather than only discovery.
 - Keyword search in `tweede_kamer_documents`, `tweede_kamer_search` and `tweede_kamer_votes` requires every keyword (AND) and looks in titles and subjects, not the full text. Keywords of up to three characters and "quoted phrases" match as whole words; longer keywords also match inside longer words. `tweede_kamer_documents` reports the real number of matches in `pagination.total`.
 - `tweede_kamer_debatten` searches what was said in debates: the verslagen in the Gegevensmagazijn, one record per spreekbeurt or interruptie. The API has no full-text search, so a call reads the verslagen of at most 20 vergaderingen in the period (default the last 7 days), newest first; `vergadering_offset` continues and `access_note` says how many there are. A verslag appears the same day, uncorrected; the official record is the Handelingen. `nl_gov_ask` sends questions about what was said in a debate ("Wat zei de VVD in het debat over stikstof?") to it first, and to its other routes when it finds nothing.
+- With `GEHOORD_KEY`, the `gehoord_*` tools add what the verslagen lack: a real full-text index over all debates since 31 March 2026 (`gehoord_debatten_search`; with `match` `alle` (default: every word, any order), `een` (any one) or `woordgroep` (one literal phrase), a "quoted phrase" and -word in the query; Gehoord filters `kamer`, `fractie`, `debat_id`, a `spreker` persoon-id and the vergaderdag itself, and this server filters a `spreker` name over a bounded number of hits, said in `access_note`), debates that are still running (`gehoord_debatten_list` with `status: live`), the Eerste Kamer, and a link to the moment in the video (`gehoord.de/beraadslagingen/{debat}?segment={fragment}`; the official Kamer page is in `data.debat_url`). `gehoord_debat_get` reads one debate with its speakers, or the fragments around one hit (`segment_id`). Every record keeps the speaker's `persoon_id` (the TK Persoon GUID, as in the VLOS verslag; for a senator the Eerste Kamer's own stable person id, with `persoon_url`) and the UTC `start_time`/`end_time`. `gehoord_debatten_list` also shows scheduled and cancelled debates. By default (`koppeling: officieel`) every Tweede Kamer hit is linked to its fragment in the official verslag (same `persoon_id`, largest overlap in time): such a record has `source_name` `tweedekamer`, the verslag's text, speaker and link, and `data.koppeling.status` `officieel`; the other hits keep the transcript and a status saying why (no verslag yet, none expected, Eerste Kamer, not linked). The transcript is an automatic transcript without human correction: for finding, not for quoting (quote from the Handelingen or the verslagen). In a live debate speakers and boundaries can still change; vragenuur and big debates may have condensed, non-literal subtitles; Eerste Kamer text has no capitals or punctuation. In `nl_gov_ask` (with the key) questions about debates now or today and about the Eerste Kamer go to Gehoord.de, and a debate question the verslagen do not answer is searched there as well.
 
 ### ORI council document text
 
