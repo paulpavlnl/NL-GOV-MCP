@@ -194,3 +194,11 @@ Gehoord.de geeft REST-sleutels (`GEHOORD_KEY`, `/api/v1`) alleen op aanvraag bij
 - Zonder `GEHOORD_KEY` en met dat bestand: `gehoord_debatten_search` → `search_transcripts`, `gehoord_debatten_list` → `search_debates`, `gehoord_debat_get` → `get_debate` + `get_transcript`. De tekst van Gehoord wordt per item één record (`data.tekst`); geen koppeling met het officiële verslag; `kamer`, `fractie`, `spreker` (zoeken) en `segment_id` kan de Gehoord-MCP niet toepassen (de access_note zegt het). Met `GEHOORD_KEY` blijft alles zoals bij WAINUTAI.
 - Koppelingen in upstream-code (gemarkeerd `FORK`): de terugval in `gehoordSearchResult`, `gehoordListResult` en `gehoordDebatResult` in `src/tools.ts`, en `gehoordKey` in `src/router/nl-gov-ask.ts` (de Gehoord-routes van `nl_gov_ask`).
 - Live test: `node scripts/live-gehoord-oauth.mjs` (na `npm run build`). De tests draaien zonder dit bestand (`GEHOORD_OAUTH_FILE=/nonexistent`).
+
+## Chromebook-tijdlijn (`chromebook_tijdlijn`, `chromebook_status`; `src/fork/chromebook.ts`, 12-11-2026)
+
+Pauls Chromebook stuurt met een Chrome-extensie browsersegmenten naar de dienst mcp-chromebook op de woonkamer-pc (repo paulpavlnl/chromebook-tijd, poort 3105, route `/chromebook`), die ze bewaart in `C:\mcp\data\chromebook-tijd.json` (`DATA_FILE`) en aan ManicTime levert als Web source "Chromebook". De ManicTime-connector geeft die Web source niet terug, en het tijdlijn-adres heeft een sleutel; daarom lezen deze tools het bestand rechtstreeks (zelfde pc, geen sleutel; pad via `CHROMEBOOK_DATA_FILE` of `MCP_ROOT`).
+
+- `chromebook_tijdlijn(van, tot)`: lokale tijden Europe/Amsterdam (`JJJJ-MM-DDTUU:MM:SS` of `JJJJ-MM-DD`), hooguit 31 dagen; per blok begin, eind, duur_s, domein, paginatitel. Geen blokken = Chromebook niet gebruikt; een fout = bestand niet leesbaar (alleen op de woonkamer-pc, niet op Render).
+- `chromebook_status`: laatste ontvangst van de extensie, laatste activiteit, blokken en minuten vandaag.
+- Tests: `tests/fork-chromebook.test.ts`; live: `node scripts/live-chromebook.mjs [van] [tot]`.

@@ -23,6 +23,7 @@ import { registerWetsgeschiedenis } from "./wetsgeschiedenis.js";
 import { registerRichtlijnen } from "./richtlijnen.js";
 import { registerRechtspraakOpenData } from "./rechtspraak-open-data.js";
 import { registerBronGezondheid } from "./bron-gezondheid.js";
+import { registerChromebook } from "./chromebook.js";
 import { installLidoNetwerk } from "./lido-robuust.js";
 import { WettenBwbSource } from "../sources/wetten-bwb.js";
 import { BwbArtikelSource } from "../sources/bwb-artikel.js";
@@ -257,6 +258,8 @@ export function registerEuForkTools(server: McpServer, deps: EuForkDeps): (args:
   // And robust LiDO and rechtspraak_get_by_ecli plus the health check bronnen_status (src/fork/lido-robuust.ts, src/fork/bron-gezondheid.ts).
   installLidoNetwerk();
   registerBronGezondheid(server, deps.TOOL_ANNOTATIONS);
+  // Pauls Chromebook-tijdlijn uit mcp-chromebook (src/fork/chromebook.ts).
+  registerChromebook(server, { TOOL_ANNOTATIONS: deps.TOOL_ANNOTATIONS as Record<string, unknown> });
   const source = new EuTekstSource(deps.config);
   const result = (args: EuTekstArgs) => euTekstResult(source, deps.lido, args);
   server.registerTool("eurlex_tekst_get", {
