@@ -4,3 +4,5 @@ dist/
 .DS_Store
 scripts/question-suite-report.json
 scripts/live-suite-report.json
+gehoord-oauth.json
+gehoord-autorisatie-url.txt

@@ -43,6 +43,7 @@ import { BroOndergrondSource } from "./sources/bro-ondergrond.js";
 import { NedSource } from "./sources/ned.js";
 import { EpOnlineSource } from "./sources/ep-online.js";
 import { NsReisinformatieSource } from "./sources/ns-reisinformatie.js";
+import { gehoordOauthBeschikbaar, gehoordOauthSearch, gehoordOauthList, gehoordOauthDebat } from "./fork/gehoord-oauth.js"; // FORK (docs/FORK.md)
 import { GehoordSource, type GehoordContribution, type GehoordDebateRef, GEHOORD_BASE_NOTE, GEHOORD_LINK_NOTE, GEHOORD_INDEX_NOTE, GEHOORD_DEFAULT_CHARS, GEHOORD_MAX_CHARS, GEHOORD_DEFAULT_CONTEXT, GEHOORD_MAX_CONTEXT, GEHOORD_MAX_LIMIT, GEHOORD_SEGMENT_MAX_PAGES, GEHOORD_SPREKER_MAX_PAGES, GEHOORD_MATCHES, GEHOORD_STATUSES, GEHOORD_STATUS_LABEL, gehoordPersoonUrl, KAMER_LABEL, gehoordCaveats, gehoordContributionRecord, gehoordDebateRecord, gehoordMissingKey, gehoordSearchNotes, gehoordSnippet, mapGehoordError, summarizeGehoordSearch, type GehoordListArgs, type GehoordSearchArgs } from "./sources/gehoord.js";
 import { DnbStatisticsSource } from "./sources/dnb-statistics.js";
 import { TenderNedSource, TENDERNED_MAX_REACHABLE, TenderNedInputError, planUpstreamWindow, tenderNedRecordFields } from "./sources/tenderned.js";
@@ -465,7 +466,7 @@ async function gehoordLinkedRecords(items: GehoordContribution[], r: KoppelingRe
 /** gehoord_debatten_search: full-text search over the Gehoord.de transcripts, each Tweede Kamer hit linked to the official verslag; also the debate routes of nl_gov_ask. */
 async function gehoordSearchResult(args: GehoordSearchArgs & { max_chars: number; koppeling?: KoppelingMode }): Promise<ToolResult> {
   const src = gehoordClient();
-  if (!(src instanceof GehoordSource)) return src;
+  if (!(src instanceof GehoordSource)) return gehoordOauthBeschikbaar() ? gehoordOauthSearch(args) : src; // FORK (docs/FORK.md)
   try {
     const out = await src.search(args);
     const total = out.filtered ? null : out.upstreamTotal;
@@ -507,7 +508,7 @@ async function gehoordSearchResult(args: GehoordSearchArgs & { max_chars: number
 /** gehoord_debatten_list: debates by kamer, status and date; also the live-debate route of nl_gov_ask. */
 async function gehoordListResult(args: GehoordListArgs): Promise<ToolResult> {
   const src = gehoordClient();
-  if (!(src instanceof GehoordSource)) return src;
+  if (!(src instanceof GehoordSource)) return gehoordOauthBeschikbaar() ? gehoordOauthList(args) : src; // FORK (docs/FORK.md)
   try {
     const out = await src.listDebates(args);
     const records = out.items.map((d) => gehoordDebateRecord(d));
@@ -538,7 +539,7 @@ async function gehoordListResult(args: GehoordListArgs): Promise<ToolResult> {
 /** gehoord_debat_get: one debate with its speakers, its fragments in debate order or the window around one fragment. */
 async function gehoordDebatResult(args: { debate_id: string; segment_id?: string; context: number; top: number; offset: number; max_chars: number; koppeling?: KoppelingMode }): Promise<ToolResult> {
   const src = gehoordClient();
-  if (!(src instanceof GehoordSource)) return src;
+  if (!(src instanceof GehoordSource)) return gehoordOauthBeschikbaar() ? gehoordOauthDebat(args) : src; // FORK (docs/FORK.md)
   try {
     const detail = await src.getDebate(args.debate_id);
     const d = detail.debate;

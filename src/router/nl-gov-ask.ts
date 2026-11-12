@@ -43,6 +43,7 @@ import type { VerkiezingsuitslagenSource } from "../sources/verkiezingsuitslagen
 import { matchesTerm, hasTerm, CBS_TERMS, TK_TERMS, OB_TERMS, RIJK_TERMS, RIJK_OFFICE_TERMS, BUDGET_TERMS, DUO_TERMS, API_TERMS, CASE_LAW_TERMS, ENFORCEMENT_TERMS, EXAM_TERMS, SCHOOL_TERMS, duoSector, routeChain, firstRoute, type RouteFacts, type RouteId } from "./routes.js";
 import { extractPlaceName, cbsNarrowingCandidates, extractLuchtComponent, extractVerkiezingHint, detectEuIntent, shouldDeepenTweedeKamerQuery, MUNICIPAL_SCOPE_WORDS, ORGANISATION_WORDS, uitsprakenSense, detectPolicyIntent, detectDebatIntent, detectGehoordIntent, gehoordQuery, gehoordLongestTerm, detectAlgoritmeIntent, DSO_DOCUMENT_WORDS_RE, dsoWords, type DsoIntent, detectDsoIntent, toPhraseQuery, toOriQuery, oriPlacePhrase, detectEcliIntent, detectForeignEcliIntent, detectWetArtikelIntent, detectResearchOrgIntent, extractPopulationPlace, extractPopulationYear, type ResearchOrg, detectKaartbeeldIntent, type KaartbeeldIntent, detectSubsidieIntent, narrowSubsidieIntent, type SubsidieIntent, type SubsidieSource } from "./intents.js";
 import { KnmiSource } from "../sources/knmi.js";
+import { gehoordOauthBeschikbaar } from "../fork/gehoord-oauth.js"; // FORK (docs/FORK.md)
 import type { KaartbeeldPayload } from "../utils/kaartbeeld-payload.js";
 import { LOCATIESERVER_FREE } from "../utils/geo.js";
 import { WMS_SERVICES } from "../sources/pdok-kaartbeeld.js";
@@ -845,7 +846,7 @@ export function registerNlGovAsk(server: McpServer, deps: NlGovAskDeps): void {
       })();
       // Debates now or today and the Eerste Kamer are not in the verslagen (yet): Gehoord.de, only with
       // its key, before the verslagen; its Tweede Kamer hits are linked to the verslag where there is one.
-      const gehoordKey = Boolean(process.env[ENV_KEYS.GEHOORD_KEY]?.trim());
+      const gehoordKey = Boolean(process.env[ENV_KEYS.GEHOORD_KEY]?.trim()) || gehoordOauthBeschikbaar(); // FORK (docs/FORK.md)
       const gehoordIntent = gehoordKey && !euIntent && !dsoIntent ? detectGehoordIntent(decodedQuestion) : undefined;
       // What was said in a Tweede Kamer debate is in the verslagen; see detectDebatIntent.
       const debatIntent = !euIntent && !dsoIntent && !gehoordIntent ? detectDebatIntent(decodedQuestion) : undefined;
