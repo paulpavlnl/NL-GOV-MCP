@@ -305,7 +305,7 @@ export function registerCao(server: McpServer, deps: { config: AppConfig; TOOL_A
       // Alleen de dragende woorden: geen afkortingen tussen haakjes, geen lidwoorden of voorzetsels.
       const STOP = new Set(["voor", "het", "van", "de", "den", "der", "een", "en", "in", "inzake", "op", "met", "bij", "cao"]);
       const woorden = kern.replace(/\([^)]*\)/g, " ").toLowerCase().split(/[^a-z0-9à-ÿ-]+/).filter((w) => w.length > 2 && !STOP.has(w));
-      const out = await bekend.search({ query: `algemeenverbindendverklaring ${woorden.join(" ") || kern}`, maximumRecords: Math.min(50, top * 3), publicatieblad: "Staatscourant", sort: "date_newest" });
+      const out = await bekend.search({ query: `algemeenverbindendverklaring ${woorden.join(" ") || kern}`, maximumRecords: 50, publicatieblad: "Staatscourant", sort: "date_newest" });
       const items = (out.items as Array<Record<string, unknown>>).filter((i) => /verbindend/i.test(String(i.title ?? ""))).filter((i) => woorden.every((w) => String(i.title ?? "").toLowerCase().includes(w)) || woorden.length === 0);
       const soort = (t: string) => (/intrekking/i.test(t) ? "intrekking" : /wijziging/i.test(t) ? "wijziging" : /verzoek|ter inzage|tervisie/i.test(t) ? "verzoek (ter visie)" : /besluit/i.test(t) ? "besluit tot AVV" : "overig");
       const records: MCPRecord[] = items.slice(0, top).map((i) => ({ title: String(i.title ?? ""), date: String(i.date ?? ""), source_name: "officielebekendmakingen", canonical_url: String(i.canonical_url ?? ""), data: { soort: soort(String(i.title ?? "")), vindplaats: i.vindplaats, identifier: i.identifier, pdf: i.pdf_url } }));
