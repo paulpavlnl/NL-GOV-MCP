@@ -212,3 +212,12 @@ Feitelijk profiel van een rechtsprekend persoon, zoals de rechterprofielen van l
 - Meerdere personen met de naam: de kandidatenlijst met id; dan opnieuw met `id`. Faalt de uitsprakenzoeker, dan komt het registerdeel toch terug (access_note zegt het).
 - Geen nagebootste browser-identiteit: de zoeker weigert die met HTTP 403. Werkt vanaf de woonkamer-pc; Render werd eerder geweigerd.
 - Tests: `tests/fork-rechterprofiel.test.ts`; live: `node scripts/live-rechterprofiel.mjs "<naam>" [id]`.
+
+## Cao's (`cao_zoeken`, `cao_tekst`, `cao_avv`; `src/fork/cao.ts`, 13-11-2026)
+
+Bron: de cao-databank van de directie Cao van het ministerie van SZW, `cao.minszw.nl` (Mozard): alle bij SZW aangemelde cao's, sociale-fondscao's en sociale plannen, met kenmerken en de tekst als pdf. Geen sleutel; Mozard werkt met een sessiecookie, die `MozardSessie` zelf bijhoudt.
+
+- `cao_zoeken(zoekterm, geldig_op, type, zonder_wijzigingen)`: het zoekformulier van de databank (POST naar `!suite16.scherm1168` met `mCsrfToken` uit de pagina, selectie `654165` = alle aangemelde cao's) geeft een selectie, doorgebladerd met `getObjectbakResultaat` (`mMaxid`) en benoemd met `getObjectRegels`. Zonder zoekwoord heeft de lijst een plafond (±700-1000 regels), dus altijd met zoekwoord. Regelnaam ontleed: nummer, naam, ingang, expiratie, type, kvo-datum, TTW (tussentijdse wijziging). 6 uur in het geheugen.
+- `cao_tekst(id, artikel | zoekterm | pagina_van..pagina_tot, document)`: detailpagina `!suite92.scherm1007?mObj=<id>` (kenmerken uit `<dl class="moz-dl">`: soort, type, SBI-code, data), de pdf uit het dossier (`document/docnr/...`, verwijst naar een S3-link die 30 s geldig is) via `unpdf` naar tekst per pagina (24 uur in het geheugen). Artikel: "Artikel 12" of kopjes als "1.5" (subkopjes 1.5.1 horen erbij); inhoudsopgave wordt overgeslagen.
+- `cao_avv(naam | id)`: besluiten tot algemeenverbindendverklaring in de Staatscourant via `BekendmakingenSource` (zoals `officiele_bekendmakingen_search`), nieuwste eerst, alleen met de dragende woorden van de cao-naam in de titel; soort: besluit tot AVV, wijziging, intrekking, verzoek.
+- Tests: `tests/fork-cao.test.ts`; live: `node scripts/live-cao.mjs [zoekterm] [artikel] [tekstzoekterm]`.

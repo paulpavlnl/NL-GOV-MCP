@@ -25,6 +25,7 @@ import { registerRechtspraakOpenData } from "./rechtspraak-open-data.js";
 import { registerBronGezondheid } from "./bron-gezondheid.js";
 import { registerChromebook } from "./chromebook.js";
 import { registerRechterProfiel } from "./rechterprofiel.js";
+import { registerCao } from "./cao.js";
 import { installLidoNetwerk } from "./lido-robuust.js";
 import { WettenBwbSource } from "../sources/wetten-bwb.js";
 import { BwbArtikelSource } from "../sources/bwb-artikel.js";
@@ -263,6 +264,8 @@ export function registerEuForkTools(server: McpServer, deps: EuForkDeps): (args:
   registerChromebook(server, { TOOL_ANNOTATIONS: deps.TOOL_ANNOTATIONS as Record<string, unknown> });
   // Rechterprofiel: nevenfunctieregister plus uitspraken op naam (src/fork/rechterprofiel.ts).
   registerRechterProfiel(server, { TOOL_ANNOTATIONS: deps.TOOL_ANNOTATIONS as Record<string, unknown> });
+  // Cao-databank SZW plus AVV uit de Staatscourant (src/fork/cao.ts).
+  registerCao(server, { config: deps.config, TOOL_ANNOTATIONS: deps.TOOL_ANNOTATIONS as Record<string, unknown> });
   const source = new EuTekstSource(deps.config);
   const result = (args: EuTekstArgs) => euTekstResult(source, deps.lido, args);
   server.registerTool("eurlex_tekst_get", {
