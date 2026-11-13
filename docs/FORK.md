@@ -202,3 +202,13 @@ Pauls Chromebook stuurt met een Chrome-extensie browsersegmenten naar de dienst 
 - `chromebook_tijdlijn(van, tot)`: lokale tijden Europe/Amsterdam (`JJJJ-MM-DDTUU:MM:SS` of `JJJJ-MM-DD`), hooguit 31 dagen; per blok begin, eind, duur_s, domein, paginatitel. Geen blokken = Chromebook niet gebruikt; een fout = bestand niet leesbaar (alleen op de woonkamer-pc, niet op Render).
 - `chromebook_status`: laatste ontvangst van de extensie, laatste activiteit, blokken en minuten vandaag.
 - Tests: `tests/fork-chromebook.test.ts`; live: `node scripts/live-chromebook.mjs [van] [tot]`.
+
+## Rechterprofiel (`rechter_profiel`; `src/fork/rechterprofiel.ts`, 13-11-2026)
+
+Feitelijk profiel van een rechtsprekend persoon, zoals de rechterprofielen van lawbot:
+
+- **Register:** het openbare nevenfunctieregister van de Rechtspraak. `www.rechtspraak.nl/registers/nevenfunctieregister/zoeken?searchterm=…` en `…/details/<id>` worden aan de serverkant gerenderd; de gegevens staan als JSON in `<script id="rnl-state">` (`neroSearchResults`, `neroRechterlijkeAmbtenaarDetails`): huidige en eerdere functies binnen de Rechtspraak (gerecht, data), functies daarbuiten, huidige en eerdere nevenbetrekkingen (functie, organisatie, plaats, sinds, bezoldigd). De JSON-API daarachter (`/api/registers/nero/...`) is niet publiek bereikbaar.
+- **Uitspraken:** het register noemt er geen. Gezocht in de volledige tekst (`uitspraken.rechtspraak.nl/api/zoek`) op `"<voorletters> <hoofdnaam>"` (hoofdnaam = deel vóór een koppelteken), nieuwste eerst (`max_uitspraken`, standaard 100). Elke treffer krijgt `binnen_loopbaan` (gerecht en datum passen bij een functie uit het register; oude gerechtsnamen zoals 's-Gravenhage tellen mee) en, voor de eerste `controleer` treffers (standaard 20, binnen de loopbaan eerst), een tekstcontrole: `in_samenstelling` (naam met kloppende voorletters in "gewezen/gedaan/gegeven door …", met `rol` als die er staat), `wraking_van_deze_rechter` of `niet_in_samenstelling`. `alleen_bevestigd` toont alleen de bevestigde.
+- Meerdere personen met de naam: de kandidatenlijst met id; dan opnieuw met `id`. Faalt de uitsprakenzoeker, dan komt het registerdeel toch terug (access_note zegt het).
+- Geen nagebootste browser-identiteit: de zoeker weigert die met HTTP 403. Werkt vanaf de woonkamer-pc; Render werd eerder geweigerd.
+- Tests: `tests/fork-rechterprofiel.test.ts`; live: `node scripts/live-rechterprofiel.mjs "<naam>" [id]`.
