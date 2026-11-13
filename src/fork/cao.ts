@@ -304,16 +304,41 @@ export function registerCao(server: McpServer, deps: { config: AppConfig; TOOL_A
       const kern = n.replace(/\(CAO\)|\bCAO\b|collectieve arbeidsovereenkomst/gi, "").replace(/\s+/g, " ").trim();
       // Alleen de dragende woorden: geen afkortingen tussen haakjes, geen lidwoorden of voorzetsels.
       const STOP = new Set(["voor", "het", "van", "de", "den", "der", "een", "en", "in", "inzake", "op", "met", "bij", "cao"]);
-      const woorden = kern.replace(/\([^)]*\)/g, " ").toLowerCase().split(/[^a-z0-9à-ÿ-]+/).filter((w) => w.length > 2 && !STOP.has(w));
+      const woorden = kern.replace(/\([^)]*\)/g, " ").toLowerCase().split(/[^a-z0-9à-ÿ-]+/).filter((w) => w.length > 2 && !STOP.has(w) && !/^[\d-]+$/.test(w));
       const out = await bekend.search({ query: `algemeenverbindendverklaring ${woorden.join(" ") || kern}`, maximumRecords: 50, publicatieblad: "Staatscourant", sort: "date_newest" });
-      const items = (out.items as Array<Record<string, unknown>>).filter((i) => /verbindend/i.test(String(i.title ?? ""))).filter((i) => woorden.every((w) => String(i.title ?? "").toLowerCase().includes(w)) || woorden.length === 0);
+      const titel = (i: Record<string, unknown>) => String(i.title ?? "").toLowerCase();
+      let items = (out.items as Array<Record<string, unknown>>).filter((i) => /verbindend/i.test(titel(i))).filter((i) => woorden.every((w) => titel(i).includes(w)) || woorden.length === 0);
+      let route = "titel";
+      const queries = [`algemeenverbindendverklaring ${woorden.join(" ") || kern}`];
+      if (!items.length && woorden.length) {
+        // Breed, zelf uitgevoerd: (1) AVV-publicaties met minstens één dragend woord in de titel;
+        // (2) alle Staatscourant-publicaties op de woorden (ook in de tekst) die over een cao of AVV gaan.
+        const q1 = `algemeen verbindend ${woorden.join(" ")}`;
+        const q2 = woorden.join(" ");
+        queries.push(q1, q2);
+        const [b1, b2] = await Promise.all([
+          bekend.search({ query: q1, maximumRecords: 100, publicatieblad: "Staatscourant", sort: "date_newest" }),
+          bekend.search({ query: q2, maximumRecords: 100, publicatieblad: "Staatscourant", sort: "date_newest" }),
+        ]);
+        const gezien = new Set<string>();
+        const uniek = (l: Array<Record<string, unknown>>) => l.filter((i) => { const k = String(i.identifier ?? i.canonical_url ?? i.title); if (gezien.has(k)) return false; gezien.add(k); return true; });
+        const r1 = (b1.items as Array<Record<string, unknown>>).filter((i) => /verbindend/i.test(titel(i)) && woorden.some((w) => titel(i).includes(w)));
+        const r2 = (b2.items as Array<Record<string, unknown>>).filter((i) => /verbindend|\bcao\b|collectieve arbeidsovereenkomst/i.test(titel(i)));
+        const inTitel = (i: Record<string, unknown>) => woorden.some((w) => titel(i).includes(w));
+        items = uniek([...r1, ...r2.filter(inTitel), ...r2.filter((i) => !inTitel(i))]).map((i) => ({ ...i, _breed: inTitel(i) ? "breed: deel van de naam in de titel" : "breed: woord alleen in de tekst (vaak een andere cao)" }));
+        route = "breed";
+      }
       const soort = (t: string) => (/intrekking/i.test(t) ? "intrekking" : /wijziging/i.test(t) ? "wijziging" : /verzoek|ter inzage|tervisie/i.test(t) ? "verzoek (ter visie)" : /besluit/i.test(t) ? "besluit tot AVV" : "overig");
-      const records: MCPRecord[] = items.slice(0, top).map((i) => ({ title: String(i.title ?? ""), date: String(i.date ?? ""), source_name: "officielebekendmakingen", canonical_url: String(i.canonical_url ?? ""), data: { soort: soort(String(i.title ?? "")), vindplaats: i.vindplaats, identifier: i.identifier, pdf: i.pdf_url } }));
+      const records: MCPRecord[] = items.slice(0, top).map((i) => ({ title: String(i.title ?? ""), date: String(i.date ?? ""), source_name: "officielebekendmakingen", canonical_url: String(i.canonical_url ?? ""), data: { soort: soort(String(i.title ?? "")), treffer: route === "titel" ? "cao-naam in titel" : String(i._breed), vindplaats: i.vindplaats, identifier: i.identifier, pdf: i.pdf_url } }));
       return toMcpToolPayload(successResponse({
-        summary: records.length ? `${records.length} AVV-publicaties in de Staatscourant voor '${kern}' (nieuwste eerst).` : `Geen AVV-publicatie in de Staatscourant gevonden voor '${kern}'.`,
+        summary: records.length
+          ? route === "titel" ? `${records.length} AVV-publicaties in de Staatscourant voor '${kern}' (nieuwste eerst).` : `Geen AVV met '${kern}' in de titel; breed gezocht in de Staatscourant: ${records.length} mogelijk relevante publicaties (controleren).`
+          : `Geen AVV-publicatie in de Staatscourant gevonden voor '${kern}', ook niet breed gezocht.`,
         records,
-        provenance: { tool: "cao_avv", endpoint: "Staatscourant (officielebekendmakingen.nl, SRU)", query_params: { query: `algemeenverbindendverklaring ${kern}` }, timestamp: new Date().toISOString(), returned_results: records.length },
-        access_note: "Alleen publicaties met de cao-naam in de titel. Geen treffer betekent niet zeker dat de cao niet algemeen verbindend is: zoek dan breder met officiele_bekendmakingen_search (publicatieblad Staatscourant). Een AVV geldt voor de periode in het besluit, niet voor de hele looptijd van de cao.",
+        provenance: { tool: "cao_avv", endpoint: "Staatscourant (officielebekendmakingen.nl, SRU)", query_params: { queries: queries.join(" | "), route }, timestamp: new Date().toISOString(), returned_results: records.length },
+        access_note: route === "titel"
+          ? "Publicaties met de cao-naam in de titel. Een AVV geldt voor de periode in het besluit, niet voor de hele looptijd van de cao."
+          : "Eerst gezocht op de cao-naam in de titel (geen treffer), daarna zelf breed in de Staatscourant: AVV-publicaties met een deel van de naam en publicaties over een cao waarin de woorden voorkomen. Brede treffers kunnen over een andere cao gaan: controleer titel en tekst. Geen treffer betekent niet zeker dat de cao niet algemeen verbindend is. Een AVV geldt voor de periode in het besluit.",
       }));
     } catch (e) {
       return toMcpToolPayload(fout(e));

@@ -25,7 +25,15 @@ const roep = async (name, args) => {
 };
 await vraag("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } });
 p.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
-const z = await roep("cao_zoeken", { zoekterm, zonder_wijzigingen: true, top: 5 });
+if (zoekterm === "--avv") {
+  // node scripts/live-cao.mjs --avv "naam 1" "naam 2": alleen cao_avv, ook de brede terugval.
+  for (const naam of process.argv.slice(3)) {
+    const v = await roep("cao_avv", { naam, top: 5 });
+    for (const r of v.records ?? []) console.log(" -", r.date, r.data.soort, "|", r.data.treffer, "|", r.title.replace(/^.*?(?:verbindendverklaring|verbindend verklaring) van (?:bepalingen van )?/i, "").slice(0, 140));
+  }
+  p.kill(); process.exit(0);
+}
+const z =await roep("cao_zoeken", { zoekterm, zonder_wijzigingen: true, top: 5 });
 for (const r of z.records ?? []) console.log(" -", r.data.id, "|", r.title);
 const id = z.records?.find((r) => r.data.type === "Regulier")?.data.id ?? z.records?.[0]?.data.id;
 if (id) {
