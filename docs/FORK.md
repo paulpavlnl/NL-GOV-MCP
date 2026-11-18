@@ -221,3 +221,19 @@ Bron: de cao-databank van de directie Cao van het ministerie van SZW, `cao.minsz
 - `cao_tekst(id, artikel | zoekterm | pagina_van..pagina_tot, document)`: detailpagina `!suite92.scherm1007?mObj=<id>` (kenmerken uit `<dl class="moz-dl">`: soort, type, SBI-code, data), de pdf uit het dossier (`document/docnr/...`, verwijst naar een S3-link die 30 s geldig is) via `unpdf` naar tekst per pagina (24 uur in het geheugen). Artikel: "Artikel 12" of kopjes als "1.5" (subkopjes 1.5.1 horen erbij); inhoudsopgave wordt overgeslagen.
 - `cao_avv(naam | id)`: besluiten tot algemeenverbindendverklaring in de Staatscourant via `BekendmakingenSource` (zoals `officiele_bekendmakingen_search`), nieuwste eerst, eerst met de dragende woorden van de cao-naam in de titel (jaartallen genegeerd); geen treffer → zelf breed: AVV-publicaties met een deel van de naam in de titel, daarna Staatscourant-publicaties over een cao met de woorden in de tekst; elk record zegt in `treffer` hoe het gevonden is. Soort: besluit tot AVV, wijziging, intrekking, verzoek.
 - Tests: `tests/fork-cao.test.ts`; live: `node scripts/live-cao.mjs [zoekterm] [artikel] [tekstzoekterm]`.
+
+## Bewaking van de upstream-sync (18-11-2026)
+
+Aanleiding: WAINUTAI-commit 443765d gaf conflicten in zes bestanden. Bij het oplossen bleek dat een merge ook *zonder* conflict eigen code kan uitschakelen: upstream herschreef `fetchWithTimeout` (redirects zelf volgen) en gaf de `dispatcher`-optie niet meer door aan `fetch`, waardoor de IP-herkansing (`src/fork/ip-herkansing.ts`) stil niets meer deed. Eerdere syncs (95f52bf, 0ec3c84) lieten `src/fork/` en alle FORK-regels intact (nagekeken).
+
+Drie lagen, alle drie in de workflow *Upstream sync (WAINUTAI)*; pas als alles slaagt gaat de merge vanzelf naar main, anders een pull request en een melding in de Workflowy-Inbox:
+
+1. `scripts/fork-check.mjs <basis>`: elke regel met `FORK` in `src/` en `tests/` van main staat na de merge nog in hetzelfde bestand, en elk bestand in `src/fork/`, `tests/fork*`, `data/` en `docs/FORK.md` bestaat nog. Een bewust aangepaste FORK-regel geeft dus altijd een pull request: zo kijkt er een mens naar. Lokaal na een handmatige merge: `node scripts/fork-check.mjs main` (vóór de commit; noem bewust aangepaste regels in de commit).
+2. `tests/fork-integriteit.test.ts`: `createServer` registreert elke tool uit `data/fork-tools.json`, en de `dispatcher`-optie bereikt `fetch`. **Nieuwe eigen tool: zet de naam in `data/fork-tools.json`.**
+3. De bestaande grep-controles op de koppelingen en de volledige testsuite.
+
+Regels voor eigen code, om conflicten klein te houden: nieuwe functionaliteit in `src/fork/` en registreren vanuit `registerEuForkTools`; in upstream-bestanden alleen korte, met `// FORK (docs/FORK.md)` gemarkeerde regels; wijzigt upstream iets wat wij ook (anders) hebben opgelost, dan de upstream-versie nemen en de eigen variant laten vallen (zo bij `src/sources/api-register.ts` in 443765d).
+
+Lokaal testen op de woonkamer-pc: `gehoord-oauth.json` in de repomap laat de Gehoord-tests (die zonder sleutel verwachten) falen; draai de suite met `GEHOORD_OAUTH_FILE=C:/bestaat-niet.json`. `tests/http-transports.test.ts` (gelijktijdige verzoeken) kan onder volle last op de time-out van 5 s vallen; los slaagt hij.
+
+Merge 443765d: conflicten opgelost met behoud van `retryDelaysMs`, `dispatcher` en `buitenCircuit` in `src/utils/http.ts` (naast upstream `callerBudget`; `buitenCircuit` ook bij de nieuwe circuit-hercontrole), eigen `getByEcli` en `rechtspraak_get_by_ecli`, de LiDO-tools en de BAG-sleutelmelding. Upstream `fallback()` van Rechtspraak vervalt. `src/fork/hallucinatie.ts`: een te lang argument gaat eerst naar de upstream lengtebewaking, een ontbrekende verplichte parameter heet nu `invalid_input`.

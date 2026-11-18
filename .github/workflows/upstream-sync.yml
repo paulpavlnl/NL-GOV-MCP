@@ -2,8 +2,11 @@ name: Upstream sync (WAINUTAI)
 
 # Brings new work from the original repo (WAINUTAI/NL-GOV-MCP) into this fork, every day (and on demand),
 # at the owner's request: it merges upstream main into the branch `upstream-sync` and runs type-check,
-# build and all tests (the fork's own tests included) and checks the fork's hooks (docs/FORK.md). When all
-# of that passes, the merge goes to main automatically (Render then deploys) and a note goes to the
+# build and all tests (the fork's own tests included, tests/fork-integriteit.test.ts: every own tool in
+# data/fork-tools.json is registered) and checks the fork's hooks (docs/FORK.md, scripts/fork-check.mjs:
+# every FORK-marked line and every own file of main is still there after the merge). When all of that
+# passes, the merge goes to main automatically (the woonkamer-pc's hourly update task then builds and
+# restarts mcp-nlgov) and a note goes to the
 # Workflowy Inbox. When the merge conflicts, a test fails or a hook is missing, nothing reaches main: the
 # branch and a pull request (or, on a conflict, the run summary) say what is wrong, and a task goes to the
 # Workflowy Inbox so the daily round reports it and Claude can repair it. Secret: WORKFLOWY_API_KEY.
@@ -106,7 +109,10 @@ jobs:
           grep -q 'LIDO_VERZOEK' src/sources/lido.ts || missing="$missing src/sources/lido.ts(LIDO_VERZOEK)"
           grep -q 'lidoGetText' src/sources/lido.ts || missing="$missing src/sources/lido.ts(lidoGetText)"
           grep -q 'options.dispatcher' src/utils/http.ts || missing="$missing src/utils/http.ts(dispatcher)"
-          for f in src/fork/hallucinatie.ts src/fork/foutlog.ts data/bekende-valkuilen.json src/fork/eu-tekst.ts src/fork/eu-bron.ts src/fork/eu-tools.ts src/fork/lido-artikel.ts src/fork/lido-relaties.ts src/fork/rechtspraak-open-data.ts src/fork/lido-robuust.ts src/fork/bron-fouten.ts src/fork/bron-gezondheid.ts src/fork/ip-herkansing.ts; do [ -f "$f" ] || missing="$missing $f"; done
+          node scripts/fork-check.mjs origin/main > /tmp/fork-check.txt 2>&1 || missing="$missing $(grep '^- ' /tmp/fork-check.txt | head -n 15 | tr '
+' ' ')"
+          cat /tmp/fork-check.txt
+          for f in data/fork-tools.json tests/fork-integriteit.test.ts src/fork/hallucinatie.ts src/fork/foutlog.ts data/bekende-valkuilen.json src/fork/eu-tekst.ts src/fork/eu-bron.ts src/fork/eu-tools.ts src/fork/lido-artikel.ts src/fork/lido-relaties.ts src/fork/rechtspraak-open-data.ts src/fork/lido-robuust.ts src/fork/bron-fouten.ts src/fork/bron-gezondheid.ts src/fork/ip-herkansing.ts; do [ -f "$f" ] || missing="$missing $f"; done
           echo "missing=$missing" >> "$GITHUB_OUTPUT"
 
       - name: Merge into main when everything passes
@@ -119,7 +125,7 @@ jobs:
           git push origin HEAD:main
           echo "merged=true" >> "$GITHUB_OUTPUT"
           node scripts/meld-workflowy.mjs "✅ NL-GOV-MCP: $COUNT upstream-update(s) van WAINUTAI automatisch samengevoegd (tests en fork-koppelingen in orde)" "$(cat /tmp/commits.md)
-          Render deployt automatisch. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" || true
+          De update-taak op de woonkamer-pc bouwt en herstart mcp-nlgov binnen het uur. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" || true
 
       - name: Warn in Workflowy when it cannot be merged automatically
         if: steps.fetch.outputs.count != '0' && steps.auto.outputs.merged != 'true'
@@ -167,7 +173,7 @@ jobs:
             echo "## Nieuwe upstream-commits"
             cat /tmp/commits.md
             echo
-            echo "Na het mergen deployt Render automatisch."
+            echo "Na het mergen bouwt en herstart de update-taak op de woonkamer-pc mcp-nlgov binnen het uur."
           } > /tmp/body.md
           title="Upstream: $COUNT nieuwe commit(s) van WAINUTAI"
           pr=$(gh pr list --head "$BRANCH" --base main --state open --json number --jq '.[0].number')
