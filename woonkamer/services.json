@@ -23,6 +23,7 @@
     "env": {
       "NL_GOV_HTTP_PORT": "3101",
       "NL_GOV_HTTP_HOST": "127.0.0.1",
+      "NL_GOV_ALLOWED_HOSTS": "${HOST}",
       "PORT": "3101",
       "FOUTLOG_MAP": "${ROOT}/data/foutlog",
       "FOUTLOG_SERVER": "woonkamer"
