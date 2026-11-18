@@ -6,6 +6,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { isInitializeRequest, JSONRPCMessageSchema } from "@modelcontextprotocol/sdk/types.js";
 import { loadConfig } from "./config.js";
 import { registerTools } from "./tools.js";
 import { getAllConnectorHealth } from "./utils/connector-runtime.js";
@@ -109,9 +110,19 @@ export interface HttpServerOptions {
   host?: string;
   /** Allowed Origin headers (NL_GOV_ALLOWED_ORIGINS); empty means no Origin check. */
   allowedOrigins: string[];
+  /**
+   * Host names a request's Host header may name besides the loopback names (NL_GOV_ALLOWED_HOSTS).
+   * A loopback bind always checks Host; on other binds an empty list means no Host check.
+   */
+  allowedHosts?: string[];
   /** Close a session after this long without requests and without an open stream (NL_GOV_SESSION_TTL_MS). */
   sessionTtlMs: number;
-  /** Most concurrent sessions; the least recently used one is closed to make room (NL_GOV_MAX_SESSIONS). */
+  /**
+   * Most concurrent sessions (NL_GOV_MAX_SESSIONS). To make room, the requesting peer's own least recently
+   * used session is closed when it holds the most sessions, else one of the peer holding the most when that
+   * peer holds more than the requester would, else the requester's own or another peer's idle session;
+   * otherwise the new session gets 503.
+   */
   maxSessions: number;
   /** How often idle sessions are swept; defaults to half the TTL, between 1 s and 60 s. */
   sweepIntervalMs?: number;
@@ -154,10 +165,12 @@ export function normalizeOrigin(origin: string): string {
 /** HTTP transport options from config and environment, with explicit overrides (used by tests). */
 export function resolveHttpOptions(overrides: Partial<HttpServerOptions> = {}): HttpServerOptions {
   const allowedOrigins = overrides.allowedOrigins ?? (process.env.NL_GOV_ALLOWED_ORIGINS ?? "").split(",");
+  const allowedHosts = overrides.allowedHosts ?? (process.env.NL_GOV_ALLOWED_HOSTS ?? "").split(",");
   return {
     port: overrides.port ?? loadConfig().server.httpPort,
     host: overrides.host ?? (process.env.NL_GOV_HTTP_HOST?.trim() || undefined),
     allowedOrigins: allowedOrigins.map(normalizeOrigin).filter(Boolean),
+    allowedHosts: allowedHosts.map((host) => host.trim()).filter(Boolean),
     sessionTtlMs: overrides.sessionTtlMs ?? positiveIntegerEnv("NL_GOV_SESSION_TTL_MS", DEFAULT_SESSION_TTL_MS),
     maxSessions: overrides.maxSessions ?? positiveIntegerEnv("NL_GOV_MAX_SESSIONS", DEFAULT_MAX_SESSIONS),
     sweepIntervalMs: overrides.sweepIntervalMs,
@@ -190,12 +203,17 @@ interface SessionSlot<T> {
   lastSeen: number;
   /** Requests or streams currently open on this session; an active session is never idle. */
   active: number;
+  /** The network peer that opened the session. */
+  peer: string | undefined;
 }
 
 /**
  * Session map with an idle TTL and a size cap. Map order doubles as LRU order
  * (acquire moves a session to the end). An evicted session is removed first and
- * then closed through the `close` callback.
+ * then closed through the `close` callback. At the cap a new session displaces the
+ * same peer's sessions, a session of a peer holding more than its share, or another
+ * peer's idle one (see victimFor), so one client can neither end the open stream of a
+ * client with fewer sessions nor keep every other client out.
  */
 export class SessionRegistry<T> {
   private readonly slots = new Map<string, SessionSlot<T>>();
@@ -225,14 +243,23 @@ export class SessionRegistry<T> {
     return this.slots.get(id)?.value;
   }
 
-  /** Add a session, first closing the least recently used ones when the cap is reached. */
-  add(id: string, value: T): void {
+  /** Whether add() would admit a new session of this peer, without closing anything. */
+  canAdd(peer?: string): boolean {
+    return this.slots.size < this.options.maxSessions || this.victimFor(peer) !== undefined;
+  }
+
+  /**
+   * Add a session of `peer`, first making room when the cap is reached (see victimFor).
+   * Returns false, and adds nothing, when only other peers' active sessions fill the cap.
+   */
+  add(id: string, value: T, peer?: string): boolean {
     while (this.slots.size >= this.options.maxSessions) {
-      const victim = this.leastRecentlyUsed();
-      if (victim === undefined) break;
+      const victim = this.victimFor(peer);
+      if (victim === undefined) return false;
       this.evict(victim, "capacity");
     }
-    this.slots.set(id, { value, lastSeen: this.now(), active: 0 });
+    this.slots.set(id, { value, lastSeen: this.now(), active: 0, peer });
+    return true;
   }
 
   /** Mark a request or stream on the session as open; call the returned function when it ends. */
@@ -280,14 +307,39 @@ export class SessionRegistry<T> {
     this.timer = undefined;
   }
 
-  /** The least recently used idle session, or the least recently used one when all are active. */
-  private leastRecentlyUsed(): string | undefined {
-    let oldest: string | undefined;
+  /**
+   * The session to close for a new one of `peer`, so the cap is shared fairly between peers. Each
+   * choice takes that peer's least recently used session, idle before active:
+   * 1. the requester's own, when it holds at least as many sessions as any other peer;
+   * 2. else that of the peer holding the most sessions, when it holds more than the requester will
+   *    after the new one is added;
+   * 3. else the requester's own, when it has any;
+   * 4. else the least recently used idle session of another peer.
+   * So a peer never loses an active session to a requester that holds as many or more; with a single
+   * peer (a reverse proxy) this is plain LRU.
+   */
+  private victimFor(peer: string | undefined): string | undefined {
+    const held = new Map<string | undefined, { count: number; oldest: string; oldestIdle?: string }>();
+    let otherIdle: string | undefined;
     for (const [id, slot] of this.slots) {
-      if (slot.active === 0) return id;
-      oldest ??= id;
+      let entry = held.get(slot.peer);
+      if (!entry) held.set(slot.peer, (entry = { count: 0, oldest: id }));
+      entry.count++;
+      if (slot.active === 0) {
+        entry.oldestIdle ??= id;
+        if (slot.peer !== peer) otherIdle ??= id;
+      }
     }
-    return oldest;
+    const own = held.get(peer);
+    const ownCount = own?.count ?? 0;
+    let largest: { count: number; oldest: string; oldestIdle?: string } | undefined;
+    for (const [other, entry] of held) {
+      if (other !== peer && entry.count > (largest?.count ?? 0)) largest = entry;
+    }
+    const lru = (entry: { oldest: string; oldestIdle?: string }) => entry.oldestIdle ?? entry.oldest;
+    if (own && ownCount >= (largest?.count ?? 0)) return lru(own);
+    if (largest && largest.count > ownCount + 1) return lru(largest);
+    return own ? lru(own) : otherIdle;
   }
 
   private evict(id: string, reason: EvictionReason): void {
@@ -321,6 +373,73 @@ export function originGuard(allowedOrigins: string[]): RequestHandler {
   };
 }
 
+/** Bind addresses that only this machine can reach. */
+const LOOPBACK_BINDS = new Set(["127.0.0.1", "::1", "[::1]", "localhost"]);
+/** Host names that always reach this machine; a DNS-rebinding page cannot use them as its own origin. */
+const LOOPBACK_HOST_NAMES = ["localhost", "127.0.0.1", "[::1]"];
+
+/** Host name of a Host header or list entry, lower-cased and without the port ("[::1]:3333" gives "[::1]"). */
+function hostName(value: string): string {
+  const host = value.trim().toLowerCase();
+  if (host.startsWith("[")) {
+    const end = host.indexOf("]");
+    return end === -1 ? host : host.slice(0, end + 1);
+  }
+  const colons = host.split(":").length - 1;
+  if (colons > 1) return `[${host}]`; // a bare IPv6 address in a list entry
+  return colons === 1 ? host.slice(0, host.indexOf(":")) : host;
+}
+
+/**
+ * The Host names a request may name, or undefined when Host is not checked. A loopback bind always
+ * checks Host (against DNS rebinding); other binds only when NL_GOV_ALLOWED_HOSTS is set. Loopback
+ * names are always allowed, so local clients and health checks keep working.
+ */
+export function allowedHostNames(options: Pick<HttpServerOptions, "host" | "allowedHosts">): Set<string> | undefined {
+  const listed = (options.allowedHosts ?? []).map(hostName).filter(Boolean);
+  const loopback = LOOPBACK_BINDS.has((options.host ?? "").trim().toLowerCase());
+  if (!loopback && listed.length === 0) return undefined;
+  return new Set([...LOOPBACK_HOST_NAMES, ...listed]);
+}
+
+/** The 403 message for a Host that is not allowed; it names the setting a reverse proxy in front needs. */
+const HOST_NOT_ALLOWED =
+  "Forbidden: Host not allowed. A reverse proxy or other client that sends this server another host name " +
+  "needs that name in NL_GOV_ALLOWED_HOSTS (comma-separated).";
+
+/** Reject requests whose Host header names a host that is not allowed (any port), before any route. */
+export function hostGuard(options: Pick<HttpServerOptions, "host" | "allowedHosts">): RequestHandler {
+  const allowed = allowedHostNames(options);
+  return (req, res, next) => {
+    const host = req.headers.host;
+    if (allowed === undefined || (host !== undefined && allowed.has(hostName(host)))) {
+      next();
+      return;
+    }
+    res.status(403).json(jsonRpcError(-32000, HOST_NOT_ALLOWED));
+  };
+}
+
+/** Seconds a client is asked to wait when the session cap holds only other clients' open sessions. */
+const SESSIONS_FULL_RETRY_AFTER_S = 5;
+
+function sessionsFull(res: express.Response): void {
+  res
+    .status(503)
+    .set("Retry-After", String(SESSIONS_FULL_RETRY_AFTER_S))
+    .json(jsonRpcError(-32000, "Server busy: too many open sessions"));
+}
+
+/** Whether a POST body holds an initialize request (alone or in a batch), the only message that opens a session. */
+function isInitializeBody(body: unknown): boolean {
+  return Array.isArray(body) ? body.some((message) => isInitializeRequest(message)) : isInitializeRequest(body);
+}
+
+/** Whether a POST body is one JSON-RPC message or a batch of them. */
+function isJsonRpcBody(body: unknown): boolean {
+  return (Array.isArray(body) ? body : [body]).every((message) => JSONRPCMessageSchema.safeParse(message).success);
+}
+
 /** Answer body-parser and route errors as JSON-RPC errors, without stack traces or file paths. */
 export const jsonRpcErrorHandler: ErrorRequestHandler = (err, _req, res, next) => {
   if (res.headersSent) {
@@ -341,9 +460,10 @@ export const jsonRpcErrorHandler: ErrorRequestHandler = (err, _req, res, next) =
   }
 };
 
-/** Express app with the Origin check and JSON body parsing shared by both HTTP transports. */
+/** Express app with the Host and Origin checks and JSON body parsing shared by both HTTP transports. */
 function createHttpApp(options: HttpServerOptions): express.Express {
   const app = express();
+  app.use(hostGuard(options));
   app.use(originGuard(options.allowedOrigins));
   app.use(express.json({ limit: JSON_BODY_LIMIT }));
   return app;
@@ -359,6 +479,14 @@ function startSweeper(registry: SessionRegistry<unknown>, options: HttpServerOpt
 function listen(app: express.Express, options: HttpServerOptions, label: string): HttpServer {
   const warning = exposureWarning(options);
   if (warning) logger.warn({ host: options.host ?? "all interfaces" }, warning);
+  const hosts = allowedHostNames(options);
+  if (hosts) {
+    logger.info(
+      { allowedHosts: [...hosts] },
+      `Host check active: only requests whose Host header names ${[...hosts].join(", ")} (any port) are served; ` +
+        "add the names a reverse proxy forwards to NL_GOV_ALLOWED_HOSTS",
+    );
+  }
   const onListening = () => {
     const address = httpServer.address();
     const bound = typeof address === "object" && address ? address : undefined;
@@ -437,12 +565,18 @@ export async function startSseServer(overrides: Partial<HttpServerOptions> = {})
   });
   startSweeper(sessions as SessionRegistry<unknown>, options);
 
-  app.get("/mcp", async (_req, res) => {
+  app.get("/mcp", async (req, res) => {
+    const peer = req.socket.remoteAddress;
+    if (!sessions.canAdd(peer)) {
+      sessionsFull(res);
+      return;
+    }
     const server = createServer();
     const transport = new SSEServerTransport("/messages", res);
     const sessionId = transport.sessionId;
     trackSession(transport, server, () => sessions.delete(sessionId));
-    sessions.add(sessionId, { server, transport });
+    // canAdd() just said yes and nothing ran in between, so this adds the session.
+    sessions.add(sessionId, { server, transport }, peer);
     // The open SSE stream keeps the session active until the client disconnects.
     res.on("close", sessions.acquire(sessionId));
     await server.connect(transport);
@@ -581,6 +715,22 @@ export async function startStreamableHttpServer(overrides: Partial<HttpServerOpt
       return;
     }
 
+    // Only an initialize request opens a session; answer anything else as the SDK would, without building a server.
+    if (!isInitializeBody(req.body)) {
+      if (isJsonRpcBody(req.body)) {
+        res.status(400).json(jsonRpcError(-32000, "Bad Request: Server not initialized"));
+      } else {
+        res.status(400).json(jsonRpcError(-32700, "Parse error: Invalid JSON-RPC message"));
+      }
+      return;
+    }
+
+    const peer = req.socket.remoteAddress;
+    if (!sessions.canAdd(peer)) {
+      sessionsFull(res);
+      return;
+    }
+
     const server = createServer();
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
@@ -598,9 +748,10 @@ export async function startStreamableHttpServer(overrides: Partial<HttpServerOpt
     // Session ID is set after handleRequest processes the initialize message
     const sid = transport.sessionId;
     if (sid && !sessions.has(sid)) {
-      sessions.add(sid, { server, transport });
+      // Concurrent initializes may have filled the cap since canAdd(); then this session cannot be kept.
+      if (!sessions.add(sid, { server, transport }, peer)) await transport.close();
     } else if (!sid) {
-      // Not an initialize request, so there is no session to keep: release the server now.
+      // The SDK refused the initialize request, so there is no session to keep: release the server now.
       await transport.close();
     }
   });

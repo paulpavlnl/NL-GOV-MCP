@@ -117,7 +117,7 @@ describe("tweede_kamer_documents", () => {
     vi.stubGlobal("fetch", fetchMock);
     const payload = await callTool("tweede_kamer_documents", { query: "stikstof", date_from: "1 juli 2026" });
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(payload.error).toBe("unexpected");
+    expect(payload.error).toBe("invalid_input");
     expect(payload.message).toContain("JJJJ-MM-DD");
   });
 
@@ -596,7 +596,7 @@ describe("tweede_kamer_votes", () => {
     vi.stubGlobal("fetch", fetchMock);
     const payload = await callTool("tweede_kamer_votes", { zaak_id: "motie stikstof" });
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(payload.error).toBe("unexpected");
+    expect(payload.error).toBe("invalid_input");
     expect(payload.message).toContain("zaak_id");
   });
 });

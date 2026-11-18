@@ -176,13 +176,58 @@ const RECENCY_MARKERS: RegExp[] = [
 /*  4.  Trailing noise                                                */
 /* ------------------------------------------------------------------ */
 
-const TRAILING_NOISE: RegExp[] = [
-  /\s*[?!.]+\s*$/,
-  /\s+(?:alsjeblieft|aub|svp|please|graag)\s*$/i,
-];
+const POLITENESS_WORD = /^(?:alsjeblieft|aub|svp|please|graag)$/i;
 
 /** Text that ends on a letter-dot abbreviation such as "B.V." or "U.S.A.". */
 const ABBREVIATION_END = /(?:^|[^\p{L}.])(?:\p{L}\.){2,}$/u;
+
+/**
+ * Longest text the rewriter works on; longer input is cut. Keyword queries are
+ * far shorter, and nl_gov_ask caps its question at the same length.
+ */
+export const REWRITE_INPUT_MAX = 2000;
+
+function isSpace(ch: string): boolean {
+  return /\s/.test(ch);
+}
+
+/**
+ * The text cut to at most `max` characters: at the last whitespace, so no word
+ * is cut in half, or, for one long word, without splitting a surrogate pair.
+ */
+export function cutQuery(text: string, max: number): string {
+  if (text.length <= max) return text;
+  let end = max;
+  while (end > 0 && !isSpace(text[end])) end--;
+  if (end === 0) end = /[\uD800-\uDBFF]/.test(text[max - 1]) ? max - 1 : max;
+  return text.slice(0, end).trim();
+}
+
+/**
+ * Where a match of /\s*[?!.]+\s*$/ starts, or -1 when the text does not end on
+ * "?", "!" or "." (optionally followed by whitespace). A backward scan: the
+ * regex itself backtracks quadratically on a long run of "?" before a letter.
+ */
+function trailingPunctStart(text: string): number {
+  let i = text.length;
+  while (i > 0 && isSpace(text[i - 1])) i--;
+  const punctEnd = i;
+  while (i > 0 && "?!.".includes(text[i - 1])) i--;
+  if (i === punctEnd) return -1;
+  while (i > 0 && isSpace(text[i - 1])) i--;
+  return i;
+}
+
+/** Where a match of /\s+(?:alsjeblieft|aub|svp|please|graag)\s*$/i starts, or -1. */
+function trailingPolitenessStart(text: string): number {
+  let end = text.length;
+  while (end > 0 && isSpace(text[end - 1])) end--;
+  let start = end;
+  while (start > 0 && !isSpace(text[start - 1])) start--;
+  if (start === 0 || !POLITENESS_WORD.test(text.slice(start, end))) return -1;
+  while (start > 0 && isSpace(text[start - 1])) start--;
+  return start;
+}
 
 /**
  * Strip trailing punctuation and politeness words. The dot of an abbreviation
@@ -191,11 +236,13 @@ const ABBREVIATION_END = /(?:^|[^\p{L}.])(?:\p{L}\.){2,}$/u;
  */
 function stripTrailingNoise(text: string): string {
   let out = text;
-  for (const trail of TRAILING_NOISE) {
-    out = out.replace(trail, (match, offset: number) =>
-      match.trimStart().startsWith(".") && ABBREVIATION_END.test(`${out.slice(0, offset)}.`) ? "." : "",
-    );
+  const punct = trailingPunctStart(out);
+  if (punct >= 0) {
+    const keepDot = out.slice(punct).trimStart().startsWith(".") && ABBREVIATION_END.test(`${out.slice(0, punct)}.`);
+    out = out.slice(0, punct) + (keepDot ? "." : "");
   }
+  const polite = trailingPolitenessStart(out);
+  if (polite >= 0) out = out.slice(0, polite);
   return out;
 }
 
@@ -607,7 +654,11 @@ function hasRecencyMarker(text: string): boolean {
 export function rewriteNote(rw: Pick<RewriteResult, "original" | "rewritten" | "recency">): string | undefined {
   const original = rw.original.replace(/\s+/g, " ").trim();
   const rewritten = rw.rewritten.trim();
-  const withoutEnd = (s: string) => normalizeForCompare(s).replace(/\s*[?!.]+$/, "");
+  const withoutEnd = (s: string) => {
+    const text = normalizeForCompare(s);
+    const end = trailingPunctStart(text);
+    return end >= 0 ? text.slice(0, end) : text;
+  };
   if (!rewritten || withoutEnd(original) === withoutEnd(rewritten)) return undefined;
   const shown = original.length > 200 ? `${original.slice(0, 197)}...` : original;
   const recency = rw.recency && !hasRecencyMarker(rewritten) ? " (tijdsaanduiding zoals 'laatste' of 'nieuwste' weggelaten; die bepaalt geen volgorde)" : "";
@@ -626,11 +677,13 @@ export function rewriteQuery(
   raw: string,
   sensitivity: QuerySensitivity,
 ): RewriteResult {
-  const original = String(raw ?? "").trim();
+  const input = String(raw ?? "").trim();
 
-  if (sensitivity === "passthrough" || !original) {
-    return { rewritten: original, original, changed: false };
+  if (sensitivity === "passthrough" || !input) {
+    return { rewritten: input, original: input, changed: false };
   }
+  // Bound the work per call.
+  const original = cutQuery(input, REWRITE_INPUT_MAX);
 
   const analysis = analyse(original);
   let tokens = analysis.tokens;

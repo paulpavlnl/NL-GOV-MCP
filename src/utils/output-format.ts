@@ -77,10 +77,12 @@ function recordsToMarkdownTable(records: MCPRecord[]): string {
   const headers = Array.from(headerSet);
   if (!headers.length) return "";
 
-  const sanitize = (v: string) => v.replace(/\|/g, "\\|").replace(/\n/g, " ");
+  // Escape backslashes before pipes, so an existing "\|" cannot turn the added escape
+  // into a literal backslash, and fold every line break so one record stays one row.
+  const sanitize = (v: string) => v.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r\n|\r|\n/g, " ");
 
   const lines = [
-    `| ${headers.join(" | ")} |`,
+    `| ${headers.map(sanitize).join(" | ")} |`,
     `| ${headers.map(() => "---").join(" | ")} |`,
   ];
 
@@ -167,17 +169,23 @@ function recordsToGeoJson(records: MCPRecord[]):
     }
     if (result.kind === "none") continue;
 
+    const properties: Record<string, unknown> = {
+      source_name: rec.source_name,
+      title: rec.title,
+      canonical_url: rec.canonical_url,
+      date: rec.date,
+      snippet: rec.snippet,
+      ...(rec.data ?? {}),
+    };
+    // A key in data must not replace the record's own source, title or link.
+    properties.source_name = rec.source_name;
+    properties.title = rec.title;
+    properties.canonical_url = rec.canonical_url;
+
     features.push({
       type: "Feature",
       geometry: result.geometry,
-      properties: {
-        source_name: rec.source_name,
-        title: rec.title,
-        canonical_url: rec.canonical_url,
-        date: rec.date,
-        snippet: rec.snippet,
-        ...(rec.data ?? {}),
-      },
+      properties,
     });
   }
 

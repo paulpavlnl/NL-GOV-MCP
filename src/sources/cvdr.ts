@@ -1,6 +1,7 @@
 import type { AppConfig } from "../types.js";
 import { getText } from "../utils/http.js";
 import { placeKey, placeVariants } from "../utils/place-aliases.js";
+import { escapeSruValue, stripSruUnsafe } from "../utils/sru-cql.js";
 import {
   extractSruNumberOfRecords,
   extractSruRecords,
@@ -55,11 +56,6 @@ function attributeValue(value: unknown, name: string): string | undefined {
   return typeof attr === "string" && attr.trim() ? attr.trim() : undefined;
 }
 
-/** Escape a value for use inside double-quoted CQL/SRU strings. */
-function escapeSruValue(v: string): string {
-  return v.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
-
 /** CQL boolean keywords: as a bare term they would be parsed as operators. */
 const CQL_RESERVED = new Set(["and", "or", "not", "prox", "sortby"]);
 
@@ -101,7 +97,7 @@ function queryOperator(word: string): QueryOperator | undefined {
 function keywordClause(query: string): string | undefined {
   const words = query
     .split(/\s+/)
-    .map((w) => w.replace(/"/g, ""))
+    .map((w) => stripSruUnsafe(w).replace(/"/g, ""))
     .filter(Boolean);
   if (!words.length) return undefined;
   // A query made of operator words only ("OR") is a search for those words.

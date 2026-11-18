@@ -1,6 +1,6 @@
 import type { AppConfig, MCPRecord } from "../types.js";
 import { getJson, SourceRequestError } from "../utils/http.js";
-import { errorResponse, mapSourceError } from "../utils/response.js";
+import { errorResponse, InvalidInputError, mapSourceError } from "../utils/response.js";
 import type { MCPErrorResponse } from "../types.js";
 import { termsPosition } from "./tweede-kamer-debatten.js";
 
@@ -248,10 +248,10 @@ export interface GehoordAroundResult {
   endpoint: string;
 }
 
-/** Thrown for input the API cannot take; mapped to a clear error by mapGehoordError. */
-export class GehoordInputError extends Error {
-  constructor(message: string, public readonly suggestion?: string) {
-    super(message);
+/** Thrown for input the API cannot take; mapGehoordError reports it as invalid_input. */
+export class GehoordInputError extends InvalidInputError {
+  constructor(message: string, suggestion?: string) {
+    super(message, suggestion);
     this.name = "GehoordInputError";
   }
 }
@@ -777,9 +777,7 @@ export function gehoordMissingKey(): MCPErrorResponse {
 
 /** 401 → not_configured (the key is refused), 404 → not found, input → a clear message; the rest as every source. */
 export function mapGehoordError(error: unknown, what = "Gehoord.de"): MCPErrorResponse {
-  if (error instanceof GehoordInputError) {
-    return errorResponse({ error: "unexpected", message: error.message, suggestion: error.suggestion });
-  }
+  // A GehoordInputError is an InvalidInputError: mapSourceError reports it as invalid_input.
   if (error instanceof SourceRequestError && (error.status === 401 || error.status === 403)) {
     return errorResponse({
       error: "not_configured",

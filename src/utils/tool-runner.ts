@@ -28,26 +28,29 @@ export function buildFormattedResponse(args: {
   failures?: NonNullable<MCPToolResponse["failures"]>;
   verbose?: Record<string, unknown>;
 }): MCPToolResponse {
-  const linkedRecords = enrichRelatedLinks(args.records);
-
-  const paged = paginateRecords(linkedRecords, {
+  const paged = paginateRecords(args.records, {
     offset: args.offset,
     limit: args.limit,
     total: args.total === undefined ? args.records.length : args.total,
   });
+
+  // Links only for the records that are sent, but to any record the source
+  // returned: the same links as before, without the work for the rest.
+  const start = paged.pagination.offset;
+  const page = enrichRelatedLinks(args.records, { start, end: start + paged.page.length });
 
   if (args.hasMore !== undefined) {
     paged.pagination.has_more = args.hasMore || paged.pagination.has_more;
   }
 
   const formatted = applyOutputFormat({
-    records: paged.page,
+    records: page,
     outputFormat: args.outputFormat,
   });
 
   return successResponse({
     summary: args.summary,
-    records: paged.page,
+    records: page,
     provenance: args.provenance,
     pagination: paged.pagination,
     output_format: formatted.output_format,

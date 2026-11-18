@@ -2,7 +2,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { getBinary, getJson, getText, SourceRequestError } from "../utils/http.js";
 import { fetchPdfText } from "../utils/pdf-text.js";
 import { extractDocxText, MAX_DOCX_BYTES } from "../utils/docx-text.js";
-import { errorResponse, mapSourceError } from "../utils/response.js";
+import { errorResponse, InvalidInputError, mapSourceError } from "../utils/response.js";
+import { cutQuery } from "../utils/query-rewriter.js";
 import type { AppConfig, MCPErrorResponse } from "../types.js";
 
 /** Public website; document and zaak pages live under /kamerstukken. */
@@ -316,13 +317,10 @@ const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const ZAAK_NUMMER_RE = /^\d{4}Z\d{3,6}$/i;
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** Invalid tool input. The tool turns this into an explicit error instead of a silent empty result. */
-export class TweedeKamerInputError extends Error {
-  constructor(
-    message: string,
-    readonly suggestion?: string,
-  ) {
-    super(message);
+/** Invalid tool input. The tool turns this into an explicit `invalid_input` error instead of a silent empty result. */
+export class TweedeKamerInputError extends InvalidInputError {
+  constructor(message: string, suggestion?: string) {
+    super(message, suggestion);
     this.name = "TweedeKamerInputError";
   }
 }
@@ -430,6 +428,25 @@ export function resolveTkEntity(input?: string): string | undefined {
 /*  Query parsing and filter building                                  */
 /* ------------------------------------------------------------------ */
 
+/** Longest query parseTkQuery works on; longer input is cut. */
+const TK_QUERY_MAX = 2000;
+
+const LETTER_OR_DIGIT = /[\p{L}\p{N}]/u;
+
+/**
+ * A token without the characters around it that are no letter or digit, as
+ * /^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu would strip them, but with index loops:
+ * that regex backtracks quadratically on a long run of punctuation inside a token.
+ */
+function trimToLetterOrDigit(token: string): string {
+  const chars = Array.from(token);
+  let start = 0;
+  while (start < chars.length && !LETTER_OR_DIGIT.test(chars[start])) start++;
+  let end = chars.length;
+  while (end > start && !LETTER_OR_DIGIT.test(chars[end - 1])) end--;
+  return start === 0 && end === chars.length ? token : chars.slice(start, end).join("");
+}
+
 /**
  * Split a keyword query into AND-terms.
  *
@@ -444,7 +461,8 @@ export function resolveTkEntity(input?: string): string | undefined {
  *   the Openbaar Ministerie, not "om"), unless the whole query is in capitals.
  */
 export function parseTkQuery(raw: string | undefined): ParsedTkQuery {
-  const input = (raw ?? "").replace(/[“”„‟«»]/g, '"').trim();
+  // Bound the work per call.
+  const input = cutQuery((raw ?? "").replace(/[“”„‟«»]/g, '"').trim(), TK_QUERY_MAX);
   if (!input) return { terms: [], ignored: [] };
 
   const terms: TkSearchTerm[] = [];
@@ -467,7 +485,7 @@ export function parseTkQuery(raw: string | undefined): ParsedTkQuery {
       .replace(/"/g, " ")
       .split(/\s+/)
       // Strip punctuation around a token but keep inner hyphens, dots and apostrophes ("WW-uitkering", "2.0").
-      .map((t) => t.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ""))
+      .map(trimToLetterOrDigit)
       .filter(Boolean);
 
   let phraseWords: string[] = [];
@@ -1248,9 +1266,7 @@ export function migrateV4FieldNames(entity: string, expr: string): V4FieldMigrat
  * instead of a bare "request failed".
  */
 export function mapTweedeKamerError(error: unknown, context: Record<string, unknown> = {}): MCPErrorResponse {
-  if (error instanceof TweedeKamerInputError) {
-    return errorResponse({ error: "unexpected", message: error.message, suggestion: error.suggestion });
-  }
+  // A TweedeKamerInputError is an InvalidInputError: mapSourceError reports it as invalid_input.
   if (error instanceof SourceRequestError && error.status === 400) {
     return errorResponse({
       error: "http_error",
@@ -1903,15 +1919,23 @@ export class TweedeKamerSource {
     include_text?: boolean;
     max_chars?: number;
   }) {
-    const docEndpoint = `${this.apiBase}/Document(${args.id})`;
+    // The id goes into the URL path: only a GUID, so it cannot leave Document(...).
+    const id = args.id.trim();
+    if (!GUID_RE.test(id)) {
+      throw new TweedeKamerInputError(
+        `Ongeldige document-id '${args.id.slice(0, 60)}': verwacht een GUID (het Id van een Document).`,
+        "Zoek het document op met tweede_kamer_documents of tweede_kamer_search en geef het Id (GUID) door.",
+      );
+    }
+    const docEndpoint = `${this.apiBase}/Document(${id})`;
     // The zaak number is what the public kamerstukken page needs; the document
     // itself only knows its own number.
     const { data, meta } = await getJson<Record<string, unknown>>(docEndpoint, {
       query: { $expand: LINK_EXPANDS.Document.expand },
     });
 
-    const resourceUrl = `${this.apiBase}/Document(${args.id})/Resource`;
-    const typedResourceUrl = `${this.apiBase}/Document(${args.id})/TK.DA.GGM.OData.Resource`;
+    const resourceUrl = `${this.apiBase}/Document(${id})/Resource`;
+    const typedResourceUrl = `${this.apiBase}/Document(${id})/TK.DA.GGM.OData.Resource`;
     const maxChars = Math.max(1, Math.min(50_000, args.max_chars ?? 12_000));
     const contentType = normalizeContentType(data.ContentType);
 
@@ -1999,7 +2023,7 @@ export class TweedeKamerSource {
       item,
       endpoint: meta.url,
       params: {
-        id: args.id,
+        id,
         resolve_resource: String(Boolean(args.resolve_resource)),
         include_text: String(Boolean(args.include_text)),
         max_chars: String(maxChars),

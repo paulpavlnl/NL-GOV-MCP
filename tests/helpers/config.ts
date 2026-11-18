@@ -26,6 +26,7 @@ export const testConfig: AppConfig = {
     duoDatasets: "https://onderwijsdata.duo.nl",
     duoRio: "https://lod.onderwijsregistratie.nl/rio-api",
     apiRegister: "https://apis.developer.overheid.nl",
+    apiRegisterApi: "https://api.developer.overheid.nl/api-register/v1",
   },
 };
 

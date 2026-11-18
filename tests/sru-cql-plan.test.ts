@@ -175,14 +175,15 @@ describe("freeTextCql stays the plain AND-join koop-collecties has always sent",
     expect(freeTextCql("woningbouw 65+")).toBe("woningbouw AND 65+");
   });
 
-  it("gives exactly what the f875a21 implementation gave", () => {
-    // Verbatim copy of freeTextCql before the planner existed.
+  it("gives exactly what the f875a21 implementation gave, braces aside", () => {
+    // Copy of freeTextCql before the planner existed; the only change is that
+    // braces are stripped too, because they make the server answer HTTP 500.
     const legacy = (input: string | undefined) => {
       const raw = (input ?? "").trim();
       if (!raw) return undefined;
       const terms = raw
         .split(/\s+/)
-        .map((token) => token.replace(/["'()<>=/\\]/g, "").trim())
+        .map((token) => token.replace(/[{}]/g, "").replace(/["'()<>=/\\]/g, "").trim())
         .filter((token) => token.length > 1 && /[\p{L}\p{N}]/u.test(token))
         .filter((token) => !["and", "or", "not", "prox"].includes(token.toLowerCase()));
       return terms.length ? terms.join(" AND ") : undefined;

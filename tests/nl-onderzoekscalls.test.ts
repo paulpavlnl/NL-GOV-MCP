@@ -10,6 +10,7 @@ import {
   nwoStatusTermIds,
   NWO_STATUS_TERMS,
   OnderzoekscallInputError,
+  OnderzoekscallPageError,
   OnderzoekscallsSource,
   ONDERZOEKSCALL_CONNECTORS,
   ONDERZOEKSCALL_MAX_ROWS,
@@ -753,14 +754,14 @@ describe("OnderzoekscallsSource.get", () => {
     const calls = routedFetch(() => htmlResponse("<html></html>"));
     const err = await source().get({ url: "https://www.zonmw.nl/nl/over-zonmw" }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(OnderzoekscallInputError);
-    expect(mapOnderzoekscallError(err)).toMatchObject({ error: "unexpected", message: expect.stringMatching(/geen subsidiepagina/) });
+    expect(mapOnderzoekscallError(err)).toMatchObject({ error: "invalid_input", message: expect.stringMatching(/geen subsidiepagina/) });
     expect(calls).toEqual([]);
   });
 
   it("refuses a call path whose page has no call layout", async () => {
     routedFetch(() => htmlResponse("<html><body><h1>Pagina verplaatst</h1></body></html>"));
     const err = await source().get({ url: "https://www.zonmw.nl/nl/subsidie/verplaatst" }).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(OnderzoekscallInputError);
+    expect(err).toBeInstanceOf(OnderzoekscallPageError);
     expect((err as Error).message).toMatch(/geen titel met kenmerken gevonden/);
   });
 

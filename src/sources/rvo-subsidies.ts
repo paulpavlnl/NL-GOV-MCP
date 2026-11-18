@@ -1,6 +1,7 @@
 import type { AppConfig } from "../types.js";
 import { getJson, getText, SourceRequestError } from "../utils/http.js";
 import { htmlToText } from "../utils/html-text.js";
+import { InvalidInputError } from "../utils/response.js";
 
 /**
  * Subsidies en financiering of RVO (Rijksdienst voor Ondernemend Nederland).
@@ -118,9 +119,10 @@ export const RVO_ONDERWERPEN = [
 export const RVO_SORTS = ["relevance", "changed", "created", "title"] as const;
 export type RvoSort = (typeof RVO_SORTS)[number];
 
-export class RvoSubsidiesInputError extends Error {
-  constructor(message: string, public readonly suggestion?: string) {
-    super(message);
+/** A refused argument; reported as invalid_input. */
+export class RvoSubsidiesInputError extends InvalidInputError {
+  constructor(message: string, suggestion?: string) {
+    super(message, suggestion);
     this.name = "RvoSubsidiesInputError";
   }
 }

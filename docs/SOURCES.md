@@ -2,7 +2,8 @@
 
 ## data.overheid.nl
 - CKAN action API
-- endpoints: `package_search`, `package_show`, `organization_list`, `group_list`
+- endpoints: `package_search`, `package_show`, `organization_list`; themes come from the beleidsagenda waardelijst `https://waardelijsten.dcat-ap-donl.nl/overheid_taxonomiebeleidsagenda.json` (CKAN groups are empty)
+- Filters of `data_overheid_datasets_search` go in `fq`. `organization:<slug>`: the CKAN `organization` field holds the slug (`name`, e.g. `data-utrecht-nl`). A title that `data_overheid_organizations` returns (e.g. "Gemeente Utrecht") is looked up in `organization_list` and becomes its slug, or `organization:(a OR b)` when several organizations share the title. `theme:"<URI>"`: a dataset's `theme` field holds URIs of the waardelijst (e.g. `http://standaarden.overheid.nl/owms/terms/Verkeer_(thema)`). A Dutch or English label from `data_overheid_themes` becomes its URI, and a URI is used as is. The filter matches that theme, not its sub-themes. Unknown values are sent as given, quoted.
 
 ## CBS
 - Primary: `https://datasets.cbs.nl/odata/v1/CBS`
@@ -53,7 +54,11 @@
 - RIO adapter on `https://lod.onderwijsregistratie.nl/rio-api`
 
 ## API register
-- `https://apis.developer.overheid.nl` (requires `OVERHEID_API_KEY`)
+- JSON API: `https://api.developer.overheid.nl/api-register/v1` (OpenAPI: `/openapi.json`), config `endpoints.apiRegisterApi`. `GET /apis` with `q`, `page`, `perPage` (1-100) and the key in `X-Api-Key` (`OVERHEID_API_KEY`; 401 without it). It returns a bare JSON array of `{id, title, summary, description, organisation{uri,label}, lifecycle{status,version}, adrScore, oasUrl}`.
+- `q` matches API titles only, as one phrase ("BAG adressen" finds nothing, "adressen" does). When `q` finds nothing, the tool lists the whole register (`perPage=100`, at most 5 pages; 328 entries in November 2026) and ranks it locally: first by the number of query terms in the title, then in title or summary, then anywhere (description, organisation). More terms rank above fewer, and equal scores keep the register's order. `match_score` carries that rank. `params.mode` says which path answered: `api-search`, `api-list-scored` or `scored-fallback`.
+- Links go to the website, `https://apis.developer.overheid.nl/apis/<id>` (config `endpoints.apiRegister`). Keys are requested at `https://apis.developer.overheid.nl/apis/key-aanvragen`.
+- Fallback: the keyless HTML pages of `https://apis.developer.overheid.nl/apis` (at most 5 pages, ranked the same way). They are read only when there is no key, or when the API is unreachable, times out, answers 5xx, refuses the key (401/403) or has its circuit open after such failures. A 404, a 429 or a malformed answer is reported as an error. An empty API result stays empty.
+- Connectors `api_register` (JSON API, `api.developer.overheid.nl`) and `api_register_pages` (website pages, `apis.developer.overheid.nl`), both category discovery (cache TTL 30 min). Each has its own circuit, so failures of the API cannot close the path through the pages.
 
 ## KNMI
 - `https://api.dataplatform.knmi.nl/open-data/v1` (requires `KNMI_API_KEY`)
@@ -217,7 +222,7 @@
 - **Gateway (API-calls)**: `https://api.dnb.nl` — bijv. `GET https://api.dnb.nl/statisticsdata/<versie>/<dataset-slug>`. LET OP: `api.portal.dnb.nl` is alleen de developer-portal-website (accounts + subscriptions); data-calls dáárheen geven 404 HTML.
 - **Auth**: KEY-VEREIST. Subscription key via HTTP-header `Ocp-Apim-Subscription-Key`. Gratis: maak een My DNB-account op https://api.portal.dnb.nl/, abonneer op het product **'Public'** en genereer de key op de productpagina (self-service, geen goedkeuring; rate limit 30 calls/min). Kopieer de primary key naar `DNB_API_KEY`.
 - **Data**: Engelstalige datasets o.a. rente, wisselkoersen, hypotheken, balansen pensioenfondsen/verzekeraars, betalingsbalans. Respons is `{ records: [...], lastReleaseDate, _metadata }`; per datapunt periode/waarde (+ dataset-specifieke velden zoals currency/typeOfRate).
-- **dataset-argument**: geef het pad `statisticsdata/<versie>/<dataset-slug>` (bijv. `statisticsdata/v2026061000/exchange-rates-of-the-euro-and-gold-price-day`) of een volledige URL. De dataset-slugs staan in de API-docs op het portaal (APIs → DNB Statistics API). De datapunt-parser is defensief (accepteert records/observations/data/value/results-containers en period/value/unit in diverse casings).
+- **dataset-argument**: geef het pad `statisticsdata/<versie>/<dataset-slug>` (bijv. `statisticsdata/v2026061000/exchange-rates-of-the-euro-and-gold-price-day`), dat onder `https://api.dnb.nl` wordt gehangen, of een volledige URL op `https://api.dnb.nl/...`. Omdat elk verzoek de subscription key meedraagt, wordt elke andere URL (andere host, `http`, een poort of gebruikersnaam, een ander schema) zonder verzoek geweigerd met een `invalid_input`-fout. De dataset-slugs staan in de API-docs op het portaal (APIs → DNB Statistics API). De datapunt-parser is defensief (accepteert records/observations/data/value/results-containers en period/value/unit in diverse casings).
 
 
 ## Nieuwe bronnen (v0.3)
@@ -309,6 +314,14 @@ Meerdere woorden vrije tekst moeten als losse termen met `AND` worden verbonden:
 
 ## Nieuwe bronnen en tools (v0.4)
 
+## Rechtspraak zoeken (rechtspraak_search_ecli)
+
+- **Connector**: `rechtspraak` (category `semi_live`)
+- **Tool**: `rechtspraak_search_ecli` (en de Rechtspraak-route van `nl_gov_ask`)
+- **Endpoint**: `POST https://uitspraken.rechtspraak.nl/api/zoek` (JSON-body met `SearchTerms` op `AlleVelden`, `SortOrder`, het facet `DatumPublicatie` voor `date_filter`, `PublicatieStatus: AlleenGepubliceerd`), timeout 20 s
+- **Auth**: geen. De connector stuurt de eigen User-Agent van de server (`nl-gov-mcp/…`)
+- **Gedrag**: een zoekopdracht zonder treffers is een leeg resultaat met een link om zelf verder te zoeken. Een geweigerde of mislukte zoekopdracht (403, 5xx, timeout) is een fout (`http_error`, `timeout`, ...) met de zoekpagina van de website als alternatief, geen leeg resultaat. De tekst van een uitspraak komt uit de open data (`rechtspraak_uitspraak_get`, hieronder)
+
 ## Rechtspraak open data (uitspraak op ECLI)
 
 - **Connector**: `rechtspraak` (category `semi_live`), dezelfde als `rechtspraak_search_ecli`
@@ -316,6 +329,15 @@ Meerdere woorden vrije tekst moeten als losse termen met `AND` worden verbonden:
 - **Endpoint**: `GET https://data.rechtspraak.nl/uitspraken/content?id=<ECLI>` (`Accept: application/xml`): één open-data-document met de metadata (RDF: instantie, data, zaaknummer, procedures, rechtsgebieden, relaties, wetsverwijzingen, vindplaatsen) en de tekst (`uitspraak` of `conclusie`, met secties, `role="beslissing"` waar Rechtspraak die markeert, en voetnoten). Tot ongeveer 1 MB voor een lange conclusie; timeout 30 s, één retry. Leesbare pagina: `https://uitspraken.rechtspraak.nl/details?id=<ECLI>`
 - **Auth**: geen. **Limiet**: Rechtspraak vraagt de open-data-dienst met hooguit 10 verzoeken per seconde te bevragen; de tool doet één verzoek per aanroep en de connector-limiter houdt er hooguit drie tegelijk open
 - **Gedrag**: een ECLI die Rechtspraak niet kent geeft HTTP 404 (leeg resultaat met uitleg). Een uitspraak kan geregistreerd zijn zonder gepubliceerde tekst (alleen metadata); tuchtrechtuitspraken staan er alleen met metadata in, met een deeplink naar tuchtrecht.overheid.nl. De tekst is zoals gepubliceerd (geanonimiseerd)
+
+## Linked data (SPARQL): Kadaster BAG en RCE
+
+- **Connectors**: `bag_linked_data`, `rce_linked_data`
+- **Tools**: `bag_linked_data_select`, `rce_linked_data_select`
+- **Endpoints**: BAG `https://api.labs.kadaster.nl/datasets/bag/lv/services/baglv/sparql` (Kadaster Labs, TriplyDB); RCE `https://api.linkeddata.cultureelerfgoed.nl/datasets/rce/cho/services/cho/sparql`. `GET ?query=…&format=application/sparql-results+json`, timeout 20 s, één retry
+- **Auth**: geen
+- **Let op**: Kadaster hernoemde de BAG-service rond 7 oktober 2026 van `default` naar `baglv`; de oude URL geeft 404 `{"message":"Service not found."}`. De huidige servicenaam staat in `GET https://api.labs.kadaster.nl/datasets/bag/lv/services`
+- **Gedrag**: alleen read-only `SELECT` (zie `src/sources/sparql-linked-data.ts`), LIMIT hooguit 100; een geweigerde query is `invalid_input` zonder verzoek. Een fout van het endpoint (404, 5xx, timeout, netwerk) is een fout (`http_error`, `timeout`, ...), nooit een verzonnen rij
 
 ## ORI documenttekst
 

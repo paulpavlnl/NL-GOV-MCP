@@ -38,6 +38,7 @@ const appConfigSchema = z.object({
     duoDatasets: z.string().url(),
     duoRio: z.string().url(),
     apiRegister: z.string().url(),
+    apiRegisterApi: z.string().url().optional(),
   }),
 }) satisfies z.ZodType<AppConfig>;
 

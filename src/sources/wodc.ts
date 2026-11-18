@@ -16,7 +16,7 @@
  * licence (no dc.rights), so none is claimed for the reports.
  */
 import { getJson, getText, SourceRequestError } from "../utils/http.js";
-import { errorResponse, mapSourceError } from "../utils/response.js";
+import { errorResponse, InvalidInputError, mapSourceError } from "../utils/response.js";
 import { fetchPdfText, MAX_PDF_TEXT_CHARS } from "../utils/pdf-text.js";
 import { foldText } from "./dso-regeltekst.js";
 import { snippetAt } from "./tweede-kamer-debatten.js";
@@ -59,9 +59,10 @@ const DATE_RE = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/;
 export type WodcSort = "relevance" | "newest" | "oldest";
 export type WodcTextSource = "auto" | "repository" | "pdf";
 
-export class WodcInputError extends Error {
-  constructor(message: string, public readonly suggestion?: string) {
-    super(message);
+/** A refused argument; mapWodcError reports it as invalid_input. */
+export class WodcInputError extends InvalidInputError {
+  constructor(message: string, suggestion?: string) {
+    super(message, suggestion);
     this.name = "WodcInputError";
   }
 }
@@ -811,7 +812,7 @@ export class WodcSource {
 }
 
 export function mapWodcError(error: unknown): MCPErrorResponse {
-  if (error instanceof WodcInputError) return errorResponse({ error: "unexpected", message: error.message, suggestion: error.suggestion });
+  // A WodcInputError is an InvalidInputError: mapSourceError reports it as invalid_input.
   if (error instanceof SourceRequestError && (error.status === 400 || error.status === 422)) {
     return errorResponse({
       error: "http_error",

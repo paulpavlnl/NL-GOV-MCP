@@ -379,7 +379,7 @@ describe("wetten_bwb_tekst tool", () => {
     const fetchMock = mockBwb({});
     const out = await callTool({ bwb_id: "Awb" });
 
-    expect(out.error).toBe("unexpected");
+    expect(out.error).toBe("invalid_input");
     expect(out.message).toContain("geen BWB-id");
     expect(fetchMock).not.toHaveBeenCalled();
   });

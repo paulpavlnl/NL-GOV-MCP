@@ -121,9 +121,18 @@ function fromParts(kind: string, coordinates: unknown): Geometry | undefined {
   }
 }
 
+/**
+ * Longest WKT text parseWkt reads (some 100,000 vertices); a longer one is
+ * refused before any parsing.
+ */
+export const WKT_MAX_LENGTH = 4_000_000;
+
 /** A WKT (Multi)Point, (Multi)LineString or (Multi)Polygon, in its own coordinate order. Z and M are dropped. */
 export function parseWkt(wkt: string | undefined): Geometry | undefined {
-  const match = /^\s*(MULTIPOLYGON|POLYGON|MULTILINESTRING|LINESTRING|MULTIPOINT|POINT)\s*(?:ZM|Z|M)?\s*(\(.*\))\s*$/is.exec(wkt ?? "");
+  if (!wkt || wkt.length > WKT_MAX_LENGTH) return undefined;
+  // The whitespace before Z/M belongs to one run only: two adjacent runs
+  // around an optional group backtrack quadratically on a failing match.
+  const match = /^\s*(MULTIPOLYGON|POLYGON|MULTILINESTRING|LINESTRING|MULTIPOINT|POINT)\s*(?:(?:ZM|Z|M)\s*)?(\(.*\))\s*$/is.exec(wkt);
   if (!match) return undefined;
   const kind = match[1].toUpperCase();
   if (kind === "POINT" || kind === "MULTIPOINT") {
@@ -272,15 +281,52 @@ function segmentDistance([x, y]: Coord, [ax, ay]: Coord, [bx, by]: Coord): { dis
   return { distance: Math.hypot(x - point[0], y - point[1]), point };
 }
 
-/** Distance to the polygon's boundary: positive inside, negative outside. */
-function signedDistance(point: Coord, polygon: Polygon): number {
-  let min = Infinity;
-  for (const ring of polygon) {
+/**
+ * Distance to the polygon's boundary: positive inside, negative outside. One
+ * pass over the vertices for both the distance (as segmentDistance; compared
+ * squared, the nearest one measured with hypot) and the inside test (as
+ * pointInPolygon), without allocating per segment: this loop is where the
+ * interior-point search spends its time.
+ */
+function signedDistance([x, y]: Coord, polygon: Polygon): number {
+  let min = Infinity; // squared
+  let nearX = Infinity;
+  let nearY = Infinity;
+  let inOuter = false;
+  let inHole = false;
+  for (let r = 0; r < polygon.length; r += 1) {
+    const ring = polygon[r];
+    let inside = false;
     for (let i = 0, j = ring.length - 1; i < ring.length; j = i, i += 1) {
-      min = Math.min(min, segmentDistance(point, ring[j], ring[i]).distance);
+      const [xi, yi] = ring[i];
+      const [xj, yj] = ring[j];
+      if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+      const dx = xi - xj;
+      const dy = yi - yj;
+      const lengthSquared = dx * dx + dy * dy;
+      const t = lengthSquared ? Math.max(0, Math.min(1, ((x - xj) * dx + (y - yj) * dy) / lengthSquared)) : 0;
+      const ex = x - (xj + t * dx);
+      const ey = y - (yj + t * dy);
+      const squared = ex * ex + ey * ey;
+      if (squared < min) {
+        min = squared;
+        nearX = ex;
+        nearY = ey;
+      }
     }
+    if (r === 0) inOuter = inside;
+    else if (inside) inHole = true;
   }
-  return (pointInPolygon(point, polygon) ? 1 : -1) * min;
+  return (inOuter && !inHole ? 1 : -1) * Math.hypot(nearX, nearY);
+}
+
+/**
+ * Vertex visits (one per vertex per signedDistance) left for finding one
+ * interior point: shared by both polylabel passes and the scanline fallbacks,
+ * so a polygon with many vertices gets fewer cells instead of more work.
+ */
+interface WorkBudget {
+  left: number;
 }
 
 interface Cell {
@@ -336,8 +382,19 @@ class CellQueue {
   }
 }
 
-/** Cells looked at before polylabel settles for the best so far. */
+/** Cells looked at before polylabel settles for the best so far, the initial grid included. */
 const POLYLABEL_MAX_CELLS = 20_000;
+/** Cells of the initial grid along the longer bbox side, at most. */
+const POLYLABEL_GRID_CELLS = 64;
+/**
+ * Vertex visits one interior-point search may spend, both polylabel passes and
+ * the scanlines together: some tens of milliseconds whatever the vertex count
+ * or shape.
+ */
+const INTERIOR_POINT_WORK = 3_000_000;
+/** Scanlines across the polygon in the last fallback; fewer when the budget is spent, never fewer than the minimum. */
+const SCANLINES = 64;
+const SCANLINES_MIN = 8;
 
 /**
  * The pole of inaccessibility: the point inside the polygon farthest from its
@@ -345,6 +402,14 @@ const POLYLABEL_MAX_CELLS = 20_000;
  * grid search of Agafonkin's polylabel (Mapbox, 2016), written out here.
  */
 export function polylabel(polygon: Polygon, precision?: number): Coord {
+  return poleSearch(polygon, precision, { left: INTERIOR_POINT_WORK }).point;
+}
+
+/**
+ * polylabel within a work budget, which it draws down; and whether it stopped
+ * on its cell limit or the budget with cells left to look at.
+ */
+function poleSearch(polygon: Polygon, precision: number | undefined, budget: WorkBudget): { point: Coord; exhausted: boolean } {
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
@@ -358,32 +423,48 @@ export function polylabel(polygon: Polygon, precision?: number): Coord {
   const width = maxX - minX;
   const height = maxY - minY;
   const size = Math.min(width, height);
-  if (size <= 0) return [minX, minY];
+  if (size <= 0) return { point: [minX, minY], exhausted: false };
   const tolerance = precision ?? size / 100;
+  let segments = 0;
+  for (const ring of polygon) segments += ring.length;
+  const make = (x: number, y: number, h: number): Cell => {
+    budget.left -= segments;
+    return cell(x, y, h, polygon);
+  };
+  const affordable = (cells: number): boolean => budget.left >= cells * segments;
 
+  // Square cells of the shorter side, but at most POLYLABEL_GRID_CELLS along
+  // the longer one: a thin strip would otherwise need width/height cells. The
+  // column and row counters also end the loops when the step is below the
+  // floating-point resolution of the coordinates and x += side stops advancing.
   const queue = new CellQueue();
-  const half = size / 2;
-  for (let x = minX; x < maxX; x += size) {
-    for (let y = minY; y < maxY; y += size) queue.push(cell(x + half, y + half, half, polygon));
+  const side = Math.max(size, Math.max(width, height) / POLYLABEL_GRID_CELLS);
+  const half = side / 2;
+  const columns = Math.ceil(width / side) + 1;
+  const rows = Math.ceil(height / side) + 1;
+  let seen = 0;
+  for (let x = minX, i = 0; x < maxX && i < columns && seen < POLYLABEL_MAX_CELLS && affordable(1); x += side, i += 1) {
+    for (let y = minY, j = 0; y < maxY && j < rows && seen < POLYLABEL_MAX_CELLS && affordable(1); y += side, j += 1, seen += 1) {
+      queue.push(make(x + half, y + half, half));
+    }
   }
   const centroid = polygonCentroid(polygon);
-  let best = cell(centroid[0], centroid[1], 0, polygon);
-  const middle = cell(minX + width / 2, minY + height / 2, 0, polygon);
+  let best = make(centroid[0], centroid[1], 0);
+  const middle = make(minX + width / 2, minY + height / 2, 0);
   if (middle.distance > best.distance) best = middle;
 
-  let seen = 0;
-  while (queue.size && seen < POLYLABEL_MAX_CELLS) {
+  while (queue.size && seen < POLYLABEL_MAX_CELLS && affordable(4)) {
     const current = queue.pop()!;
     seen += 1;
     if (current.distance > best.distance) best = current;
     if (current.max - best.distance <= tolerance) continue;
     const h = current.half / 2;
-    queue.push(cell(current.x - h, current.y - h, h, polygon));
-    queue.push(cell(current.x + h, current.y - h, h, polygon));
-    queue.push(cell(current.x - h, current.y + h, h, polygon));
-    queue.push(cell(current.x + h, current.y + h, h, polygon));
+    queue.push(make(current.x - h, current.y - h, h));
+    queue.push(make(current.x + h, current.y - h, h));
+    queue.push(make(current.x - h, current.y + h, h));
+    queue.push(make(current.x + h, current.y + h, h));
   }
-  return [best.x, best.y];
+  return { point: [best.x, best.y], exhausted: queue.size > 0 };
 }
 
 /** The middle of the widest stretch of the polygon on the horizontal line through y. */
@@ -410,10 +491,14 @@ function scanlinePoint(polygon: Polygon, y: number): Coord | undefined {
 }
 
 /** The widest horizontal stretch over a number of scanlines across the polygon's height. */
-function widestScanlinePoint(polygon: Polygon, lines = 64): Coord | undefined {
-  const ys = polygon[0].map(([, y]) => y);
-  const minY = Math.min(...ys);
-  const maxY = Math.max(...ys);
+function widestScanlinePoint(polygon: Polygon, lines = SCANLINES): Coord | undefined {
+  // A loop, not Math.min(...ys): spreading a ring of some 100k vertices overflows the stack.
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const [, y] of polygon[0]) {
+    minY = Math.min(minY, y);
+    maxY = Math.max(maxY, y);
+  }
   let best: Coord | undefined;
   let widest = -1;
   for (let k = 1; k <= lines; k += 1) {
@@ -433,18 +518,31 @@ function widestScanlinePoint(polygon: Polygon, lines = 64): Coord | undefined {
  * The area centroid when it lies inside the polygon (not in a hole), else its
  * pole of inaccessibility. For a strip much thinner than its bbox, where the
  * pole search can stop on a point just outside, a finer search and then
- * scanlines across the polygon make sure the point lands inside.
+ * scanlines across the polygon make sure the point lands inside. All of it
+ * within one work budget (INTERIOR_POINT_WORK): the finer search does not
+ * start once the first has spent it, and keeps back what the scanlines need.
  */
 export function polygonInteriorPoint(polygon: Polygon): Coord {
   const centroid = polygonCentroid(polygon);
   if (pointInPolygon(centroid, polygon)) return centroid;
-  const pole = polylabel(polygon);
+  let vertices = 0;
+  for (const ring of polygon) vertices += ring.length;
+  // One scanline costs about three passes over the vertices.
+  const scanlineCost = 3 * vertices;
+  const budget: WorkBudget = { left: INTERIOR_POINT_WORK };
+  const search = poleSearch(polygon, undefined, budget);
+  const pole = search.point;
   if (pointInPolygon(pole, polygon)) return pole;
-  const finer = polylabel(polygon, 0);
-  if (pointInPolygon(finer, polygon)) return finer;
+  // A search that ran out of cells or budget runs out again with precision 0; the scanlines below are cheap.
+  const reserve = Math.min(budget.left, SCANLINES * scanlineCost);
+  if (!search.exhausted && budget.left - reserve >= 4 * vertices) {
+    const finer = poleSearch(polygon, 0, { left: budget.left - reserve }).point;
+    if (pointInPolygon(finer, polygon)) return finer;
+  }
   const scan = scanlinePoint(polygon, centroid[1]);
   if (scan && pointInPolygon(scan, polygon)) return scan;
-  return widestScanlinePoint(polygon) ?? pole;
+  const lines = Math.max(SCANLINES_MIN, Math.min(SCANLINES, Math.floor(reserve / scanlineCost)));
+  return widestScanlinePoint(polygon, lines) ?? pole;
 }
 
 /** The largest part of a multipolygon (by area, holes subtracted). */

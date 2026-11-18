@@ -1,5 +1,6 @@
 import type { AppConfig } from "../types.js";
 import { getJson } from "../utils/http.js";
+import { InvalidInputError } from "../utils/response.js";
 
 /**
  * EP-Online — het landelijke register van energielabels (RVO).
@@ -177,7 +178,15 @@ export class EpOnlineSource {
     let query: Record<string, string> | undefined;
 
     if (bagId) {
-      url = `${EP_ONLINE_BASE}/PandEnergielabel/AdresseerbaarObject/${encodeURIComponent(bagId)}`;
+      // encodeURIComponent leaves "." and "..", which would address another
+      // path on the same host with the key attached.
+      if (bagId === "." || bagId === "..") {
+        throw new InvalidInputError(
+          `ep_online_energielabel: ongeldige bagId '${bagId}'; verwacht een BAG verblijfsobject-id.`,
+          "Geef het verblijfsobject-id van 16 cijfers (bijv. uit bag_address_detail), of postcode en huisnummer.",
+        );
+      }
+      url =`${EP_ONLINE_BASE}/PandEnergielabel/AdresseerbaarObject/${encodeURIComponent(bagId)}`;
       params.bagId = bagId;
     } else {
       const postcode = optString(args.postcode);
@@ -186,8 +195,9 @@ export class EpOnlineSource {
           ? String(args.huisnummer).trim()
           : undefined;
       if (!postcode || !huisnummer) {
-        throw new Error(
+        throw new InvalidInputError(
           "ep_online_energielabel vereist postcode + huisnummer, of een bagId.",
+          "Geef postcode en huisnummer (bijv. 1012JS en 1), eventueel met huisletter of toevoeging, of een bagId.",
         );
       }
       const normalizedPostcode = normalizePostcode(postcode);

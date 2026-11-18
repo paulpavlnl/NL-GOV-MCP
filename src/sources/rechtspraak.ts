@@ -52,6 +52,7 @@ type RechtspraakSortOrder =
   | "UitspraakDatumAsc";
 
 const RECHTSPRAAK_SEARCH_PAGE = "https://uitspraken.rechtspraak.nl/resultaat";
+/** Keyword search of uitspraken.rechtspraak.nl. Requests go out with the server's default User-Agent. */
 const RECHTSPRAAK_SEARCH_API = "https://uitspraken.rechtspraak.nl/api/zoek";
 const RECHTSPRAAK_CONTENT = "https://data.rechtspraak.nl/uitspraken/content";
 
@@ -109,7 +110,7 @@ function mapResult(item: RechtspraakApiResult): RechtspraakItem {
 }
 
 /** Where a human can continue the search themselves when this server found nothing. */
-function searchPageUrl(query: string): string {
+export function searchPageUrl(query: string): string {
   const explicitEcli = extractEcli(query);
   return explicitEcli
     ? `${RECHTSPRAAK_CONTENT}?id=${encodeURIComponent(explicitEcli)}`
@@ -1099,8 +1100,7 @@ export class RechtspraakSource {
       Proceduresoorten: [] as Array<Record<string, unknown>>,
     };
 
-    const referer = `${RECHTSPRAAK_SEARCH_PAGE}?zoekterm=${encodeURIComponent(searchTerm)}&inhoudsindicatie=zt0&sort=${encodeURIComponent(sortOrder)}&publicatiestatus=ps1`;
-
+    // Only Accept and Content-Type are set here; the default User-Agent goes out.
     const { data, meta } = await postJson<RechtspraakApiResponse>(
       RECHTSPRAAK_SEARCH_API,
       payload,
@@ -1110,10 +1110,6 @@ export class RechtspraakSource {
         headers: {
           Accept: "application/json, text/plain, */*",
           "Content-Type": "application/json",
-          Referer: referer,
-          "User-Agent":
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
-          __RequestVerificationToken: "ELEMENT_NOT_FOUND",
         },
       },
     );
@@ -1186,26 +1182,6 @@ export class RechtspraakSource {
         ...(filterIdentifier ? { publicatieFilter: filterIdentifier } : {}),
       },
       ...(accessNotes.length ? { access_note: accessNotes.join(" ") } : {}),
-    };
-  }
-
-  /**
-   * The search service was unreachable.
-   *
-   * Returns nothing rather than a synthesised "fallback uitspraak" record: an
-   * invented ruling is the last thing a legal question should get back, and the
-   * note carries a working search link instead.
-   */
-  fallback(args: { query: string; rows: number }) {
-    return {
-      items: [] as RechtspraakItem[],
-      total: 0,
-      endpoint: `${RECHTSPRAAK_SEARCH_API} (niet bereikbaar)`,
-      params: {
-        term: args.query,
-        rows: String(args.rows),
-      },
-      access_note: `De Rechtspraak-zoekservice was niet bereikbaar, dus er zijn geen uitspraken opgehaald voor '${args.query}'. Probeer het later opnieuw of zoek op ${searchPageUrl(args.query)}.`,
     };
   }
 }

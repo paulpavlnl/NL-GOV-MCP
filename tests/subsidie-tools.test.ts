@@ -76,10 +76,10 @@ describe("subsidy tools", () => {
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);
     const programme = await call("eu_funding_search", { programme: "Geen Programma" });
-    expect(programme).toMatchObject({ error: "unexpected" });
+    expect(programme).toMatchObject({ error: "invalid_input" });
     expect(programme.message).toContain("Geen Programma");
     const host = await call("nl_onderzoek_call_get", { url: "https://www.example.org/calls/x" });
-    expect(host).toMatchObject({ error: "unexpected" });
+    expect(host).toMatchObject({ error: "invalid_input" });
     expect(fetch).not.toHaveBeenCalled();
   });
 });

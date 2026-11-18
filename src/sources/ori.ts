@@ -2,6 +2,7 @@ import type { AppConfig } from "../types.js";
 import { getJson, postJson, SourceRequestError } from "../utils/http.js";
 import { htmlToText } from "../utils/html-text.js";
 import { logger } from "../utils/logger.js";
+import { InvalidInputError } from "../utils/response.js";
 import { placeKey, placeVariants } from "../utils/place-aliases.js";
 
 /**
@@ -1595,8 +1596,8 @@ export class OriSource {
   async getDocument(args: OriDocumentArgs): Promise<OriDocumentResult> {
     const index = args.index.trim();
     const id = args.id.trim();
-    if (!ORI_INDEX_RE.test(index)) throw new Error(`'${index}' is geen ORI-indexnaam (bijv. 'ori_delft').`);
-    if (!ORI_ID_RE.test(id)) throw new Error(`'${id}' is geen ORI-record-id.`);
+    if (!ORI_INDEX_RE.test(index)) throw new InvalidInputError(`'${index}' is geen ORI-indexnaam (bijv. 'ori_delft').`, "Neem data.index over uit ori_search.");
+    if (!ORI_ID_RE.test(id)) throw new InvalidInputError(`'${id}' is geen ORI-record-id.`, "Neem data.id over uit ori_search.");
     const endpoint = `${ORI_BASE}/${index}/_doc/${encodeURIComponent(id)}`;
     const maxChars = Math.max(1, Math.min(ORI_TEXT_MAX_CHARS, args.max_chars ?? ORI_TEXT_DEFAULT_CHARS));
     const zoekterm = args.zoekterm?.trim() || undefined;

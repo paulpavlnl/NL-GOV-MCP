@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   DsoInputError,
+  DsoLookupError,
   DsoOmgevingsdocumentenSource,
   clearDsoCaches,
   documentLink,
@@ -426,7 +427,7 @@ describe("DSO locatie", () => {
   it("returns an error, not an empty success, when the address is not found", async () => {
     mockDso(() => ({ response: { numFound: 0, docs: [] } }));
     const err = await new DsoOmgevingsdocumentenSource(config, "test-key").search({ locatie: "Nergensstraat 1, Nergenshuizen", rows: 5 }).catch((e) => e);
-    expect(err).toBeInstanceOf(DsoInputError);
+    expect(err).toBeInstanceOf(DsoLookupError);
     expect(err.message).toContain("Nergensstraat 1, Nergenshuizen");
     expect(err.suggestion).toContain("Brennerbaan 150, Utrecht");
   });
@@ -434,7 +435,7 @@ describe("DSO locatie", () => {
   it("does not accept a fuzzy hit that shares only the house number", async () => {
     mockDso(() => ({ response: { docs: [{ weergavenaam: "Hoeverweg 99999G, Egmond aan den Hoef", type: "adres", centroide_rd: "POINT(108502.74 517351.14)" }] } }));
     const err = await new DsoOmgevingsdocumentenSource(config, "test-key").search({ locatie: "Xyzzystraat 99999 Nergenshuizen", rows: 5 }).catch((e) => e);
-    expect(err).toBeInstanceOf(DsoInputError);
+    expect(err).toBeInstanceOf(DsoLookupError);
   });
 
   it("accepts a postcode with house number", async () => {
@@ -584,7 +585,7 @@ describe("DSO document text", () => {
   it("turns a 404 into a clear error", async () => {
     mockDso(() => new Response("{}", { status: 404 }));
     const err = await new DsoOmgevingsdocumentenSource(config, "test-key").documentText({ identificatie: "_akn_nl_act_gm0344_2099_bestaatniet" }).catch((e) => e);
-    expect(err).toBeInstanceOf(DsoInputError);
+    expect(err).toBeInstanceOf(DsoLookupError);
     expect(err.message).toContain("niet gevonden");
   });
 });
@@ -804,7 +805,7 @@ describe("DSO locatie: places, postcodes and ambiguity", () => {
     ];
     pdok(LUNETTEN);
     const err = await search("Lunetten").catch((e) => e);
-    expect(err).toBeInstanceOf(DsoInputError);
+    expect(err).toBeInstanceOf(DsoLookupError);
     expect(err.message).toContain("niet eenduidig");
     expect(err.message).toContain("Knooppunt Lunetten, Utrecht");
 
@@ -848,7 +849,7 @@ describe("DSO locatie: places, postcodes and ambiguity", () => {
     ];
     pdok(SPUI);
     const err = await search("Spui 70").catch((e) => e);
-    expect(err).toBeInstanceOf(DsoInputError);
+    expect(err).toBeInstanceOf(DsoLookupError);
     expect(err.message).toContain("Spui 70, 1703MN Heerhugowaard; Spui 70, 2511BT 's-Gravenhage");
 
     resetDso();
@@ -861,7 +862,7 @@ describe("DSO locatie: places, postcodes and ambiguity", () => {
       doc("weg", "de Linden, Wagenborgen", { wp: "Wagenborgen", gm: "Eemsdelta" }, 12.1, "256000 593000"),
       doc("woonplaats", "Linden, Land van Cuijk, Noord-Brabant", { wp: "Linden", gm: "Land van Cuijk" }, 11.94, "189000 412000"),
     ]);
-    expect(await search("Unter den Linden 1 Berlin").catch((e) => e)).toBeInstanceOf(DsoInputError);
+    expect(await search("Unter den Linden 1 Berlin").catch((e) => e)).toBeInstanceOf(DsoLookupError);
 
     resetDso();
     pdok(
@@ -869,7 +870,7 @@ describe("DSO locatie: places, postcodes and ambiguity", () => {
       [doc("weg", "5 Meiplein, Utrecht", UTRECHT, 5.41, "136000 456000"), doc("adres", "Ariënslaan 5-5, 3573PT Utrecht", UTRECHT, 3.1, "137000 457000", { huisnummer: 5, huis_nlt: "5-5" })],
     );
     const err = await search("Nonexistentstraat 5 Utrecht").catch((e) => e);
-    expect(err).toBeInstanceOf(DsoInputError);
+    expect(err).toBeInstanceOf(DsoLookupError);
     expect(err.message).toContain("niet gevonden in Utrecht");
   });
 
@@ -910,7 +911,7 @@ describe("DSO locatie: places, postcodes and ambiguity", () => {
     });
     for (const input of ["Utrecht Centraal Station", "Station Utrecht Centraal"]) {
       const err = await search(input).catch((e) => e);
-      expect(err).toBeInstanceOf(DsoInputError);
+      expect(err).toBeInstanceOf(DsoLookupError);
       expect(err.message).toBe(`Locatie '${input}' niet gevonden in Utrecht (PDOK Locatieserver).`);
     }
     // The place looked up, then searched within; no documents of Amsterdam asked for.

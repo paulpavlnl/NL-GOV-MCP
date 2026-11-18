@@ -1,5 +1,6 @@
 import type { AppConfig } from "../types.js";
 import { SourceRequestError, getJson } from "../utils/http.js";
+import { InvalidInputError } from "../utils/response.js";
 
 function normalize(value: unknown): string {
   return typeof value === "string" ? value.toLowerCase() : "";
@@ -56,6 +57,20 @@ function resolveDatasetVersion(datasetName: string): string {
   return match ? String(match.version ?? "1") : "1";
 }
 
+/**
+ * A caller's value as exactly one URL path segment: "/", "?" and "#" are encoded,
+ * and "." or ".." (which the URL parser would resolve away) are refused.
+ */
+function pathSegment(value: string, name: string): string {
+  if (value === "" || value === "." || value === "..") {
+    throw new InvalidInputError(
+      `Ongeldige ${name} '${value}' voor de KNMI Open Data API`,
+      "Geef datasetName en datasetVersion zoals knmi_datasets of knmi_search_datasets ze noemen (bijv. '10-minute-in-situ-meteorological-observations', versie '1.0') en een bestandsnaam uit knmi_latest_files; een lege waarde, '.' of '..' wordt geweigerd.",
+    );
+  }
+  return encodeURIComponent(value);
+}
+
 export class KnmiSource {
   constructor(private readonly config: AppConfig, private readonly apiKey: string) {}
 
@@ -106,7 +121,7 @@ export class KnmiSource {
 
   async latestFiles(datasetName: string, datasetVersion: string | undefined, top: number) {
     const version = datasetVersion || resolveDatasetVersion(datasetName);
-    const endpoint = `${this.config.endpoints.knmi}/datasets/${datasetName}/versions/${version}/files`;
+    const endpoint = `${this.config.endpoints.knmi}/datasets/${pathSegment(datasetName, "datasetName")}/versions/${pathSegment(version, "datasetVersion")}/files`;
     // Newest first: without orderBy/sorting the API lists by filename ascending, i.e. the oldest files.
     const params = { maxKeys: String(top), orderBy: "created", sorting: "desc" };
     const { data, meta } = await getJson<Record<string, unknown>>(endpoint, {
@@ -118,7 +133,7 @@ export class KnmiSource {
   }
 
   async fileDownloadUrl(datasetName: string, datasetVersion: string, filename: string) {
-    const endpoint = `${this.config.endpoints.knmi}/datasets/${datasetName}/versions/${datasetVersion}/files/${filename}/url`;
+    const endpoint = `${this.config.endpoints.knmi}/datasets/${pathSegment(datasetName, "datasetName")}/versions/${pathSegment(datasetVersion, "datasetVersion")}/files/${pathSegment(filename, "filename")}/url`;
     const { data, meta } = await getJson<Record<string, unknown>>(endpoint, {
       headers: this.headers(),
     });

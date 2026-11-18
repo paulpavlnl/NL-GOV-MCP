@@ -34,7 +34,7 @@
 import type { AppConfig, MCPErrorCode, MCPErrorResponse } from "../types.js";
 import { getText, SourceRequestError } from "../utils/http.js";
 import { htmlToText } from "../utils/html-text.js";
-import { errorResponse, mapSourceError } from "../utils/response.js";
+import { errorResponse, InvalidInputError, mapSourceError } from "../utils/response.js";
 
 const NWO_ORIGIN = "https://www.nwo.nl";
 const ZONMW_ORIGIN = "https://www.zonmw.nl";
@@ -126,10 +126,19 @@ const ZONMW_HOSTS = new Set(["www.zonmw.nl", "zonmw.nl"]);
 const NWO_CALL_PATH = /^\/(?:en\/)?calls\/[^/]+(?:\/[^/]+)?\/?$/;
 const ZONMW_CALL_PATH = /^\/(?:nl\/subsidie|en\/subsidy)\/[^/]+\/?$/;
 
-export class OnderzoekscallInputError extends Error {
-  constructor(message: string, public readonly suggestion?: string) {
-    super(message);
+/** A url this source does not read, refused before any request; reported as invalid_input. */
+export class OnderzoekscallInputError extends InvalidInputError {
+  constructor(message: string, suggestion?: string) {
+    super(message, suggestion);
     this.name = "OnderzoekscallInputError";
+  }
+}
+
+/** A fetched page that turns out not to be a call page: an answer of the site, not a refused argument. */
+export class OnderzoekscallPageError extends Error {
+  constructor(message: string, readonly suggestion?: string) {
+    super(message);
+    this.name = "OnderzoekscallPageError";
   }
 }
 
@@ -1218,7 +1227,7 @@ export class OnderzoekscallsSource {
     });
     const parsed = organisation === "nwo" ? parseNwoCallPage(data, url, now) : parseZonmwCallPage(data, url);
     if (!parsed) {
-      throw new OnderzoekscallInputError(
+      throw new OnderzoekscallPageError(
         `${url} is geen ${organisation === "nwo" ? "callpagina" : "subsidiepagina"} (geen titel met kenmerken gevonden).`,
         "Geef de url van een call uit nl_onderzoek_calls_search.",
       );
@@ -1336,7 +1345,8 @@ export function amsterdamDay(iso: string | undefined): string | undefined {
 
 /** Error mapping for both tools: input errors and a missing page get their own message. */
 export function mapOnderzoekscallError(error: unknown): MCPErrorResponse {
-  if (error instanceof OnderzoekscallInputError) return errorResponse({ error: "unexpected", message: error.message, suggestion: error.suggestion });
+  // An OnderzoekscallInputError is an InvalidInputError: mapSourceError reports it as invalid_input.
+  if (error instanceof OnderzoekscallPageError) return errorResponse({ error: "unexpected", message: error.message, suggestion: error.suggestion });
   const zonmw = error instanceof SourceRequestError && error.endpoint.includes("zonmw.nl");
   if (error instanceof SourceRequestError && error.status === 404) {
     return errorResponse({

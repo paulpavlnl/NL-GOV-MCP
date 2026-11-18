@@ -1,5 +1,6 @@
 import type { AppConfig } from "../types.js";
 import { getJson, SourceRequestError } from "../utils/http.js";
+import { InvalidInputError } from "../utils/response.js";
 import { htmlToText } from "../utils/html-text.js";
 import {
   fetchPdfText,
@@ -212,14 +213,10 @@ export interface TenderNedDetail extends TenderNedItem {
   pdf_text_unavailable_reason?: string;
 }
 
-/** A request the source cannot honestly answer as asked (too broad, out of reach). */
-export class TenderNedInputError extends Error {
-  constructor(
-    message: string,
-    public readonly suggestion: string,
-    public readonly details?: Record<string, unknown>,
-  ) {
-    super(message);
+/** A request the source cannot honestly answer as asked (too broad, out of reach); reported as invalid_input. */
+export class TenderNedInputError extends InvalidInputError {
+  constructor(message: string, suggestion: string, details?: Record<string, unknown>) {
+    super(message, suggestion, details);
     this.name = "TenderNedInputError";
   }
 }
