@@ -1,6 +1,7 @@
 import { ENV_KEYS } from "../config.js";
 import type { AppConfig } from "../types.js";
 import { getText, SourceRequestError } from "../utils/http.js";
+import { InvalidInputError } from "../utils/response.js";
 import { parseXml } from "../utils/xml-parser.js";
 import { LIDO_VERZOEK, lidoGetText } from "../fork/lido-robuust.js"; // FORK (docs/FORK.md)
 
@@ -128,10 +129,11 @@ export function normalizeLidoType(input: string | null | undefined): string | nu
   const s = String(input).normalize("NFC").trim();
   if (!s) return null;
   if (s.length > TYPE_LABEL_MAX || !TYPE_LABEL_RE.test(s)) {
-    throw new Error(
+    throw new InvalidInputError(
       `Ongeldig informatietype voor 'type': ${JSON.stringify(s.slice(0, TYPE_LABEL_MAX))}. ` +
         `Gebruik alleen letters, cijfers, spaties en koppeltekens (max. ${TYPE_LABEL_MAX} tekens), ` +
         'bijvoorbeeld "Jurisprudentie", "Wet" of "Verdrag".',
+      'Geef een LiDO-documenttype als "Jurisprudentie", "Wet" of "Verdrag", of laat type weg.',
     );
   }
   return KNOWN_TYPE_BY_KEY.get(foldLabel(s)) ?? s;
@@ -217,20 +219,21 @@ function lidoAuthHeader(): Record<string, string> | undefined {
 function validateLidoInput(id: string, artikelInput: string | undefined) {
   const parsedId = parseLidoId(id);
   if (!parsedId) {
-    throw new Error(
+    throw new InvalidInputError(
       `Onbekend LiDO-identifier: ${JSON.stringify(String(id ?? "").slice(0, 100))}. ` +
         "Gebruik een ECLI (ECLI:NL:HR:2019:2006), CELEX-nummer (32016L0680), BWB-id (BWBR0011823) " +
         "of OEP-publicatie (stb-2018-401).",
+      "Geef een ECLI (ECLI:NL:HR:2019:2006), CELEX-nummer (32016L0680), BWB-id (BWBR0011823) of OEP-publicatie (stb-2018-401).",
     );
   }
   const artikelRaw = artikelInput?.trim();
   const artikel = artikelRaw ? artikelRaw : null;
   if (artikel !== null) {
     if (parsedId.kind !== "bwb") {
-      throw new Error("Parameter 'artikel' is alleen van toepassing op een BWB-id (bijv. BWBR0011823).");
+      throw new InvalidInputError("Parameter 'artikel' is alleen van toepassing op een BWB-id (bijv. BWBR0011823).", "Laat artikel weg, of geef een BWB-id met artikel (bijv. BWBR0005290 met artikel '7:658').");
     }
     if (!ARTIKEL_RE.test(artikel)) {
-      throw new Error(`Ongeldig artikelnummer: ${JSON.stringify(artikel.slice(0, 40))}.`);
+      throw new InvalidInputError(`Ongeldig artikelnummer: ${JSON.stringify(artikel.slice(0, 40))}.`, "Geef een artikelnummer als '3', '7:658' of '6.2', zonder het woord 'artikel'.");
     }
   }
   return { parsedId, artikel };

@@ -44,6 +44,8 @@ export type MCPErrorCode =
   | "malformed_response"
   | "not_configured"
   | "circuit_open"
+  /** The server refused a caller's argument before any request; `suggestion` says what is accepted. */
+  | "invalid_input"
   | "unexpected";
 
 export interface MCPErrorResponse {
@@ -99,5 +101,7 @@ export interface AppConfig {
     duoDatasets: string;
     duoRio: string;
     apiRegister: string;
+    /** JSON API of the API register; the website (`apiRegister`) stays the place for links. */
+    apiRegisterApi?: string;
   };
 }

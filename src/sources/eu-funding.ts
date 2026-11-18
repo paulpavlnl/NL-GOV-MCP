@@ -14,6 +14,7 @@ import {
 } from "../utils/connector-runtime.js";
 import { SourceRequestError } from "../utils/http.js";
 import { htmlToText } from "../utils/html-text.js";
+import { InvalidInputError } from "../utils/response.js";
 import { logger } from "../utils/logger.js";
 
 /**
@@ -193,10 +194,10 @@ export const EU_FUNDING_PROGRAMME_ABBREVIATIONS: readonly string[] = [
   ...new Set(EU_FUNDING_PROGRAMMES.filter((p) => !p.period).map((p) => p.abbreviation).filter((a): a is string => !!a)),
 ];
 
-/** A filter value the caller gave that cannot be used as is (bad date, unknown programme). */
-export class EuFundingInputError extends Error {
-  constructor(message: string) {
-    super(message);
+/** A filter value the caller gave that cannot be used as is (bad date, unknown programme); reported as invalid_input. */
+export class EuFundingInputError extends InvalidInputError {
+  constructor(message: string, suggestion?: string) {
+    super(message, suggestion);
     this.name = "EuFundingInputError";
   }
 }

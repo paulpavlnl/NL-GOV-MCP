@@ -46,27 +46,11 @@ function containsQuery(x: RdwRecord, query: string): boolean {
 export class RdwSource {
   constructor(private readonly config: AppConfig) {}
 
-  fallback(args: { query: string; rows: number }) {
-    const slug = args.query.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-    return {
-      items: [
-        {
-          id: `rdw-fallback-${slug}`,
-          title: `RDW fallback voor '${args.query}'`,
-          url: "https://opendata.rdw.nl/",
-          updated_at: "1970-01-01T00:00:00Z",
-          voertuigsoort: "onbekend",
-          source: "fallback",
-        },
-      ].slice(0, args.rows),
-      total: 1,
-      endpoint: `${RDW_ENDPOINT} (fallback)`,
-      params: { $limit: String(args.rows) },
-      access_note:
-        "Geen live RDW match of endpoint instabiliteit; fallbackrecord gebruikt.",
-    };
-  }
-
+  /**
+   * Tries the search strategies in turn. When every request failed, the last
+   * error is thrown; when at least one answered and none matched, the result is
+   * empty and `access_note` says so (and whether a strategy failed).
+   */
   async search(args: { query: string; rows: number }) {
     const q = args.query.trim();
     const normalizedKenteken = normalizeKenteken(q);
@@ -96,6 +80,9 @@ export class RdwSource {
       });
     }
 
+    let answered = 0;
+    let failed = 0;
+    let lastError: unknown;
     for (const params of attemptParams) {
       try {
         const timeoutMs = params.__timeoutMs ? Number(params.__timeoutMs) : 15_000;
@@ -104,6 +91,7 @@ export class RdwSource {
           query: cleanParams,
           timeoutMs,
         });
+        answered += 1;
 
         const raw = Array.isArray(data) ? data : [];
         const filtered =
@@ -134,17 +122,23 @@ export class RdwSource {
           endpoint: meta.url,
           params,
         };
-      } catch {
+      } catch (e) {
         // try next strategy
+        failed += 1;
+        lastError = e;
       }
     }
+
+    if (!answered && lastError !== undefined) throw lastError;
 
     return {
       items: [],
       total: 0,
       endpoint: RDW_ENDPOINT,
       params: { $limit: String(args.rows) },
-      access_note: "Geen live match in RDW dataset voor deze zoekterm.",
+      access_note: failed
+        ? `Geen live match in RDW dataset voor deze zoekterm; ${failed} van de ${attemptParams.length} zoekstappen mislukte, dus het resultaat kan onvolledig zijn.`
+        : "Geen live match in RDW dataset voor deze zoekterm.",
     };
   }
 }

@@ -432,7 +432,7 @@ describe("rechtspraak_uitspraak_get", () => {
   it("an invalid or non-Dutch ECLI is refused before any request", async () => {
     const urls = mockContent({});
     const invalid = await callTool({ ecli: "19/00135" });
-    expect(invalid.error).toBe("unexpected");
+    expect(invalid.error).toBe("invalid_input");
     expect(invalid.message).toContain("Geen geldige ECLI");
     const eu = await callTool({ ecli: "ECLI:EU:C:2014:317" });
     expect(eu.message).toContain("geen Nederlandse ECLI");
@@ -442,10 +442,10 @@ describe("rechtspraak_uitspraak_get", () => {
   it("two ECLIs, or a link from another site, are refused before any request", async () => {
     const urls = mockContent({});
     const two = await callTool({ ecli: "ECLI:NL:HR:2019:2006 ECLI:NL:HR:2020:1" });
-    expect(two.error).toBe("unexpected");
+    expect(two.error).toBe("invalid_input");
     expect(two.message).toContain("Meer dan één ECLI opgegeven (ECLI:NL:HR:2019:2006, ECLI:NL:HR:2020:1)");
     const foreign = await callTool({ ecli: "https://evil.example.com/?id=ECLI:NL:HR:2019:2006" });
-    expect(foreign.error).toBe("unexpected");
+    expect(foreign.error).toBe("invalid_input");
     expect(foreign.message).toContain("geen link van Rechtspraak.nl (host evil.example.com)");
     expect(urls).toEqual([]);
     expect(readEcliInput("https://deeplink.rechtspraak.nl/uitspraak?id=ECLI:NL:HR:2019:2006")).toEqual({ ecli: "ECLI:NL:HR:2019:2006" });
@@ -461,7 +461,7 @@ describe("rechtspraak_uitspraak_get", () => {
     expect(fragment.summary).toContain("sectie 'klachten' niet gevonden");
     const count = urls.length;
     const nothing = await callTool({ ecli: "ECLI:NL:HR:2019:2006", sectie: '") OR ("' });
-    expect(nothing.error).toBe("unexpected");
+    expect(nothing.error).toBe("invalid_input");
     expect(nothing.message).toContain("bevat geen nummer, sectie-id of woord");
     expect(urls).toHaveLength(count);
     expect(sectieIsReadable("4.3")).toBe(true);

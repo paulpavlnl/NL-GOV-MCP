@@ -14,12 +14,12 @@ import { rewriteKeepingSyntax, type BekendmakingenSource } from "../sources/beke
 import { ApiRegisterSource } from "../sources/api-register.js";
 import { tenderNedRecordFields, type TenderNedSource } from "../sources/tenderned.js";
 import { parseDocumentNumber, type EuCellarSource } from "../sources/eu-cellar.js";
-import { DsoOmgevingsdocumentenSource, DsoInputError, DSO_PRESENTEREN_BASE, type DsoSearchItem } from "../sources/dso-omgevingsdocumenten.js";
+import { DsoOmgevingsdocumentenSource, DsoInputError, DsoLookupError, DSO_PRESENTEREN_BASE, type DsoSearchItem } from "../sources/dso-omgevingsdocumenten.js";
 import { ALGORITMEREGISTER_SEARCH_ENDPOINT, clampAlgoritmeRows, summarizeAlgoritmeSearch, type AlgoritmeregisterSource } from "../sources/algoritmeregister.js";
 import { EU_FUNDING_SEARCH_ENDPOINT, buildEuFundingRequest, clampEuFundingRows, describeEuFundingItem, euFundingParams, summarizeEuFundingGet, summarizeEuFundingSearch, type EuFundingItem, type EuFundingSearchArgs, type EuFundingSource } from "../sources/eu-funding.js";
 import { RVO_MAX_ROWS, RVO_SUBSIDIES_ENDPOINT, summarizeRvoSearch, type RvoSubsidiesSearchArgs, type RvoSubsidiesSource, type RvoSubsidyItem, type RvoSubsidyStatus } from "../sources/rvo-subsidies.js";
 import { clampOnderzoekscallRows, mapOnderzoekscallError, summarizeOnderzoekscallsSearch, type OnderzoekscallItem, type OnderzoekscallsSearchArgs, type OnderzoekscallsSource } from "../sources/nl-onderzoekscalls.js";
-import { mapSourceError, successResponse, toMcpToolPayload, errorResponse } from "../utils/response.js";
+import { mapSourceError, successResponse, toMcpToolPayload, errorResponse, invalidInputResponse } from "../utils/response.js";
 import { SourceRequestError } from "../utils/http.js";
 import { parseTemporalRange } from "../utils/temporal.js";
 import { getConnectorHealth } from "../utils/connector-runtime.js";
@@ -315,6 +315,16 @@ const TK_LETTER_RE = /\bbrie(?:f|ven)\b.*\b(?:aan|naar|van)\s+de\s+(?:tweede\s+)
 /** The longest question nl_gov_ask takes: a question, not a document. */
 const NL_GOV_ASK_QUESTION_MAX_CHARS = 2_000;
 
+/** An IANA time zone this runtime knows ('Europe/Amsterdam'). */
+function isTimeZone(value: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The topic words for RVO's catalogue search, a long word cut to its stem.
  * RVO matches a word anywhere in a longer one, so the stem finds the other
@@ -435,6 +445,15 @@ export function registerNlGovAsk(server: McpServer, deps: NlGovAskDeps): void {
     const decodedQuestion = (() => {
       try { return decodeURIComponent(question.replace(/\+/g, " ")); } catch { return question; }
     })();
+    // A blank reference_now or timezone counts as absent; an unreadable one is the caller's and is refused.
+    reference_now = reference_now?.trim() || undefined;
+    timezone = timezone?.trim() || undefined;
+    if (reference_now !== undefined && Number.isNaN(new Date(reference_now).getTime())) {
+      return toMcpToolPayload(invalidInputResponse(`reference_now '${reference_now.slice(0, 60)}' is geen datum of tijdstip.`, "Geef reference_now als ISO-datum of -tijdstip, bijv. '2026-10-01' of '2026-10-01T09:00:00+02:00', of laat het weg."));
+    }
+    if (timezone !== undefined && !isTimeZone(timezone)) {
+      return toMcpToolPayload(invalidInputResponse(`timezone '${timezone.slice(0, 60)}' is geen bekende tijdzone.`, "Geef een IANA-tijdzone, bijv. 'Europe/Amsterdam', of laat timezone weg."));
+    }
     const temporal = parseTemporalRange(decodedQuestion, { now: reference_now, timeZone: timezone ?? config.temporal.defaultTimeZone });
     const questionForSearch = temporal?.cleanedQuery?.trim() ? temporal.cleanedQuery : decodedQuestion;
     const q = questionForSearch.toLowerCase();
@@ -1403,7 +1422,7 @@ export function registerNlGovAsk(server: McpServer, deps: NlGovAskDeps): void {
             dsoNotAnswered("dso_omgevingsdocumenten:no_results", "0 documenten");
           }
         } catch (e) {
-          if (e instanceof DsoInputError) {
+          if (e instanceof DsoInputError || e instanceof DsoLookupError) {
             // A name or address the DSO does not know: the other routes still get the question.
             dsoNotAnswered("dso_omgevingsdocumenten:input_not_resolved", `${e.message} ${e.suggestion}`.trim().replace(/\.$/, ""));
           } else {
@@ -2403,8 +2422,9 @@ export function registerNlGovAsk(server: McpServer, deps: NlGovAskDeps): void {
           });
         }
         // A place without a measuring station is a real answer, not an empty one.
+        // Stations that gave no measurements are not that answer.
         const note = (out as { access_note?: string }).access_note;
-        if (note && plaats) {
+        if (note && plaats && (out as { noStation?: boolean }).noStation) {
           return askSuccess({
             summary: `Router: Luchtmeetnet — geen meetstation voor ${plaats}`,
             records: [],

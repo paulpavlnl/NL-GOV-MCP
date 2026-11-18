@@ -55,7 +55,8 @@ export function sourceOfUrl(raw: string): string {
   if (host.endsWith("rijksoverheid.nl")) return "rijk";
   if (host.endsWith("rijksbegroting.nl") || host.endsWith("rijksfinancien.nl")) return "budget";
   if (host.endsWith("duo.nl") || host.endsWith("onderwijsregistratie.nl")) return "duo";
-  if (host === "apis.developer.overheid.nl") return "api";
+  // The register's JSON API has its own host; its website pages are the keyless fallback.
+  if (host === "api.developer.overheid.nl" || host === "apis.developer.overheid.nl") return "api";
   // A ruling read by its ECLI, apart from the case-law search.
   if (host === "data.rechtspraak.nl" && path.startsWith("/uitspraken/content")) return "rechtspraak_uitspraak";
   if (host.endsWith("rechtspraak.nl")) return "rechtspraak";

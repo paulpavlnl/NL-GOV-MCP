@@ -577,6 +577,13 @@ export interface BekendmakingLocation {
 /** More locations than this on one publication are not listed. */
 const MAX_LOCATIONS = 50;
 
+/**
+ * At most this many location elements of one publication are looked at, with
+ * or without a usable geometry: each costs a parse and an interior-point
+ * search, and elements without a geometry do not count toward MAX_LOCATIONS.
+ */
+const MAX_LOCATION_ELEMENTS = 4 * MAX_LOCATIONS;
+
 type Coord = [number, number];
 
 /**
@@ -667,9 +674,11 @@ function addressText(marking: Record<string, unknown>): string | undefined {
 function extractLocations(tpmeta: Record<string, unknown>): BekendmakingLocation[] {
   const markings = Array.isArray(tpmeta.gebiedsmarkering) ? tpmeta.gebiedsmarkering : [tpmeta.gebiedsmarkering];
   const out: BekendmakingLocation[] = [];
+  let examined = 0;
   for (const marking of markings) {
     for (const [kind, value] of Object.entries(asObject(marking))) {
       for (const entry of Array.isArray(value) ? value : [value]) {
+        if (++examined > MAX_LOCATION_ELEMENTS) return out;
         const element = asObject(entry);
         const place = placeOf(element);
         if (!place) continue;
@@ -1059,7 +1068,27 @@ export function normalizeBekendmakingIdentifier(input: string): string {
   return id.replace(MANIFESTATION_EXTENSION, "");
 }
 
-const INLINE_XML_TAGS = /<\/?(?:nadruk|extref|intref|sup|sub|inf|unl|i|b|u|span|a)\b[^>]*>/gi;
+const INLINE_XML_TAG_OPEN = /<\/?(?:nadruk|extref|intref|sup|sub|inf|unl|i|b|u|span|a)\b/gi;
+
+/**
+ * value.replace(/OPEN[\s\S]*?CLOSE/g, replacement) in one linear pass (both
+ * patterns global; "[^>]*>" is the same with CLOSE ">"). The regex scans to the
+ * end of the input for every opener that no closer follows; when none follows,
+ * no later opener can match either, so the scan stops there.
+ */
+function replaceDelimited(value: string, open: RegExp, close: RegExp, replacement: string): string {
+  open.lastIndex = 0;
+  let out = "";
+  let from = 0;
+  for (let start = open.exec(value); start; start = open.exec(value)) {
+    close.lastIndex = open.lastIndex;
+    if (!close.exec(value)) break;
+    out += value.slice(from, start.index) + replacement;
+    from = close.lastIndex;
+    open.lastIndex = from;
+  }
+  return out + value.slice(from);
+}
 
 /**
  * Text of a KOOP publication XML. Element boundaries become spaces — "<al>" is a
@@ -1067,12 +1096,11 @@ const INLINE_XML_TAGS = /<\/?(?:nadruk|extref|intref|sup|sub|inf|unl|i|b|u|span|
  * glue "GEMEENTEBLAD" onto "Officiële uitgave".
  */
 export function publicationXmlToText(xml: string): string {
-  const body = xml
-    .replace(/<\?[\s\S]*?\?>/g, " ")
-    .replace(/<!--[\s\S]*?-->/g, " ")
-    .replace(/<metadata\b[\s\S]*?<\/metadata>/gi, " ")
-    .replace(INLINE_XML_TAGS, "")
-    .replace(/<[^>]*>/g, " ");
+  let body = replaceDelimited(xml, /<\?/g, /\?>/g, " ");
+  body = replaceDelimited(body, /<!--/g, /-->/g, " ");
+  body = replaceDelimited(body, /<metadata\b/gi, /<\/metadata>/gi, " ");
+  body = replaceDelimited(body, INLINE_XML_TAG_OPEN, />/g, "");
+  body = replaceDelimited(body, /</g, />/g, " ");
   return htmlToText(body);
 }
 

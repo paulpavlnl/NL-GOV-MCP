@@ -1,6 +1,7 @@
 import type { AppConfig } from "../types.js";
 import { getJson, SourceRequestError } from "../utils/http.js";
 import { parseRdPoint } from "../utils/geo.js";
+import { InvalidInputError } from "../utils/response.js";
 
 const PDOK_LOCATIESERVER = "https://api.pdok.nl/bzk/locatieserver/search/v3_1";
 const BAG_REST = "https://api.bag.kadaster.nl/lvbag/individuelebevragingen/v2";
@@ -88,6 +89,18 @@ function isKeyRejected(err: unknown): boolean {
 const KEY_REJECTED_NOTE =
   "Het Kadaster weigert de BAG_API_KEY (401/403): oude of onjuiste key. Zet de juiste key in .env naast de server (BAG_API_KEY=...); die gaat vóór de waarde in claude_desktop_config.json.";
 
+/**
+ * An id as one URL path segment of a request that carries the API key.
+ * encodeURIComponent leaves "." and "..", which would address another path on
+ * the same host, so those are refused.
+ */
+function bagIdSegment(id: string): string {
+  if (!id || id === "." || id === "..") {
+    throw new InvalidInputError(`Ongeldig BAG-id '${id}'.`, "Geef een BAG-id van 16 cijfers, bijv. het verblijfsobject- of pand-id uit bag_address_detail of bag_lookup_address.");
+  }
+  return encodeURIComponent(id);
+}
+
 export class BagDetailSource {
   constructor(private readonly config: AppConfig) {}
 
@@ -111,7 +124,7 @@ export class BagDetailSource {
 
     const q = (args.query ?? "").trim();
     if (!q) {
-      throw new Error("bag_address_detail: ofwel `query` ofwel `pdok_id` is vereist.");
+      throw new InvalidInputError("bag_address_detail: ofwel `query` ofwel `pdok_id` is vereist.", "Geef query (bijv. 'Damrak 1 Amsterdam') of pdok_id uit pdok_search of bag_lookup_address.");
     }
     const endpoint = `${PDOK_LOCATIESERVER}/free`;
     const params = {
@@ -144,7 +157,7 @@ export class BagDetailSource {
   }
 
   async getVerblijfsobject(id: string, apiKey: string) {
-    const endpoint = `${BAG_REST}/verblijfsobjecten/${encodeURIComponent(id)}`;
+    const endpoint = `${BAG_REST}/verblijfsobjecten/${bagIdSegment(id)}`;
     const { data, meta } = await getJson<BagVerblijfsobjectResponse>(endpoint, {
       headers: {
         "X-Api-Key": apiKey,
@@ -158,7 +171,7 @@ export class BagDetailSource {
   }
 
   async getPand(id: string, apiKey: string) {
-    const endpoint = `${BAG_REST}/panden/${encodeURIComponent(id)}`;
+    const endpoint = `${BAG_REST}/panden/${bagIdSegment(id)}`;
     const { data, meta } = await getJson<BagPandResponse>(endpoint, {
       headers: {
         "X-Api-Key": apiKey,

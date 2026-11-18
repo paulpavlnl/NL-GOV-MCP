@@ -50,11 +50,40 @@ export function errorResponse(args: {
   };
 }
 
+/**
+ * A caller's argument that the server refuses: malformed, too long, out of range,
+ * a combination that does not go together, or a name that matches no single entry
+ * of the source's reference list. It is not a source failure, so trying again with
+ * the same argument does not help: `suggestion` says what is accepted instead.
+ * mapSourceError reports it as `invalid_input`. The per-source input errors extend
+ * it; a document, address or page that the source looked up and did not find is
+ * not one of these.
+ */
+export class InvalidInputError extends Error {
+  constructor(
+    message: string,
+    readonly suggestion?: string,
+    readonly details?: Record<string, unknown>,
+  ) {
+    super(message);
+    this.name = "InvalidInputError";
+  }
+}
+
+/** A refused argument as a tool result: `invalid_input` with its message, suggestion and details. */
+export function invalidInputResponse(message: string, suggestion?: string, details?: Record<string, unknown>): MCPErrorResponse {
+  return errorResponse({ error: "invalid_input", message, suggestion, details });
+}
+
 export function mapSourceError(
   error: unknown,
   sourceLabel: string,
   fallbackUrl?: string,
 ): MCPErrorResponse {
+  if (error instanceof InvalidInputError) {
+    return invalidInputResponse(error.message, error.suggestion, error.details);
+  }
+
   if (error instanceof SourceRequestError) {
     if (error.code === "timeout") {
       return errorResponse({

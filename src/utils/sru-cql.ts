@@ -37,9 +37,24 @@
  *     characters the server chokes on (braces, wildcards) are stripped.
  */
 
-/** Escape a value for use inside double-quoted CQL/SRU strings. */
+/**
+ * `{` and `}` make the KOOP SRU answer HTTP 500, even inside a quoted value, and
+ * a 5xx counts toward the connector's circuit breaker, which every client
+ * shares. They are removed from every caller value before it enters a query.
+ */
+const SRU_UNSAFE = /[{}]/g;
+
+/** A caller value without the characters the KOOP SRU fails on. */
+export function stripSruUnsafe(value: string): string {
+  return value.replace(SRU_UNSAFE, "");
+}
+
+/**
+ * Escape a value for use inside double-quoted CQL/SRU strings. Braces are
+ * dropped (see SRU_UNSAFE): they cannot be escaped.
+ */
 export function escapeSruValue(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return stripSruUnsafe(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
 /**
@@ -118,7 +133,7 @@ function isSearchable(token: string): boolean {
  * Split free text into CQL-safe bare terms — the plain tokenisation behind
  * freeTextCql(), unchanged since the KOOP collection tools started using it
  * except for an inner `+` (INNER_PLUS), which used to make the server reject
- * the query.
+ * the query, and braces (SRU_UNSAFE), which make it answer HTTP 500.
  *
  * Characters that carry CQL meaning (quotes, apostrophes, comparison operators,
  * parentheses, slashes) are stripped rather than escaped: as a bare term they
@@ -131,7 +146,7 @@ export function freeTextCqlTerms(input: string | undefined): string[] {
   return raw
     .replace(INNER_PLUS, " ")
     .split(/\s+/)
-    .map((token) => token.replace(/["'()<>=/\\]/g, "").trim())
+    .map((token) => stripSruUnsafe(token).replace(/["'()<>=/\\]/g, "").trim())
     // Drop punctuation-only leftovers and single characters, which only add noise.
     .filter((token) => token.length > 1 && /[\p{L}\p{N}]/u.test(token))
     // CQL keywords cannot appear as bare search terms.

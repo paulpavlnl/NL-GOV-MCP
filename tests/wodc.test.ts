@@ -314,7 +314,7 @@ describe("wodc_search tool", () => {
   it("rejects a bad date without calling the repository, and plans in dryRun", async () => {
     const urls = routedFetch(() => searchPage([], 0));
     const bad = await callTool("wodc_search", { date_from: "2025-13" });
-    expect(bad.error).toBe("unexpected");
+    expect(bad.error).toBe("invalid_input");
     expect(bad.message).toContain("geen datum");
     const reversed = await callTool("wodc_search", { date_from: "2026", date_to: "2024" });
     expect(reversed.message).toContain("na date_to");
@@ -478,6 +478,6 @@ describe("wodc_document_get tool", () => {
     const missingHandle = await callTool("wodc_document_get", { id: "hdl:20.500.12832/999999" });
     expect(missingHandle.summary).toContain("niet gevonden");
     const bad = await callTool("wodc_document_get", { id: "recidive" });
-    expect(bad.error).toBe("unexpected");
+    expect(bad.error).toBe("invalid_input");
   });
 });

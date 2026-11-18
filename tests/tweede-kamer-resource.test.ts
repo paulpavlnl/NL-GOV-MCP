@@ -47,10 +47,10 @@ describe("TweedeKamerSource.getDocument", () => {
 
   it("returns lean metadata by default", async () => {
     const fetchMock = vi.fn(async (url: string) => {
-      expect(url).toContain("/Document(doc-1)");
+      expect(url).toContain("/Document(00000000-0000-4000-8000-000000000001)");
       return new Response(
         JSON.stringify({
-          Id: "doc-1",
+          Id: "00000000-0000-4000-8000-000000000001",
           Onderwerp: "Test document",
           ContentType: "application/pdf",
           ContentLength: 12345,
@@ -62,11 +62,11 @@ describe("TweedeKamerSource.getDocument", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const source = new TweedeKamerSource(config);
-    const out = await source.getDocument({ id: "doc-1" });
+    const out = await source.getDocument({ id: "00000000-0000-4000-8000-000000000001" });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(out.item.resource_url).toContain("/Document(doc-1)/Resource");
-    expect(out.item.typed_resource_url).toContain("/Document(doc-1)/TK.DA.GGM.OData.Resource");
+    expect(out.item.resource_url).toContain("/Document(00000000-0000-4000-8000-000000000001)/Resource");
+    expect(out.item.typed_resource_url).toContain("/Document(00000000-0000-4000-8000-000000000001)/TK.DA.GGM.OData.Resource");
     expect(out.item.resource_resolved).toBeUndefined();
     expect(out.item.text_preview).toBeUndefined();
   });
@@ -74,7 +74,7 @@ describe("TweedeKamerSource.getDocument", () => {
   it("extracts the text layer of a pdf resource", async () => {
     const pdf = buildSamplePdf();
     const fetchMock = vi.fn(async (url: string) => {
-      if (url.includes("/Document(doc-2)/Resource")) {
+      if (url.includes("/Document(00000000-0000-4000-8000-000000000002)/Resource")) {
         return new Response(pdf.buffer as ArrayBuffer, {
           status: 200,
           headers: { "content-type": "application/pdf" },
@@ -83,7 +83,7 @@ describe("TweedeKamerSource.getDocument", () => {
 
       return new Response(
         JSON.stringify({
-          Id: "doc-2",
+          Id: "00000000-0000-4000-8000-000000000002",
           Onderwerp: "PDF document",
           ContentType: "application/pdf",
           ContentLength: 54321,
@@ -95,11 +95,11 @@ describe("TweedeKamerSource.getDocument", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const source = new TweedeKamerSource(config);
-    const out = await source.getDocument({ id: "doc-2", resolve_resource: true, include_text: true });
+    const out = await source.getDocument({ id: "00000000-0000-4000-8000-000000000002", resolve_resource: true, include_text: true });
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(out.item.resource_resolved).toBe(true);
-    expect(out.item.resolved_resource_url).toContain("/Document(doc-2)/Resource");
+    expect(out.item.resolved_resource_url).toContain("/Document(00000000-0000-4000-8000-000000000002)/Resource");
     expect(out.item.resource_content_type).toBe("application/pdf");
     expect(out.item.resource_content_length).toBe(54321);
     expect(out.item.text_preview).toBe("Hallo wereld en nog meer tekst");
@@ -111,7 +111,7 @@ describe("TweedeKamerSource.getDocument", () => {
 
   it("reports a typed reason when a pdf resource has no text layer", async () => {
     const fetchMock = vi.fn(async (url: string) => {
-      if (url.includes("/Document(doc-4)/Resource")) {
+      if (url.includes("/Document(00000000-0000-4000-8000-000000000004)/Resource")) {
         return new Response(new Uint8Array([1, 2, 3, 4]).buffer as ArrayBuffer, {
           status: 200,
           headers: { "content-type": "application/pdf" },
@@ -119,7 +119,7 @@ describe("TweedeKamerSource.getDocument", () => {
       }
 
       return new Response(
-        JSON.stringify({ Id: "doc-4", ContentType: "application/pdf", ContentLength: 4 }),
+        JSON.stringify({ Id: "00000000-0000-4000-8000-000000000004", ContentType: "application/pdf", ContentLength: 4 }),
         { status: 200, headers: { "content-type": "application/json" } },
       );
     });
@@ -127,7 +127,7 @@ describe("TweedeKamerSource.getDocument", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const source = new TweedeKamerSource(config);
-    const out = await source.getDocument({ id: "doc-4", include_text: true });
+    const out = await source.getDocument({ id: "00000000-0000-4000-8000-000000000004", include_text: true });
 
     expect(out.item.text_preview).toBeUndefined();
     expect(out.item.text_preview_unavailable_reason).toBe("pdf_not_a_pdf");
@@ -135,17 +135,17 @@ describe("TweedeKamerSource.getDocument", () => {
 
   it("fetches capped text preview for text-like resources", async () => {
     const fetchMock = vi.fn(async (url: string) => {
-      if (url.includes("/Document(doc-3)/Resource")) {
+      if (url.includes("/Document(00000000-0000-4000-8000-000000000003)/Resource")) {
         return new Response("<html><body><h1>Hallo</h1><p>wereld en nog meer tekst</p></body></html>", {
           status: 200,
           headers: { "content-type": "text/html" },
         });
       }
 
-      if (url.includes("/Document(doc-3)")) {
+      if (url.includes("/Document(00000000-0000-4000-8000-000000000003)")) {
         return new Response(
           JSON.stringify({
-            Id: "doc-3",
+            Id: "00000000-0000-4000-8000-000000000003",
             Onderwerp: "HTML document",
             ContentType: "text/html",
             ContentLength: 999,
@@ -160,12 +160,12 @@ describe("TweedeKamerSource.getDocument", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const source = new TweedeKamerSource(config);
-    const out = await source.getDocument({ id: "doc-3", include_text: true, max_chars: 12 });
+    const out = await source.getDocument({ id: "00000000-0000-4000-8000-000000000003", include_text: true, max_chars: 12 });
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(out.item.text_preview).toBe("Hallo wereld…");
     expect(out.item.text_preview_truncated).toBe(true);
     expect(out.item.text_preview_chars).toBe(13);
-    expect(out.item.resolved_resource_url).toContain("/Document(doc-3)/Resource");
+    expect(out.item.resolved_resource_url).toContain("/Document(00000000-0000-4000-8000-000000000003)/Resource");
   });
 });

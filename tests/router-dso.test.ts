@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { detectDsoIntent, registerTools } from "../src/tools.js";
 import { clearHttpCache } from "../src/utils/connector-runtime.js";
 import { appCache } from "../src/cache.js";
-import { clearDsoCaches, DsoInputError, DsoOmgevingsdocumentenSource, type DsoSearchItem, type DsoSearchResult } from "../src/sources/dso-omgevingsdocumenten.js";
+import { clearDsoCaches, DsoInputError, DsoLookupError, DsoOmgevingsdocumentenSource, type DsoSearchItem, type DsoSearchResult } from "../src/sources/dso-omgevingsdocumenten.js";
 import { SourceRequestError } from "../src/utils/http.js";
 import { jsonResponse } from "./helpers/config.js";
 
@@ -636,7 +636,7 @@ describe("nl_gov_ask: what the DSO route makes of the search", () => {
 
   it("falls through when the address is not found, and says so", async () => {
     vi.spyOn(DsoOmgevingsdocumentenSource.prototype, "search").mockRejectedValue(
-      new DsoInputError("Adres 'Nergensstraat 99999, Utrecht' niet gevonden in Utrecht (PDOK Locatieserver).", "Geef een adres in Nederland ('Brennerbaan 150, Utrecht')."),
+      new DsoLookupError("Adres 'Nergensstraat 99999, Utrecht' niet gevonden in Utrecht (PDOK Locatieserver).", "Geef een adres in Nederland ('Brennerbaan 150, Utrecht')."),
     );
     const out = await ask({ question: "Welke regels gelden op Nergensstraat 99999 in Utrecht?" });
 

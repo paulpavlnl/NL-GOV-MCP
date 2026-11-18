@@ -167,11 +167,11 @@ The tool handler in `tools.ts` maps `items` to `MCPRecord[]` and wraps provenanc
 | `http.ts` | `getJson()`, `getText()`, `postJson()`, `getBinary()` — all HTTP goes through here. Adds timeout (10s default), retry with exponential backoff (2 retries default), cache lookup, circuit breaker check, concurrency slot acquisition, and on request a crawl delay per connector (`crawlDelayMs`: the least time between two network requests, as a site's robots.txt asks; used for nwo.nl and zonmw.nl). Throws typed `SourceRequestError`. |
 | `connector-runtime.ts` | Per-connector state machine: health counters, circuit breaker (3 failures → open, 5 min cooldown, probe-on-recovery), concurrency limiter (max 3 in-flight, queue with 30s timeout), HTTP response cache (TTL by source category, max 1000 entries, LRU eviction). |
 | `response.ts` | Factory functions: `successResponse()`, `errorResponse()`, `mapSourceError()` (translates `SourceRequestError` → typed MCP error), `toMcpToolPayload()` (wraps result for MCP transport). |
-| `tool-runner.ts` | `buildFormattedResponse()` — the standard post-processing pipeline: cross-reference enrichment → pagination → output formatting → wrap as success response. Also `dryRunPayload()` and `singleConnectorVerbose()`. |
+| `tool-runner.ts` | `buildFormattedResponse()` — the standard post-processing pipeline: pagination → cross-reference enrichment of the returned page → output formatting → wrap as success response. Also `dryRunPayload()` and `singleConnectorVerbose()`. |
 | `temporal.ts` | Parses natural NL/EN date expressions (`vorige week`, `since 2020`, `tussen 2018 en 2022`) into ISO date ranges. Timezone-aware (default: `Europe/Amsterdam`). |
 | `query-rewriter.ts` | Strips question framing from queries ("Wat is...", "Geef mij...") to extract topic keywords. Three levels: `strict`, `moderate`, `passthrough`. |
 | `output-format.ts` | Converts `MCPRecord[]` to CSV, GeoJSON, or Markdown table. Handles pagination slicing. |
-| `cross-reference.ts` | Extracts identifiers (ECLI, BWBR, gemeente codes) from records and adds `related_links[]` for cross-source matching. |
+| `cross-reference.ts` | Extracts identifiers (ECLI, BWBR, gemeente codes) from records and adds `related_links[]` for cross-source matching: at most 20 ECLI and 20 BWB identifiers are read per record and at most 50 links are added per record. |
 | `cbs-trends.ts` | Enriches CBS observations with `previous_period`, `previous_value`, `delta`, `delta_pct` when result shape is unambiguous. |
 | `logger.ts` | Pino JSON logger, level via `LOG_LEVEL` env. |
 | `xml-parser.ts` | `fast-xml-parser` wrapper for SRU/XML sources. |
@@ -245,13 +245,29 @@ Every tool returns either a success or error shape, serialized as JSON via `toMc
 // Error
 {
   error: "timeout" | "http_error" | "rate_limited" | "malformed_response"
-       | "not_configured" | "circuit_open" | "unexpected";
+       | "not_configured" | "circuit_open" | "invalid_input" | "unexpected";
   message: string;
   suggestion?: string;
   retry_after?: number;
   details?: Record;
 }
 ```
+
+`invalid_input` is a refused argument, the same in every tool. A source throws an
+`InvalidInputError` (`src/utils/response.ts`) or one of its subclasses
+(`TweedeKamerInputError`, `DsoInputError`, `TenderNedInputError`, ...), and
+`mapSourceError` turns it into `invalid_input` with its message, `suggestion` and
+`details`; a check in `tools.ts` returns `invalidInputResponse(...)`. A lookup the
+source answers without a result (a DSO document or address not found:
+`DsoLookupError`) is not refused input and keeps its own code.
+
+`registerTools` hands every tool registration a guarded server
+(`withArgumentLengthGuard` in `tools.ts`): before a handler runs, `overlongArgument`
+checks every string in the arguments, nested ones and object keys included,
+against `ARGUMENT_MAX_CHARS` (2,000) or a higher limit from
+`ARGUMENT_MAX_CHARS_BY_TOOL` (SPARQL `query` 10,000, Tweede Kamer `filter` 5,000).
+An overlong argument is answered with `invalid_input` naming the argument and the
+limit. A tool added to `registerTools` later is covered without further work.
 
 ## Adding a new source connector
 
@@ -277,6 +293,6 @@ All three transports expose the same 96 tools and are created by `server.ts`:
 
 HTTP transports also serve `/health` and `/health/sources` for monitoring.
 
-Each HTTP session gets its own `McpServer` from `createServer()` (roughly 14 MB per session). Sessions are bounded: one without requests and without an open stream for `NL_GOV_SESSION_TTL_MS` (default 30 min) is closed, and at `NL_GOV_MAX_SESSIONS` (default 100 per transport) the least recently used one is closed to make room. `NL_GOV_HTTP_HOST` sets the interface to bind, `NL_GOV_ALLOWED_ORIGINS` an Origin allowlist (others get `403`). A body that is not valid JSON gets `400` with JSON-RPC error `-32700`, one over 1 MB `413` with `-32600`, without stack traces or file paths. Binding to all interfaces without an Origin allowlist logs a warning at startup; `NL_GOV_HTTP_SOURCE_HEALTH=false` answers `/health/sources` with `404`.
+Each HTTP session gets its own `McpServer` from `createServer()` (roughly 14 MB per session). Sessions are bounded: one without requests and without an open stream for `NL_GOV_SESSION_TTL_MS` (default 30 min) is closed, and at `NL_GOV_MAX_SESSIONS` (default 100 per transport) `SessionRegistry` shares the slots between network peers (`req.socket.remoteAddress`). It closes the least recently used session, idle before active, of the requesting peer when that peer holds the most sessions; else of the peer holding the most, when that peer holds more than the requester would after the new session; else the requester's own or another peer's idle session. An open stream is never closed for a peer that already holds as many sessions or more, and when nothing qualifies the new session gets `503` with `Retry-After` before a server is built. With a single peer (a reverse proxy) this is plain LRU. `NL_GOV_HTTP_HOST` sets the interface to bind, `NL_GOV_ALLOWED_ORIGINS` an Origin allowlist (others get `403`). A server bound to `127.0.0.1`, `::1` or `localhost` checks the `Host` header against DNS rebinding: only `localhost`, `127.0.0.1`, `[::1]` and the names in `NL_GOV_ALLOWED_HOSTS` pass (any port), others get `403` naming that setting, before any route; on other bindings the check applies only when `NL_GOV_ALLOWED_HOSTS` is set. When the check is active, the allowed names are logged once at startup. A local reverse proxy that forwards the public host name needs that name in `NL_GOV_ALLOWED_HOSTS`. A body that is not valid JSON gets `400` with JSON-RPC error `-32700`, one over 1 MB `413` with `-32600`, without stack traces or file paths. Binding to all interfaces without an Origin allowlist logs a warning at startup; `NL_GOV_HTTP_SOURCE_HEALTH=false` answers `/health/sources` with `404`.
 
 Streamable HTTP can also run without sessions (`NL_GOV_HTTP_STATELESS=true`), for clients and intermediaries that drop the `mcp-session-id` header. Each `POST /mcp` then gets a fresh `McpServer` and a `StreamableHTTPServerTransport` with `sessionIdGenerator: undefined`, both closed when the response ends; `GET` and `DELETE /mcp` answer `405`. No tool keeps per-session state and the server sends no notifications, sampling or elicitation requests, so both modes give the same results. At most `NL_GOV_HTTP_MAX_CONCURRENT` (default 50) requests run at once, more get `503` with `Retry-After`. `NL_GOV_HTTP_JSON_RESPONSE=true` switches POST replies from an SSE stream to `application/json`, in both modes.

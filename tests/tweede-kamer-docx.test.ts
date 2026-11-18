@@ -205,7 +205,7 @@ describe("TweedeKamerSource.getDocument with Word resources", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const out = await new TweedeKamerSource(testConfig).getDocument({ id: "doc-docx", include_text: true });
+    const out = await new TweedeKamerSource(testConfig).getDocument({ id: "00000000-0000-4000-8000-0000000000d0", include_text: true });
 
     expect(out.item.text_preview_source).toBe("docx_document_xml");
     expect(String(out.item.text_preview)).toContain("Antwoord: nee");
@@ -228,7 +228,7 @@ describe("TweedeKamerSource.getDocument with Word resources", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const out = await new TweedeKamerSource(testConfig).getDocument({ id: "doc-bad", include_text: true });
+    const out = await new TweedeKamerSource(testConfig).getDocument({ id: "00000000-0000-4000-8000-0000000000d0", include_text: true });
     expect(out.item.text_preview).toBeUndefined();
     expect(out.item.text_preview_unavailable_reason).toBe("docx_corrupt");
   });
@@ -252,7 +252,7 @@ describe("TweedeKamerSource.getDocument with Word resources", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const out = await new TweedeKamerSource(testConfig).getDocument({ id: "doc-huge", include_text: true });
+    const out = await new TweedeKamerSource(testConfig).getDocument({ id: "00000000-0000-4000-8000-0000000000d0", include_text: true });
     expect(out.item.text_preview).toBeUndefined();
     expect(out.item.text_preview_unavailable_reason).toBe("docx_too_large");
   });
@@ -263,7 +263,7 @@ describe("TweedeKamerSource.getDocument with Word resources", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const out = await new TweedeKamerSource(testConfig).getDocument({ id: "doc-gone", include_text: true });
+    const out = await new TweedeKamerSource(testConfig).getDocument({ id: "00000000-0000-4000-8000-0000000000d0", include_text: true });
     expect(out.item.text_preview_unavailable_reason).toBe("docx_fetch_failed:http_error");
   });
 
@@ -271,7 +271,7 @@ describe("TweedeKamerSource.getDocument with Word resources", () => {
     const fetchMock = vi.fn(async () => metadata("doc-xls", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"));
     vi.stubGlobal("fetch", fetchMock);
 
-    const out = await new TweedeKamerSource(testConfig).getDocument({ id: "doc-xls", include_text: true });
+    const out = await new TweedeKamerSource(testConfig).getDocument({ id: "00000000-0000-4000-8000-0000000000d0", include_text: true });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(out.item.text_preview).toBeUndefined();
     expect(out.item.text_preview_unavailable_reason).toBe("content_type_not_supported");
@@ -286,7 +286,7 @@ describe("TweedeKamerSource.getDocument with Word resources", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const out = await new TweedeKamerSource(testConfig).getDocument({ id: "doc-fake-xml", include_text: true });
+    const out = await new TweedeKamerSource(testConfig).getDocument({ id: "00000000-0000-4000-8000-0000000000d0", include_text: true });
     expect(out.item.text_preview).toBeUndefined();
     expect(out.item.text_preview_unavailable_reason).toBe("binary_content");
   });

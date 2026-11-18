@@ -59,15 +59,70 @@ interface ThemeItem {
 }
 
 /**
- * Canonical, keyless source of data.overheid.nl themes. The CKAN `group_list`
- * and `theme` facet are both empty, so we read the Overheid.nl taxonomy
- * beleidsagenda waardelijst instead (a static vocabulary).
+ * Canonical, keyless source of data.overheid.nl themes. CKAN groups are empty
+ * and the `theme` facet only lists URI fragments, so we read the Overheid.nl
+ * taxonomy beleidsagenda waardelijst instead (a static vocabulary). A dataset's
+ * `theme` field holds URIs of this list.
  */
 const TAXONOMY_WAARDELIJST_URL =
   "https://waardelijsten.dcat-ap-donl.nl/overheid_taxonomiebeleidsagenda.json";
 
+/**
+ * A caller value as one term of a CKAN (Solr) filter query: a CKAN slug
+ * ("centraal-bureau-voor-de-statistiek") as is, anything else as one quoted
+ * phrase with `\` and `"` escaped. Unquoted, only the first word of
+ * "Gemeente Utrecht" would be fielded and Lucene syntax in a value (OR, *:*,
+ * parentheses) would change the filter. Undefined when nothing is left.
+ */
+export function ckanFilterValue(value: string | undefined): string | undefined {
+  const trimmed = (value ?? "").replace(/\s+/g, " ").trim();
+  if (!trimmed) return undefined;
+  if (/^[a-z0-9][a-z0-9_-]*$/.test(trimmed)) return trimmed;
+  return `"${trimmed.replace(/[\\"]/g, "\\$&")}"`;
+}
+
+const CKAN_SLUG = /^[a-z0-9][a-z0-9_-]*$/;
+
+/** Whitespace collapsed, trimmed, lower case: how caller values are compared to names. */
+function folded(value: string | undefined): string {
+  return (value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
 export class DataOverheidSource {
   constructor(private readonly config: AppConfig) {}
+
+  /**
+   * The CKAN `organization` field holds the slug (`name`). A slug goes as is; a
+   * title or name that `data_overheid_organizations` returns (case-insensitive)
+   * becomes its slug(s). Anything else goes as given.
+   */
+  private async organizationNames(organization: string | undefined): Promise<string[]> {
+    const value = (organization ?? "").replace(/\s+/g, " ").trim();
+    if (!value) return [];
+    if (CKAN_SLUG.test(value)) return [value];
+    const wanted = folded(value);
+    const { items } = await this.organizations();
+    const names = items
+      .filter((org) => folded(org.title) === wanted || folded(org.name) === wanted)
+      .map((org) => org.name ?? "")
+      .filter(Boolean);
+    return names.length ? [...new Set(names)] : [value];
+  }
+
+  /**
+   * A dataset's `theme` field holds URIs of the beleidsagenda waardelijst. A URI
+   * goes as is; a Dutch or English label or title that `data_overheid_themes`
+   * returns (case-insensitive) becomes its URI. Anything else goes as given.
+   */
+  private async themeUri(theme: string | undefined): Promise<string | undefined> {
+    const value = (theme ?? "").replace(/\s+/g, " ").trim();
+    if (!value) return undefined;
+    if (/^https?:\/\//i.test(value)) return value;
+    const wanted = folded(value);
+    const { items } = await this.themes();
+    const hit = items.find((item) => [item.name, item.name_en, item.title].some((label) => folded(label) === wanted));
+    return hit?.uri ?? value;
+  }
 
   async datasetsSearch(args: {
     query: string;
@@ -83,8 +138,13 @@ export class DataOverheidSource {
     };
 
     const fqParts: string[] = [];
-    if (args.organization) fqParts.push(`organization:${args.organization}`);
-    if (args.theme) fqParts.push(`groups:${args.theme}`);
+    const organizations = (await this.organizationNames(args.organization))
+      .map((name) => ckanFilterValue(name))
+      .filter((name): name is string => Boolean(name));
+    const theme = ckanFilterValue(await this.themeUri(args.theme));
+    if (organizations.length === 1) fqParts.push(`organization:${organizations[0]}`);
+    if (organizations.length > 1) fqParts.push(`organization:(${organizations.join(" OR ")})`);
+    if (theme) fqParts.push(`theme:${theme}`);
     if (fqParts.length) queryParams.fq = fqParts.join(" AND ");
 
     const endpoint = `${this.config.endpoints.dataOverheid}/package_search`;
@@ -137,7 +197,7 @@ export class DataOverheidSource {
       query: { all_fields: true, limit: 5000 },
     });
 
-    const raw = data.result ?? [];
+    const raw = Array.isArray(data.result) ? data.result : [];
     const items = raw.map((x) => (typeof x === "string" ? { name: x, title: x } : x));
     const result = { items, endpoint: meta.url };
     appCache.set(cacheKey, result, this.config.cacheTtlMs.dataOverheidDatasetList);

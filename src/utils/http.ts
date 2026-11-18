@@ -1,5 +1,6 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import {
+  ConnectorQueueFullError,
   acquireConnectorSlot,
   getCircuitDecision,
   getConnectorCacheTtlMs,
@@ -10,6 +11,7 @@ import {
   markConnectorCall,
   markConnectorFailure,
   markConnectorSuccess,
+  peekCircuitOpen,
   setHttpCache,
 } from "./connector-runtime.js";
 import { logger } from "./logger.js";
@@ -79,10 +81,19 @@ export interface RequestOptions {
    * count (the extra addresses of one request, src/fork/ip-herkansing.ts). A success still closes the circuit.
    */
   buitenCircuit?: boolean;
+  /**
+   * timeoutMs is a time budget the caller chose, shorter than the connector's own
+   * default: running out of it says nothing about the upstream, so such a timeout
+   * does not count toward the connector's circuit breaker, which every caller shares.
+   */
+  callerBudget?: boolean;
 }
 
 export interface HttpMeta {
+  /** The URL requested (with its query); see finalUrl for where redirects led. */
   url: string;
+  /** The URL that answered, when redirects led away from `url`. */
+  finalUrl?: string;
   status: number;
   elapsedMs: number;
   method: "GET" | "POST";
@@ -99,6 +110,13 @@ const DEFAULT_QUEUE_TIMEOUT_MS = 30_000;
 const MAX_RESPONSE_BYTES = 12 * 1024 * 1024;
 /** Never honor a Retry-After longer than this (seconds) — a slot must not be held indefinitely. */
 const MAX_RETRY_AFTER_S = 30;
+/** Redirects followed per request; one more fails the attempt. */
+const MAX_REDIRECTS = 5;
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+/** The only headers that go along once a redirect leaves the first URL's origin. */
+const CROSS_ORIGIN_HEADERS = new Set(["user-agent", "accept", "content-type"]);
+/** Headers that describe a request body; dropped with the body when a redirect turns a POST into a GET. */
+const BODY_HEADERS = new Set(["content-type", "content-encoding", "content-language", "content-location"]);
 
 /** Per connector with a crawl delay: when its next network request may start (epoch ms). */
 const nextCrawlStart = new Map<string, number>();
@@ -182,15 +200,47 @@ function parseRetryAfter(headerValue: string | null): number | undefined {
   return undefined;
 }
 
+function keepHeaders(headers: Record<string, string>, keep: (name: string) => boolean): Record<string, string> {
+  return Object.fromEntries(Object.entries(headers).filter(([name]) => keep(name.toLowerCase())));
+}
+
+/**
+ * fetch under one header-phase timeout for the whole redirect chain. Redirects are
+ * followed here, not by fetch: fetch keeps custom headers such as an API key on a
+ * redirect to another origin. Once a hop leaves the origin of the first URL, only
+ * the generic headers go along, also on later hops. The method changes as fetch
+ * changes it: 301/302/303 turn a POST into a GET without body, 307/308 keep both.
+ */
 async function fetchWithTimeout(
   url: string,
-  init: RequestInit,
+  init: { method: "GET" | "POST"; headers: Record<string, string>; body?: string; dispatcher?: unknown }, // FORK: dispatcher (docs/FORK.md)
   timeoutMs: number,
-): Promise<Response> {
+): Promise<{ response: Response; url: string }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let current = url;
+  let { method, headers, body } = init;
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    const origin = new URL(url).origin;
+    for (let hop = 0; ; hop += 1) {
+      const response = await fetch(current, { method, headers, body, redirect: "manual", signal: controller.signal, ...(init.dispatcher ? { dispatcher: init.dispatcher } : {}) } as RequestInit); // FORK: dispatcher (docs/FORK.md)
+      const location = REDIRECT_STATUSES.has(response.status) ? response.headers.get("location") : null;
+      if (location === null) return { response, url: current };
+
+      void response.body?.cancel().catch(() => {});
+      if (hop >= MAX_REDIRECTS) throw new Error(`More than ${MAX_REDIRECTS} redirects`);
+      const next = new URL(location, current);
+      if (next.protocol !== "https:" && next.protocol !== "http:") {
+        throw new Error(`Redirect to unsupported protocol '${next.protocol}'`);
+      }
+      if (method === "POST" && response.status !== 307 && response.status !== 308) {
+        method = "GET";
+        body = undefined;
+        headers = keepHeaders(headers, (name) => !BODY_HEADERS.has(name));
+      }
+      if (next.origin !== origin) headers = keepHeaders(headers, (name) => CROSS_ORIGIN_HEADERS.has(name));
+      current = next.toString();
+    }
   } finally {
     clearTimeout(timeout);
   }
@@ -295,6 +345,7 @@ interface CachedHttpPayload {
   status: number;
   headers: Array<[string, string]>;
   body: string;
+  finalUrl?: string;
 }
 
 interface RequestOutcome {
@@ -344,6 +395,7 @@ async function request(
       markConnectorCacheHit(connector);
       const meta: HttpMeta = {
         url: fullUrl,
+        ...(cached.value.finalUrl ? { finalUrl: cached.value.finalUrl } : {}),
         status: cached.value.status,
         elapsedMs: 0,
         method,
@@ -376,28 +428,41 @@ async function request(
   }
 
   const telMee = !options.buitenCircuit; // FORK (docs/FORK.md)
-  const circuit = telMee ? getCircuitDecision(connector) : { open: false as const, probe: false };
-  if (circuit.open) {
-    throw new SourceRequestError({
+  const circuitOpenError = (retryAfterS: number) =>
+    new SourceRequestError({
       message: `Circuit open for connector '${connector}'`,
       endpoint: fullUrl,
       code: "circuit_open",
       status: 503,
-      retryAfter: circuit.retryAfterS,
+      retryAfter: retryAfterS,
     });
-  }
+
+  const circuit = telMee ? getCircuitDecision(connector) : { open: false as const, probe: false, retryAfterS: 0 }; // FORK (docs/FORK.md)
+  if (circuit.open) throw circuitOpenError(circuit.retryAfterS);
+  // This request is the half-open probe: checking again must not ask for the probe a second time.
+  let holdsProbe = circuit.probe;
 
   const queueStart = Date.now();
   let releaseSlot: (() => void) | undefined;
 
   try {
     releaseSlot = await acquireConnectorSlot(connector, DEFAULT_QUEUE_TIMEOUT_MS);
-  } catch {
-    const error = new SourceRequestError({
-      message: `Request queue timeout after ${DEFAULT_QUEUE_TIMEOUT_MS}ms`,
-      endpoint: fullUrl,
-      code: "timeout",
-    });
+  } catch (queueError) {
+    // A full queue fails at once; like a queue timeout it does not count toward
+    // the circuit, and marking it frees the probe when this request held it.
+    const error = queueError instanceof ConnectorQueueFullError
+      ? new SourceRequestError({
+          message: queueError.message,
+          endpoint: fullUrl,
+          code: "rate_limited",
+          status: 503,
+          retryAfter: 1,
+        })
+      : new SourceRequestError({
+          message: `Request queue timeout after ${DEFAULT_QUEUE_TIMEOUT_MS}ms`,
+          endpoint: fullUrl,
+          code: "timeout",
+        });
     markConnectorFailure(connector, {
       countTowardCircuit: false,
       responseTimeMs: Date.now() - queueStart,
@@ -412,12 +477,18 @@ async function request(
 
   try {
     while (attempt <= retries) {
+      // Other requests may have opened the circuit while this one waited for its
+      // slot or for its retry: then it ends here, as a new request would.
+      const recheck = !telMee ? { open: false as const, retryAfterS: 0 } : holdsProbe ? peekCircuitOpen(connector) : getCircuitDecision(connector); // FORK (docs/FORK.md)
+      if (recheck.open) throw circuitOpenError(recheck.retryAfterS);
+      if ("probe" in recheck && recheck.probe) holdsProbe = true;
+
       await awaitCrawlDelay(connector, options.crawlDelayMs);
       const started = Date.now();
       attempt += 1;
 
       try {
-        const response = await fetchWithTimeout(
+        const { response, url: answeredUrl } = await fetchWithTimeout(
           fullUrl,
           {
             method,
@@ -428,17 +499,19 @@ async function request(
             },
             body: body ? JSON.stringify(body) : undefined,
             ...(options.dispatcher ? { dispatcher: options.dispatcher } : {}), // FORK (docs/FORK.md)
-          } as RequestInit,
+          },
           timeoutMs,
         );
 
         const networkElapsedMs = Date.now() - started;
         const totalElapsedMs = Date.now() - queueStart;
+        const finalUrl = answeredUrl !== fullUrl ? answeredUrl : undefined;
 
         logger.info(
           {
             method,
             url: safeUrl,
+            ...(finalUrl ? { finalUrl: redactUrl(finalUrl) } : {}),
             connector,
             status: response.status,
             attempt,
@@ -520,6 +593,7 @@ async function request(
               status: response.status,
               headers: headerPairs,
               body: bodyText,
+              ...(finalUrl ? { finalUrl } : {}),
             } satisfies CachedHttpPayload,
             cacheTtlMs,
             connector,
@@ -536,6 +610,7 @@ async function request(
           headers: response.headers,
           meta: {
             url: fullUrl,
+            ...(finalUrl ? { finalUrl } : {}),
             status: response.status,
             elapsedMs: totalElapsedMs,
             method,
@@ -556,7 +631,7 @@ async function request(
             error.code === "malformed_response"
           ) {
             markConnectorFailure(connector, {
-              countTowardCircuit: telMee && countsTowardCircuit(error), endpoint: fullUrl, // FORK (docs/FORK.md)
+              countTowardCircuit: telMee && countsTowardCircuit(error) && !(options.callerBudget && error.code === "timeout"), endpoint: fullUrl, // FORK (docs/FORK.md)
               responseTimeMs: Date.now() - queueStart,
             });
           }
@@ -575,8 +650,9 @@ async function request(
             endpoint: fullUrl,
             code: "timeout",
           });
+          // A timeout under the caller's own budget does not open the shared circuit.
           markConnectorFailure(connector, {
-            countTowardCircuit: telMee, endpoint: fullUrl, // FORK (docs/FORK.md)
+            countTowardCircuit: telMee && !options.callerBudget, endpoint: fullUrl, // FORK (docs/FORK.md)
             responseTimeMs: Date.now() - queueStart,
           });
           throw timeoutError;

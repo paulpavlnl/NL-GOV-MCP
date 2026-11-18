@@ -233,7 +233,7 @@ describe("officiele_bekendmakingen_search tool — bbox_rd and location", () => 
     const fetchMock = stubSru(() => xmlResponse(sruResponse([], 0)));
     for (const bbox_rd of [[1, 2, 3], [5.08, 52.07, 5.09, 52.08], "134028,453672,abc,454790", [135114, 453672, 134028, 454790]]) {
       const out = await callTool("officiele_bekendmakingen_search", { query: "", bbox_rd });
-      expect(out.error).toBe("unexpected");
+      expect(out.error).toBe("invalid_input");
       expect(out.message).toMatch(/^bbox_rd/);
     }
     expect(fetchMock).not.toHaveBeenCalled();

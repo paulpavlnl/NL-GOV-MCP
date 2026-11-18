@@ -164,6 +164,8 @@ export class LuchtmeetnetSource {
           total: 0,
           endpoint: STATIONS_ENDPOINT,
           params: { plaats: place },
+          /** The place has no measuring station (not: its stations gave no measurements). */
+          noStation: true,
           access_note: `Geen Luchtmeetnet-meetstation gevonden voor '${place}'. Het meetnet dekt niet elke plaats; probeer een grotere stad in de buurt of laat 'plaats' weg voor landelijke metingen.`,
         };
       }
@@ -178,6 +180,7 @@ export class LuchtmeetnetSource {
 
     // Strategy 1: /measurements (the original endpoint). One request per station
     // — the API filters on a single station_number at a time.
+    let measurementsFailed = false;
     try {
       const requests = stations.length
         ? stations.map((station) =>
@@ -216,10 +219,12 @@ export class LuchtmeetnetSource {
       }
     } catch {
       // fall through to LKI
+      measurementsFailed = true;
     }
 
-    // Strategy 2: /lki on iq.luchtmeetnet.nl with narrow time window
-    return this.latestViaLki({ ...args, stations });
+    // Strategy 2: /lki on iq.luchtmeetnet.nl with narrow time window. When that
+    // fails too, its error reaches the caller: there is no measurement to report.
+    return this.latestViaLki({ ...args, stations, measurementsFailed });
   }
 
   private async latestViaLki(args: {
@@ -227,6 +232,7 @@ export class LuchtmeetnetSource {
     plaats?: string;
     rows: number;
     stations?: StationEntry[];
+    measurementsFailed?: boolean;
   }) {
     // Use a 3-hour window so we get all stations' latest values
     const now = new Date();
@@ -305,6 +311,10 @@ export class LuchtmeetnetSource {
       : args.plaats
         ? ` Stationlijst was niet bereikbaar, dus '${args.plaats}' kon niet worden opgezocht; dit zijn landelijke metingen.`
         : "";
+    const primaryNote = args.measurementsFailed
+      ? "Luchtmeetnet /measurements endpoint onbereikbaar"
+      : "Luchtmeetnet /measurements gaf geen metingen";
+    const emptyNote = items.length ? "" : " De LKI gaf geen metingen in de laatste drie uur.";
 
     return {
       items,
@@ -313,34 +323,7 @@ export class LuchtmeetnetSource {
       total: null,
       endpoint: metaUrl,
       params: lkiParams,
-      access_note: `Luchtmeetnet /measurements endpoint onbereikbaar; LKI (Lucht Kwaliteits Index) data gebruikt. Schaal 1 (goed) t/m 11 (zeer slecht).${placeNote}`,
-    };
-  }
-
-  fallback(args: { component?: string; rows: number }) {
-    const component = (args.component ?? "pm25").toLowerCase();
-    const item: LuchtMeetnetMeasurement = enrich({
-      station_number: 0,
-      station_name: "fallback-station",
-      formula: component,
-      value: 0,
-      unit: "ug/m3",
-      timestamp_measured: "1970-01-01T00:00:00Z",
-      location: { latitude: 52.0, longitude: 5.0 },
-      mode: "deterministic-fallback",
-    });
-
-    return {
-      items: [item].slice(0, args.rows),
-      total: 1,
-      endpoint: `${MEASUREMENTS_ENDPOINT} (fallback)`,
-      params: {
-        page_size: String(args.rows),
-        order_by: "-timestamp_measured",
-        ...(args.component ? { formula: args.component } : {}),
-        mode: "deterministic-fallback",
-      },
-      access_note: "Luchtmeetnet API tijdelijk niet bereikbaar; fallback-measurement gebruikt.",
+      access_note: `${primaryNote}; LKI (Lucht Kwaliteits Index) data gebruikt. Schaal 1 (goed) t/m 11 (zeer slecht).${emptyNote}${placeNote}`,
     };
   }
 }

@@ -24,11 +24,11 @@
 - `tweede_kamer_documents`
   - zoekt in titel en onderwerp (metadata, niet de volledige tekst); alle zoekwoorden moeten voorkomen (AND)
   - woorden van maximaal 3 tekens en "quoted phrases" matchen als heel woord, langere woorden ook binnen langere woorden ('fietspad' vindt 'fietspaden'); `access_note` noemt de gezochte vormen
-  - `query` is optioneel naast `type` of een datum; `date_from`/`date_to` (YYYY-MM-DD, Nederlandse datum)
+  - `query` (max. 500 tekens) is optioneel naast `type` of een datum; `date_from`/`date_to` (YYYY-MM-DD, Nederlandse datum)
   - records linken naar de documentpagina op tweedekamer.nl; `pagination.total` is het echte aantal treffers
 - `tweede_kamer_search`
   - OData-zoektocht op elke entiteit van het Gegevensmagazijn (Document, Zaak, Activiteit, Besluit, Stemming, Persoon, Fractie, Kamerstukdossier, ...)
-  - `query` (AND, zelfde woordregels) is optioneel naast `filter` (ruwe OData `$filter`) of een datum; `date_from`/`date_to` filteren op de eigen datum van de entiteit
+  - `query` (AND, zelfde woordregels, max. 500 tekens) is optioneel naast `filter` (ruwe OData `$filter`) of een datum; `date_from`/`date_to` filteren op de eigen datum van de entiteit
   - `filter` en `orderby` gebruiken de veldnamen van API-versie v5 (`Document.Nummer`, `Zaak.Datum`, `Stemming.FractieNaam`, `Besluit.Soort`, ...); namen uit de oude v4/2.0-API (`DocumentNummer`, `GestartOp`, `ActorFractie`, `BesluitSoort`, ...) worden vertaald en `access_note` zegt dat, een veld dat v5 niet meer heeft (`Zaak.Status`, `Document.DatumRegistratie`, ...) geeft een fout die het veld noemt; standaardvolgorde `GewijzigdOp desc,Id`
   - een onbekende entiteit of een geweigerde expressie geeft een expliciete fout, nooit een ongefilterde fallback
 - `tweede_kamer_document_get`
@@ -40,11 +40,11 @@
   - `nl_gov_ask` can auto-deepen the top match on explicit content/summary questions
 - `tweede_kamer_votes`
   - één rij per fractie (of per Kamerlid bij een hoofdelijke stemming), gekoppeld aan het besluit (`uitslag`, bv. 'Aangenomen.') en aan de zaak waarover gestemd is (nummer, titel, onderwerp, tweedekamer.nl-link)
-  - filters: `query` (titel/onderwerp van de zaak, zelfde woordregels), `zaak_nummer`, `zaak_id`, `besluit_id`, `date` of `date_from`/`date_to` (datum van de stemming); nieuwste stemmingen eerst
+  - filters: `query` (titel/onderwerp van de zaak, zelfde woordregels, max. 500 tekens), `zaak_nummer`, `zaak_id`, `besluit_id`, `date` of `date_from`/`date_to` (datum van de stemming); nieuwste stemmingen eerst
 - `tweede_kamer_members`
 - `tweede_kamer_debatten`
   - wat er in debatten is gezegd, plenair en in commissies: één record per spreekbeurt of interruptie met spreker, fractie of functie, begin- en eindtijd, debat en tekst (uit de verslagen in het Gegevensmagazijn)
-  - filters: `query` (woorden in de tekst, alle verplicht, zelfde woordregels als `tweede_kamer_documents`, accentongevoelig), `spreker` (naam of functie: 'Klaver', 'minister', 'voorzitter'), `fractie` (de voorzitter telt nooit voor een fractie), `debat` (woorden in het onderwerp van het debat), `soort` (`plenair`/`commissie`), `date` of `date_from`/`date_to` (standaard de afgelopen 7 dagen)
+  - filters: `query` (woorden in de tekst, alle verplicht, zelfde woordregels als `tweede_kamer_documents`, accentongevoelig, max. 500 tekens), `spreker` (naam of functie: 'Klaver', 'minister', 'voorzitter'), `fractie` (de voorzitter telt nooit voor een fractie), `debat` (woorden in het onderwerp van het debat), `soort` (`plenair`/`commissie`), `date` of `date_from`/`date_to` (standaard de afgelopen 7 dagen)
   - geen volledige-tekstindex: per aanroep worden de verslagen van hoogstens 20 vergaderingen gelezen (nieuwste eerst); `vergadering_offset` gaat verder, `access_note` zegt hoeveel er zijn; `vergadering_id` leest één vergadering (een plenaire dag met al zijn debatten of één commissiedebat)
   - `max_chars` (standaard 1500) begrenst `data.tekst` per fragment; `snippet` is de passage rond de treffer
   - links: een commissiedebat naar zijn pagina op tweedekamer.nl, een plenaire dag naar zijn verslag daar, anders naar het verslag in het Gegevensmagazijn
@@ -55,7 +55,7 @@
 Automatische transcripties (spraak-naar-tekst) van elk debat van Tweede en Eerste Kamer, gemaakt door Gehoord.de (Jeroen Wollaars) uit de officiële video-uitzendingen; gebruikt met toestemming en sleutel van de maker. Een vindhulp naast de verslagen, geen officiële bron en niet om te citeren. Alle drie de tools vereisen `GEHOORD_KEY` (zonder: typed `not_configured`; een geweigerde sleutel, HTTP 401, ook). Elk fragment-record bewaart `persoon_id` (de ruwe speakerLabel: de TK Persoon-GUID, gelijk aan de spreker-objectid in de VLOS-XML; voor een senator het vaste persoons-id van de Eerste Kamer zelf, met `persoon_url` `https://www.eerstekamer.nl/id/<id>`; in de Eerste Kamer hebben ook bewindspersonen en initiatiefnemers meestal zo'n Eerste Kamer-id (4 nov 2026: minister Hermans `vkcro5s6owxu`, Tweede Kamerlid Paternotte als initiatiefnemer `vkcro5s6ytyg`), een TK-GUID maar soms), `start_time`/`end_time` (UTC, zoals de API ze geeft), `debat_id`, `kamer`, `debat_soort` en `ondertiteling_samengevat` van zijn debat; bij een transcriptie-record is de canonical url de fragmentlink, bij een record met status `officieel` (zie koppeling) de pagina van het verslag; `data.debat_url` is de officiële Kamerpagina. De client (`src/sources/gehoord.ts`, `GehoordSource`) heeft gewone methoden `search`, `listDebates`, `getDebate`, `getContributions` en `getContributionsAround` voor gebruik buiten de tools.
 - `gehoord_debatten_search`
   - volledige tekst over alle bijdragen sinds 31 maart 2026, nieuwste eerst, ook van debatten die nog lopen
-  - `query`: trefwoorden, hoofdletterongevoelig; `match` `alle` (standaard: elk woord, in elke volgorde), `een` (een van de woorden) of `woordgroep` (de hele query als één letterlijke frase). Met `alle` of `een` blijft een "woordgroep tussen aanhalingstekens" bij elkaar en sluit -woord uit (met `woordgroep` is ook dat deel van de letterlijke frase); een woord van 4 tekens of minder telt alleen als heel woord, een langer ook in een samenstelling. `alle` is de standaard omdat een taalmodel meestal meer woorden meegeeft: als frase vindt "stikstof provincie" niets, met `alle` 83 treffers (4 nov 2026). `access_note` zegt hoe Gehoord de query las (`query.terms` van de API)
+  - `query` (max. 500 tekens): trefwoorden, hoofdletterongevoelig; `match` `alle` (standaard: elk woord, in elke volgorde), `een` (een van de woorden) of `woordgroep` (de hele query als één letterlijke frase). Met `alle` of `een` blijft een "woordgroep tussen aanhalingstekens" bij elkaar en sluit -woord uit (met `woordgroep` is ook dat deel van de letterlijke frase); een woord van 4 tekens of minder telt alleen als heel woord, een langer ook in een samenstelling. `alle` is de standaard omdat een taalmodel meestal meer woorden meegeeft: als frase vindt "stikstof provincie" niets, met `alle` 83 treffers (4 nov 2026). `access_note` zegt hoe Gehoord de query las (`query.terms` van de API)
   - Gehoord filtert zelf (één verzoek, de `offset` van de API, het echte totaal in `pagination.total`): `kamer` (`tk`/`ek`), `fractie` (het exacte partijlabel, hoofdletterongevoelig: `VVD`, `PRO`, `CU`, `PvdD`; `Partij voor de Dieren` wordt omgezet. Eén fractie onder meer labels wordt onder elk label gevraagd: GroenLinks-PvdA heet bij Gehoord `GL-PvdA` tot eind september 2026 en `PRO` sindsdien (`GroenLinks-PvdA`, `GL-PvdA`, `GL` en `PRO` vragen beide; in de Eerste Kamer alleen `PRO`), de ChristenUnie `CU` in de Tweede en `ChristenUnie` in de Eerste Kamer (zonder `kamer` beide). Twee labels zijn twee verzoeken, samengevoegd op tijd, nieuwste eerst, het totaal opgeteld; bladeren gaat zo tot 200 treffers per label, daarna zegt `access_note` dat je per label verder zoekt. Met een spreker op naam filtert de server de labels zelf), `debat_id` (Gehoords id of het `tk_debat_id`), `spreker` als het een persoon-id is (TK-GUID of Eerste Kamer-id) en `date_from`/`date_to`: de vergaderdag, zoals de Kamer dateert (een nachtzitting valt onder de dag waarop hij begon)
   - `spreker` als naam of functie (`Klaver`, `minister`) kan Gehoord niet filteren: die past deze server toe op pagina's van 200 vanaf `offset` (hooguit 600 treffers per aanroep, met Gehoords eigen filters al toegepast); `access_note` zegt hoeveel treffers zijn doorzocht, met welke `offset` je verder zoekt, en dat de `persoon_id` uit een treffer zonder grens werkt
   - deze server stuurt elk endpoint alleen de parameters die het kent (een onbekende parameter is bij Gehoord HTTP 400)
@@ -85,7 +85,7 @@ Automatische transcripties (spraak-naar-tekst) van elk debat van Tweede en Eerst
   - `publicatieblad` filtert op het blad (Gemeenteblad, Staatscourant, Staatsblad, Provinciaal blad, Waterschapsblad, ...; ook `gmb`, `stcrt`, `stb`, ...); een bladnaam in `type` wordt als publicatieblad toegepast, met een melding
   - `sort` (`relevance`, `date_newest`, `date_oldest`) en `date_from`/`date_to` werken op `date_field` (`dagtekening` of `publicatiedatum`)
   - elk record heeft dagtekening, publicatiedatum, vindplaats en directe PDF/HTML/XML-links; alleen de eerste ~10.000 treffers zijn te pagineren
-  - `bbox_rd` (optioneel): alleen publicaties waarvan de locatie (gebiedsmarkering) een RD-rechthoek raakt, als `[minX, minY, maxX, maxY]` in meters (EPSG:28992) of als string `'minX,minY,maxX,maxY'`; wordt de CQL-clausule `cd.afgeleideLocatieGebied within/nwse.rd "minX maxY maxX minY"` (NW- en ZO-hoek, naar buiten afgerond op hele meters), met AND bij de andere filters. Een gebied dat deels in de rechthoek valt telt mee; publicaties zonder locatie (bijna alle landelijke) vallen erbuiten. `query` mag dan leeg zijn; samen met `authority` + `authority_type` en `sort` `date_newest` geeft het de vergunningen, verkeersbesluiten en evenementen van een gemeente in een buurt of rond een adres. Ongeldige invoer (niet 4 getallen, min niet onder max, buiten het RD-bereik van Nederland, of WGS84-graden) geeft een `unexpected`-fout zonder verzoek. Kanaleneiland-Noord (Utrecht), `[134028, 453672, 135114, 454790]`: 120 publicaties van gemeente Utrecht in 12 maanden (11 nov 2026)
+  - `bbox_rd` (optioneel): alleen publicaties waarvan de locatie (gebiedsmarkering) een RD-rechthoek raakt, als `[minX, minY, maxX, maxY]` in meters (EPSG:28992) of als string `'minX,minY,maxX,maxY'`; wordt de CQL-clausule `cd.afgeleideLocatieGebied within/nwse.rd "minX maxY maxX minY"` (NW- en ZO-hoek, naar buiten afgerond op hele meters), met AND bij de andere filters. Een gebied dat deels in de rechthoek valt telt mee; publicaties zonder locatie (bijna alle landelijke) vallen erbuiten. `query` mag dan leeg zijn; samen met `authority` + `authority_type` en `sort` `date_newest` geeft het de vergunningen, verkeersbesluiten en evenementen van een gemeente in een buurt of rond een adres. Ongeldige invoer (niet 4 getallen, min niet onder max, buiten het RD-bereik van Nederland, of WGS84-graden) geeft een `invalid_input`-fout zonder verzoek. Kanaleneiland-Noord (Utrecht), `[134028, 453672, 135114, 454790]`: 120 publicaties van gemeente Utrecht in 12 maanden (11 nov 2026)
   - nieuwe velden per record, alleen als de publicatie een geometrie heeft (692 van 714 Utrechtse publicaties in 30 dagen): `location` `{ kind, lat, lon, rd_x, rd_y, area_m2?, length_m?, label?, address? }`, een representatief punt van de eerste gebiedsmarkering (met `bbox_rd`: de eerste die binnen de rechthoek ligt). `kind` is het element uit de bron (`Punt`, `Adres`, `Vlak`, `Perceel`, `GeometrieRef`, `Weg`, `Lijn`). Het punt telt alle stukken van de geometrie mee: een vlak krijgt het zwaartepunt van al zijn delen samen als dat in een van de delen ligt, anders een punt binnen het grootste deel (ook bij een L-, U-vorm of gat); één lijn het punt halverwege, een weg in meer stukken het punt op die stukken dat het dichtst bij hun zwaartepunt ligt. RD komt uit `geometrie` (zonder `geometrie`: alle `locatiegebied`-stukken, omgerekend naar RD). Bij een `Punt` of `Adres` komt lat/lon uit `locatiepunt`; bij een vlak of lijn is lat/lon hetzelfde punt als `rd_x`/`rd_y`, omgerekend met de RD-polynoom (enkele decimeters nauwkeurig). `area_m2` (vlak: totale oppervlakte van alle polygonen, gaten eraf, in RD) en `length_m` (lijn: totale lengte van alle stukken) zijn er alleen voor dat soort geometrie. `label` is de `geometrielabel` van de bron, `address` bij een `Adres` de tekst `'Straat 42a-bis, 3513GL Utrecht'`. Bij meer dan één gebiedsmarkering staan ze alle in `locations` (hooguit 50). Ook `officiele_bekendmakingen_record_get` geeft deze velden; bestaande velden zijn ongewijzigd
 - `officiele_bekendmakingen_record_get`
   - één publicatie op identifier (bv. `stcrt-2026-10001`) of zoek.officielebekendmakingen.nl-URL: volledige metadata (dagtekening, publicatiedatum, blad en vindplaats, onderwerpen, juridische grondslag, dossier en indieners bij Kamerstukken) plus directe PDF/HTML/XML-links
@@ -107,7 +107,7 @@ Automatische transcripties (spraak-naar-tekst) van elk debat van Tweede en Eerst
 - `scp_publicaties_search` — publicaties van het Sociaal en Cultureel Planbureau op www.scp.nl: rapporten, kerncijfers, Burgerperspectieven, beleidssignalementen; archief vooral vanaf eind 2019, enkele oudere
 - beide sites draaien op het CMS van Rijksoverheid.nl en beantwoorden dezelfde RSS-zoekvraag op hun eigen host (`/api/rss`, gefilterd op documentpagina's); rijksoverheid.nl indexeert ze niet. Eén bron in de code (`RijksoverheidSource.searchPublications`), per site een eigen connector (`rekenkamer`, `scp`)
 - parameters (beide tools gelijk):
-  - `query` (optioneel): trefwoorden, geen volledige vragen (bv. Rekenkamer 'asielprocedure', 'subsidies', 'verantwoordingsonderzoek'; SCP 'mantelzorg', 'eenzaamheid', 'participatiewet'). Leeg: de nieuwste publicaties eerst
+  - `query` (optioneel, max. 500 tekens): trefwoorden, geen volledige vragen (bv. Rekenkamer 'asielprocedure', 'subsidies', 'verantwoordingsonderzoek'; SCP 'mantelzorg', 'eenzaamheid', 'participatiewet'). Leeg: de nieuwste publicaties eerst
   - `date_from` / `date_to` (optioneel, inclusief): YYYY-MM-DD, of YYYY-MM / YYYY voor de eerste of laatste dag van die maand of dat jaar (Amsterdamse kalenderdagen); filteren server-side, vóór de limiet van 20, op `date`. Een onleesbare waarde wordt genegeerd met een waarschuwing in `access_note`
   - `top` (standaard 20, max 200, maar de feed levert er hooguit 20), `offset`/`limit`, `outputFormat`, `verbose`, `dryRun`
 - limieten van het platform: hooguit 20 resultaten per zoekopdracht, gerangschikt op relevantie, zonder paginering; zit de feed vol, dan is het echte aantal onbekend en blijft `total` leeg (`access_note` zegt het)
@@ -129,13 +129,14 @@ Automatische transcripties (spraak-naar-tekst) van elk debat van Tweede en Eerst
 - `duo_rio_search`
 
 ## API register (key required)
-- `overheid_api_register_search` (`OVERHEID_API_KEY`)
+- `overheid_api_register_search` (`OVERHEID_API_KEY`): searches the JSON API at `https://api.developer.overheid.nl/api-register/v1/apis`. A query whose title search finds nothing is ranked over the full register list: titles carrying the query terms first, then summaries, then description and organisation. Records link to `https://apis.developer.overheid.nl/apis/<id>` and carry the organisation, version, status, ADR score and OpenAPI link. `provenance.query_params.mode` is `api-search`, `api-list-scored` or `scored-fallback`.
 
 ## KNMI (key required)
 - `knmi_datasets` (`KNMI_API_KEY`)
 - `knmi_search_datasets` (`KNMI_API_KEY`)
 - `knmi_latest_files` (`KNMI_API_KEY`)
   - lists the newest files first (`orderBy=created`, `sorting=desc`; without them the API lists the oldest)
+  - `datasetName` and `datasetVersion` are each sent as one URL path segment (`/`, `?` and `#` are encoded); an empty value, `.` or `..` is refused with an `invalid_input` error, without a request
 - `knmi_latest_observations` (`KNMI_API_KEY`)
   - reads `10-minute-in-situ-meteorological-observations` (v1.0): `Actuele10mindataKNMIstations` (v2) has had no new files since 2025-10-02
 - `knmi_warnings` (`KNMI_API_KEY`)
@@ -147,7 +148,7 @@ Automatische transcripties (spraak-naar-tekst) van elk debat van Tweede en Eerst
 - `bag_lookup_address`
   - gebruikt PDOK Locatieserver v3_1
   - optioneel `woonplaats` (exacte BAG-naam, bv. `Utrecht`): filtert in de Locatieserver zelf op die woonplaats; zonder dit geeft de vrije zoekopdracht ook dezelfde straat en hetzelfde huisnummer in andere plaatsen terug
-  - bij tijdelijke onbereikbaarheid: deterministische fallback met duidelijke `access_note`
+  - geen adres gevonden: 0 records met een `access_note`; faalt de Locatieserver, dan een fout (`http_error`, `timeout`, ...), nooit een verzonnen adres
 - `bag_address_detail`
   - resolves an address (free-text `query` or PDOK `pdok_id`) to authoritative BAG detail
   - step 1: PDOK Locatieserver `/free` + `/lookup` for official `adresseerbaarobject_id` + `pandid`
@@ -162,7 +163,7 @@ Automatische transcripties (spraak-naar-tekst) van elk debat van Tweede en Eerst
 ## ORI / Open Raadsinformatie
 - `ori_search`
   - raadsdocumenten, agendapunten, vergaderingen en besluiten van gemeenten, provincies en waterschappen via ORI Elastic `_search`
-  - standaard moeten alle woorden voorkomen (`match: "all"`), `match: "any"` vraagt minstens één; de query accepteert "phrases", OR/AND/NOT in hoofdletters, -term en prefix*
+  - standaard moeten alle woorden voorkomen (`match: "all"`), `match: "any"` vraagt minstens één; de query (max. 500 tekens) accepteert "phrases", OR/AND/NOT in hoofdletters, -term en prefix*
   - `gemeente` beperkt tot één orgaan, ook een provincie of waterschap (exact tegen de live indexlijst; een naam zonder ORI-index levert 0 records en zegt dat); `bestuurslaag` (`gemeente`, `provincie`, `waterschap`) is een filter
   - `date_from`/`date_to` filteren op de vergaderdatum; `sort: "date_newest"` sorteert op vergaderdatum en laat datums na vandaag weg tenzij `date_to` gezet is
   - documenten linken naar hun bestand; waar de ORI-link bekend kapot is, gaat de link naar het bronsysteem (`link_note`), elders is `data.original_url` (ook per bijlage) de uitwijk; agendapunten en vergaderingen linken naar hun ORI-record (`link_type`) met hun documenten onder `attachments`
@@ -185,7 +186,7 @@ Automatische transcripties (spraak-naar-tekst) van elk debat van Tweede en Eerst
 - `ndw_search`
   - live discovery op NDW open pages/docs (opendata/docs/dexter)
   - output genormaliseerd met `id/title/description/updated_at/source/url`
-  - fallbackrecord bij onbereikbaarheid/instabiliteit
+  - leveren de pagina's niets bruikbaars op (ook als ze niet bereikbaar zijn), dan 0 records met een `access_note`
 
 ## Luchtmeetnet
 - `luchtmeetnet_latest`
@@ -194,12 +195,13 @@ Automatische transcripties (spraak-naar-tekst) van elk debat van Tweede en Eerst
   - `component`: NO2, PM10, PM25, O3, SO2, CO
   - verrijkte output: `location_name/component/value/unit/timestamp` + coordinaten
   - drie endpoints, drie connectors: `/measurements` (`luchtmeetnet`), `/lki` (`luchtmeetnet_lki`) en `/stations` (`luchtmeetnet_stations`). `/measurements` is met regelmaat 502; onder een gedeelde connectornaam sloten drie van die fouten de circuit breaker voor de hele bron, inclusief de werkende LKI-fallback en de stationlijst.
-  - fallback-measurement met vaste timestamp/waarde als geen enkel endpoint bereikbaar is
+  - falen `/measurements` en de LKI allebei, dan een fout (`http_error`, `timeout`, ...), nooit een verzonnen meting; geven ze geen metingen, dan 0 records met een `access_note`
 
 ## RDW
 - `rdw_open_data_search`
   - live query op RDW open dataset (voertuigen)
   - zoek op kenteken/merk/handelsbenaming/voertuigsoort
+  - geen treffer: 0 records met een `access_note` (die meldt ook een mislukte zoekstap); mislukken alle zoekstappen, dan een fout, nooit een verzonnen voertuig
 
 ## Rijkswaterstaat Waterdata
 - `rijkswaterstaat_waterdata_search`
@@ -279,8 +281,9 @@ Automatische transcripties (spraak-naar-tekst) van elk debat van Tweede en Eerst
 
 ## Rechtspraak
 - `rechtspraak_search_ecli`
-  - gebruikt Rechtspraak zoekfeed en extraheert ECLI
-  - fallback genereert deterministisch ECLI-resultaat met `access_note`
+  - zoekt op trefwoord via `POST https://uitspraken.rechtspraak.nl/api/zoek`. Zie `docs/SOURCES.md`
+  - stuurt de eigen User-Agent van de server
+  - geen treffers: leeg resultaat met een link naar de zoekpagina van de website. Geweigerd of mislukt (403, 5xx, timeout): een fout (`http_error`, `timeout`, ...) met die zoekpagina in `suggestion`, geen leeg resultaat en geen verzonnen uitspraak
   - de tekst van een uitspraak: `rechtspraak_uitspraak_get` met de ECLI
 - `rechtspraak_uitspraak_get`
   - één uitspraak of conclusie van de Advocaat-Generaal op ECLI uit de open data van Rechtspraak (`https://data.rechtspraak.nl/uitspraken/content?id=<ECLI>`, metadata en tekst in één XML-document): instantie, uitspraak- en publicatiedatum, zaaknummer, procedures, rechtsgebieden, zittingsplaats, relaties met andere aanleggen ('In cassatie op …', 'Conclusie: …, Gevolgd'), wetsverwijzingen, vindplaatsen, inhoudsindicatie, inhoudsopgave en tekst
@@ -299,20 +302,21 @@ Automatische transcripties (spraak-naar-tekst) van elk debat van Tweede en Eerst
   - discovery/search helper for RIVM public datasets
   - primary: GeoNetwork CSW (`data.rivm.nl/geonetwork/srv/eng/csw`) with CQL AnyText
   - secondary: directory listing fallback (`data.rivm.nl/data/`)
-  - deterministic fallback record when live discovery is unstable
+  - no match: zero records with an `access_note`; when the CSW fails (or answers without a `GetRecordsResponse`, `malformed_response`) and the directory listing has no match either, an error, never an invented record
 
 ## Linked Data / SPARQL (guarded)
 - `bag_linked_data_select`
-  - Kadaster BAG SPARQL endpoint (`SELECT` only)
+  - Kadaster BAG SPARQL endpoint `https://api.labs.kadaster.nl/datasets/bag/lv/services/baglv/sparql` (`SELECT` only; the service was renamed from `default` to `baglv` in October 2026, the old URL answers 404)
   - keyword guardrails block update/construct/service-style operations
   - comment-stripper is URI-aware: `#` inside `<http://...#fragment>` is not mistaken for a SPARQL `#` comment (previously caused valid queries with `XMLSchema#` / `rdf-schema#` prefixes to be rejected as "Alleen SELECT")
   - LIMIT is capped (max 100)
-  - deterministic fallback on endpoint instability
+  - a refused query (not a SELECT, a blocked keyword, a `\u`/`\U` escape, an unterminated string) is an `invalid_input` error with a `suggestion`, without a request
+  - a failure of the endpoint itself (404, 5xx, timeout, network) is an error (`http_error`, `timeout`, ...) with the endpoint in `details`; no fallback row is invented
   - when the Labs SPARQL endpoint is down, prefer `bag_address_detail` for authoritative per-address detail
 - `rce_linked_data_select`
-  - RCE SPARQL endpoint (`SELECT` only)
-  - same read-only guardrails and LIMIT cap
-  - deterministic fallback on instability
+  - RCE SPARQL endpoint `https://api.linkeddata.cultureelerfgoed.nl/datasets/rce/cho/services/cho/sparql` (`SELECT` only)
+  - same read-only guardrails, `invalid_input` errors and LIMIT cap
+  - an endpoint failure is an error, as for `bag_linked_data_select`; no fallback row
 
 ## EU bonus
 - `eurostat_datasets_search`
@@ -320,7 +324,8 @@ Automatische transcripties (spraak-naar-tekst) van elk debat van Tweede en Eerst
 - `eurostat_dataset_preview`
   - fetches preview observations from Eurostat dataset code
 - `data_europa_datasets_search`
-  - data.europa.eu Search API helper (`data.europa.eu/api/hub/search/search`) (+ fallback)
+  - data.europa.eu Search API helper (`data.europa.eu/api/hub/search/search`)
+  - no match: zero records with an `access_note`; a failed search is an error, never an invented dataset
 
 ## Meta router
 - `nl_gov_ask`
@@ -374,7 +379,7 @@ Automatische transcripties (spraak-naar-tekst) van elk debat van Tweede en Eerst
 ## Known limits / behavior notes
 - KNMI `knmi_warnings` (`waarschuwingen_nederland_48h`) and `knmi_earthquakes` (`aardbevingen_nederland`) try multiple dataset candidates; only a 404 moves on to the next one. Any other failure (e.g. a 429 rate limit), or no candidate that exists, is reported as an error, never as 0 results.
 - DUO `duo_schools` and `duo_exam_results` return per-school rows from the CKAN datastore; the exam dataset covers school years 2013–2017 (stated in `access_note`).
-- API register search uses official endpoints first; if unavailable, deterministic HTML-card scoring fallback is used.
+- API register search uses the register's JSON API (`api.developer.overheid.nl/api-register/v1`). Its `q` matches titles only, so a query it does not find is scored locally over the full list (title, summary, description, organisation). The keyless HTML-card scoring of the website is used only when there is no key or the API cannot be reached.
 
 ## Response contract
 All success responses return:
@@ -384,9 +389,13 @@ All success responses return:
 - optional `access_note`
 
 Error responses return:
-- `error`
+- `error`: `timeout`, `http_error`, `rate_limited`, `malformed_response`, `not_configured`, `circuit_open`, `invalid_input` or `unexpected`. `invalid_input` means an argument was refused, in every tool: malformed (a date, ECLI, CELEX number, GUID, BWB id, bbox), too long, out of range, a combination that does not go together, or a name that matches no single entry of the source's own list (a DSO bevoegd gezag or provincie, a TenderNed opdrachtgever, an EU programme). Almost always no request is sent; trying again with the same argument does not help, and `suggestion` says what is accepted. A document, address or page that the source looked up and did not find (or found empty or too large) is not `invalid_input`: it keeps its own code or is an empty result
 - `message`
 - optional `suggestion`, `retry_after`, `details`
+
+No tool runs with a string argument longer than 2,000 characters, strings nested in arrays and objects and object keys included: such a call is answered with `invalid_input`, naming the argument and the limit (`details`: `argument`, `length`, `max_length`), before any request. 2,000 is the longest free text a tool takes (the `nl_gov_ask` question); identifiers, URLs, dates and search queries stay well below it. Three arguments may be longer: `query` of `bag_linked_data_select` and `rce_linked_data_select` (a SPARQL query, up to 10,000) and `filter` of `tweede_kamer_search` (an OData `$filter`, up to 5,000). An argument whose own schema maximum is lower keeps that maximum.
+
+A `query` longer than 500 characters is refused by the input schema before the tool runs, in these search tools: `data_overheid_datasets_search`, `cbs_tables_search`, `tweede_kamer_documents`, `tweede_kamer_search`, `tweede_kamer_votes`, `tweede_kamer_debatten`, `gehoord_debatten_search`, `officiele_bekendmakingen_search`, `rijksoverheid_search`, `rekenkamer_publicaties_search`, `scp_publicaties_search`, `rijksbegroting_search`, `duo_datasets_search`, `duo_rio_search`, `overheid_api_register_search`, `ori_search`, `ndw_search`, `rdw_open_data_search`, `rijkswaterstaat_waterdata_search`, `rijkswaterstaat_waterdata_measurements`, `ngr_discovery_search`, `rechtspraak_search_ecli`, `rivm_discovery_search`, `eurostat_datasets_search`, `data_europa_datasets_search`, `wetten_bwb_search`, `wodc_search`, `eu_funding_search` and `rvo_subsidies_search`. Search terms are keywords, so ordinary use stays far below it.
 
 
 ## Nieuwe tools (v0.2)
@@ -534,7 +543,8 @@ Look up the registered energy label (energielabel) for a Dutch address from EP-O
 
 Haalt datapunten op uit de DNB Statistics API (De Nederlandsche Bank).
 
-- **Input**: `dataset` (verplicht: code, pad of volledige endpoint-URL), `query` (optioneel vrije-tekstfilter, client-side), `startPeriod`, `endPeriod` (optionele SDMX-periodes), `rows`.
+- **Input**: `dataset` (verplicht: het pad `statisticsdata/<versie>/<dataset-slug>`, dat onder `https://api.dnb.nl` wordt gehangen, of een volledige URL op `https://api.dnb.nl/...`), `query` (optioneel vrije-tekstfilter, client-side), `startPeriod`, `endPeriod` (optionele SDMX-periodes), `rows`.
+- **Geweigerd**: een URL op een andere host, met `http`, een poort of een gebruikersnaam, of met een ander schema (`file:`, `ftp:`) gaat niet de deur uit: de subscription key gaat alleen naar de DNB-gateway. Zo'n `dataset` geeft een `invalid_input`-fout zonder verzoek, met een `suggestion` die zegt wat wel mag.
 - **Output**: records met `period`, `value`, `unit`, `label`, `frequency` per datapunt.
 - **Auth**: `DNB_API_KEY` vereist (header `Ocp-Apim-Subscription-Key`); zonder key `not_configured`.
 - **Voorbeeld**: `{ "dataset": "interest-rates", "startPeriod": "2023", "rows": 24 }`.
@@ -651,7 +661,7 @@ Algoritmes en AI-systemen die overheidsorganisaties hebben gepubliceerd in het A
 Onderzoeksrapporten van het Wetenschappelijk Onderzoek- en Datacentrum (WODC, ministerie van Justitie en Veiligheid) in de WODC Repository (`repository.wodc.nl`, DSpace 7, open REST-API, geen key), vanaf 1974: criminaliteit, recidive, de strafrechtketen, migratie, evaluaties van wetten.
 
 - **Inputs**:
-  - `query` (optioneel): trefwoorden, gezocht in de metadata én in de volledige tekst van de rapporten, alle woorden verplicht; `"aanhalingstekens"` voor een woordgroep, `OR` en `-woord` werken (bv. 'recidive', 'ondermijning', '"huiselijk geweld"', 'cybercrime -fraude'). Leeg: alles wat aan de filters voldoet
+  - `query` (optioneel, max. 500 tekens): trefwoorden, gezocht in de metadata én in de volledige tekst van de rapporten, alle woorden verplicht; `"aanhalingstekens"` voor een woordgroep, `OR` en `-woord` werken (bv. 'recidive', 'ondermijning', '"huiselijk geweld"', 'cybercrime -fraude'). Leeg: alles wat aan de filters voldoet
   - `date_from` / `date_to` (optioneel): gepubliceerd op of na / op of vóór, als YYYY, YYYY-MM of YYYY-MM-DD; een maand of jaar telt tot en met zijn laatste dag. Een ongeldige datum of `date_from` na `date_to` is een fout met `suggestion`
   - `series` (optioneel): reeks, als deel van de naam: 'Cahier', 'WODC Rapport', 'Factsheet', 'Memorandum', 'Justitiële verkenningen', of één nummer ('Cahier 2026-12')
   - `project` (optioneel): WODC-projectnummer, als deel van het nummer en hoofdletterongevoelig ('3606', of '3105' voor 3105a-3105g)
@@ -684,7 +694,7 @@ Welke subsidies, regelingen en calls er zijn of openstaan, uit drie officiële, 
 
 Regelingen van RVO (Rijksdienst voor Ondernemend Nederland) uit de open data van rvo.nl (`www.rvo.nl/api/v1/opendata/subsidies`, dataset 'subsidies-en-financiering-rvo-nl', CC0, geen key).
 
-- **Inputs**: `query` (trefwoorden, bv. 'waterstof', 'cultureel erfgoed', '"maatschappelijk vastgoed"'), `doelgroep` (RVO's eigen waarden, bv. 'mkb', 'agrarisch', 'kennisinstelling'; onbekend: 0 resultaten met de bekende waarden in `access_note`), `onderwerp`, `sector`, `land` (Nederlandse naam of ISO-code), `changed_since` (JJJJ-MM-DD), `status` (`open`, `bijna_open`, `tijdelijk_gesloten`, `gesloten`), `main_pages_only` (alleen de hoofdpagina van een regeling), `include_status` (standaard true), `sort` (`relevance`, `changed`, `created`, `title`), `top` (standaard 10, max 50)/`offset`/`limit`, outputFormat/verbose/dryRun.
+- **Inputs**: `query` (trefwoorden, max. 500 tekens, bv. 'waterstof', 'cultureel erfgoed', '"maatschappelijk vastgoed"'), `doelgroep` (RVO's eigen waarden, bv. 'mkb', 'agrarisch', 'kennisinstelling'; onbekend: 0 resultaten met de bekende waarden in `access_note`), `onderwerp`, `sector`, `land` (Nederlandse naam of ISO-code), `changed_since` (JJJJ-MM-DD), `status` (`open`, `bijna_open`, `tijdelijk_gesloten`, `gesloten`), `main_pages_only` (alleen de hoofdpagina van een regeling), `include_status` (standaard true), `sort` (`relevance`, `changed`, `created`, `title`), `top` (standaard 10, max 50)/`offset`/`limit`, outputFormat/verbose/dryRun.
 - **Zoeken**: de API kent geen zoek-, filter- of sorteerparameters (ruim 30 geprobeerd, live geverifieerd). De hele catalogus (ongeveer 1.370 pagina's van 'Subsidies en financiering', ook gesloten en historische regelingen en hun subpagina's) wordt daarom gelezen (28 pagina's van 50, 3 uur in het geheugen) en lokaal doorzocht in titel, intro, regelingnamen en tags. Alle woorden verplicht, ook binnen samenstellingen ('waterstof' vindt 'waterstoftankstation'); woorden tot 3 letters alleen als heel woord; "frase", OR en -woord werken. Algemene woorden (subsidie, regeling, financiering, RVO) tellen niet mee.
 - **Status, periode en budget**: staan niet in de open data. Ze komen van de openbare pagina op rvo.nl, uit de paginagegevens die rvo.nl zelf toont (label, start- en einddatum, totaal budget, 'In behandeling'), voor de getoonde resultaten (de eerste 10 per aanroep, gelezen binnen 10 s; voor de rest `offset` of `rvo_subsidie_get`). Een pagina die niet binnen die tijd is gelezen krijgt status 'onbekend' met die reden in `status_note`; komt ze later alsnog binnen, dan gebruikt een volgende aanroep haar zonder nieuw verzoek. Het label wordt ongewijzigd doorgegeven; spreken label en datums elkaar tegen ('Open' voordat de periode begint, of na de einddatum), dan zegt `status_note` dat. Zegt de paginatekst zelf (intro, meldingen, blokken) uitdrukkelijk dat het budget op, uitgeput of overtekend is, dat het subsidieplafond bereikt is of dat u niet meer kunt aanvragen, dan citeert `status_note` die zin letterlijk (met het jaar of onderdeel waar ze over gaat), naast het ongewijzigde label; niet bij het label 'Gesloten', en niet bij voorwaarden ('totdat het budget op is'), vragen, kopjes of ontkenningen ('nog niet overtekend'). Toont de pagina alleen dagen, dan telt de laatste dag mee ('tot 31 december' is tot en met). De status van een pagina wordt 30 minuten bewaard. `budget_available_eur` is totaal min 'In behandeling', niet onder 0, zoals de pagina 'Nog beschikbaar' rekent: de enige berekende waarde.
 - **Statusfilter**: leest de pagina's van de kandidaten in volgorde van relevantie, max. 40 per aanroep en binnen 10 s; zijn niet alle kandidaten gelezen (ook als de tijd op is: die tellen als niet gecontroleerd), dan is `total` null en `has_more` true (gemeld).
@@ -720,7 +730,7 @@ Eén call of subsidieronde van NWO (ook op regieorgaan-sia.nl, nko.nl, openscien
 
 Europese calls uit het EU Funding & Tenders Portal van de Europese Commissie (open zoek-API `api.tech.ec.europa.eu/search-api`, publieke portaalsleutel 'SEDIA', geen account): topics van calls for proposals (subsidies, ook prijzen) onder Horizon Europe, Digital Europe, LIFE, CEF, Creative Europe, CERV, EU4Health, Erasmus+, EDF, SMP en andere programma's; cascade funding (open calls van EU-projecten voor derden, vaak mkb); en EuropeAid/PROSPECT-calls van extern beleid. EU-aanbestedingen zijn weggelaten.
 
-- **Inputs**: `query` (Engelse trefwoorden; alle woorden verplicht, "frase", OR en -woord werken; Nederlandse woorden vinden vrijwel niets), `status` (`open`, `forthcoming`, `closed`; standaard open en forthcoming), `type` (`grant`, `cascade_funding`, `external_action`), `programme` (afkorting, deel van de naam of numeriek id; onbekend is een fout), `deadline_from`/`deadline_to` (JJJJ-MM-DD; een call telt als één van zijn deadlines in het venster valt), `include_expired`, `sort` (`deadline` (standaard zonder trefwoorden: eerstvolgende deadline eerst), `relevance` (standaard met), `deadline_desc`, `newest`, `oldest`, `title`, `identifier`), `top` (standaard 20, max 100)/`offset`/`limit`, outputFormat/verbose/dryRun.
+- **Inputs**: `query` (Engelse trefwoorden, max. 500 tekens; alle woorden verplicht, "frase", OR en -woord werken; Nederlandse woorden vinden vrijwel niets), `status` (`open`, `forthcoming`, `closed`; standaard open en forthcoming), `type` (`grant`, `cascade_funding`, `external_action`), `programme` (afkorting, deel van de naam of numeriek id; onbekend is een fout), `deadline_from`/`deadline_to` (JJJJ-MM-DD; een call telt als één van zijn deadlines in het venster valt), `include_expired`, `sort` (`deadline` (standaard zonder trefwoorden: eerstvolgende deadline eerst), `relevance` (standaard met), `deadline_desc`, `newest`, `oldest`, `title`, `identifier`), `top` (standaard 20, max 100)/`offset`/`limit`, outputFormat/verbose/dryRun.
 - **Verouderde kopieën**: de index bewaart oude kopieën van veel topics met hun oude status. Met open/forthcoming worden calls zonder deadline vanaf vandaag weggelaten; het aantal staat in de samenvatting en `access_note` (15 oktober 2026: 668 van de 1.202 als open/forthcoming gelabelde calls). `include_expired` toont ze, gemarkeerd met `outdated_index_record`/`deadline_passed`. Een verouderde kopie met een deadline die nog komt blijft staan; de samenvatting van het record ('open volgens een verouderde kopie in de index') en `access_note` zeggen dat, want het actuele record (`eu_funding_get`) kan andere deadlines hebben.
 - **Output** per call: `id` (voor `eu_funding_get`), `identifier`, `title`, `call_identifier`, `programme`, `status` (zoals het portaal het zegt), `opening_date`, `deadlines`, `next_deadline` en `deadline_passed` (berekend), `deadline_model`, `budget_eur` met `budget_scope` (de eigen budgetregel van het topic, een regel gedeeld met andere topics (`budget_shared_with`), het totaal van een cascade-call, of het budget van een externe call; ontbreekt als de bron geen bedrag geeft), `types_of_action`, voor cascade-calls `cascade_call_id` en het project, en de portaal-URL.
 - **Let op**: EU-topics hebben alleen een dag als deadline; het uur staat op de portaalpagina en wordt niet geraden. Cascade-data is door de projecten zelf ingevoerd en kan hun eigen tekst tegenspreken. Hooguit 100 per pagina en alleen de eerste 10.000 resultaten bereikbaar. Nationale en regionale regelingen en EU-fondsen onder gedeeld beheer (EFRO/ESF+-regioprogramma's, Interreg) staan niet in het portaal.

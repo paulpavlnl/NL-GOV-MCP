@@ -81,7 +81,7 @@ describe("tenderned_aanbestedingen_search tool", () => {
   it("returns a clear error instead of an empty page past 10,000 results", async () => {
     vi.stubGlobal("fetch", fakeTenderNed(50_000));
     const res = await callTool("tenderned_aanbestedingen_search", { top: 100, page: 100 });
-    expect(res.error).toBe("unexpected");
+    expect(res.error).toBe("invalid_input");
     expect(String(res.message)).toContain("10000");
     expect(String(res.suggestion)).toContain("date_from");
   });

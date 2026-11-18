@@ -1,5 +1,5 @@
 import type { AppConfig } from "../types.js";
-import { getJson, getText } from "../utils/http.js";
+import { getText, SourceRequestError } from "../utils/http.js";
 import { parseXml } from "../utils/xml-parser.js";
 
 interface RIVMItem {
@@ -42,6 +42,7 @@ export class RivmSource {
     const rows = Math.min(args.rows, this.config.limits.maxRows);
 
     // Try CSW (GeoNetwork) first — this is RIVM's real metadata API.
+    let cswError: unknown;
     try {
       const items = await this.searchCsw(args.query, rows);
       if (items.length) {
@@ -52,11 +53,12 @@ export class RivmSource {
           params: { q: args.query, rows: String(rows) },
         };
       }
-    } catch {
+    } catch (e) {
       // fall through to directory browse
+      cswError = e;
     }
 
-    // Fallback: scrape the data directory listing for matching paths.
+    // Second path: the data directory listing, matched on folder names.
     try {
       const items = await this.browseDataDirectory(args.query, rows);
       if (items.length) {
@@ -68,10 +70,19 @@ export class RivmSource {
         };
       }
     } catch {
-      // fall through to fallback
+      // the catalogue answer (or its error) below decides
     }
 
-    return this.fallback({ query: args.query, rows });
+    // The catalogue was not searched: that is a failure, not "nothing found".
+    if (cswError !== undefined) throw cswError;
+
+    return {
+      items: [] as RIVMItem[],
+      total: 0,
+      endpoint: RIVM_CSW_ENDPOINT,
+      params: { q: args.query, rows: String(rows) },
+      access_note: `De RIVM-catalogus (CSW) en de datamap van data.rivm.nl gaven geen resultaten voor '${args.query}'. Probeer een andere of bredere zoekterm.`,
+    };
   }
 
   private async searchCsw(query: string, rows: number): Promise<RIVMItem[]> {
@@ -90,7 +101,7 @@ export class RivmSource {
       constraint: `AnyText like '%${query.replace(/'/g, "''")}%'`,
     };
 
-    const { data } = await getText(RIVM_CSW_ENDPOINT, {
+    const { data, meta } = await getText(RIVM_CSW_ENDPOINT, {
       query: params,
       timeoutMs: 15_000,
       retries: 1,
@@ -101,7 +112,16 @@ export class RivmSource {
     // its unprefixed attribute names ("" instead of "@_") change nothing here.
     const parsed = parseXml(data) as Record<string, any> | undefined;
 
-    const searchResults = parsed?.GetRecordsResponse?.SearchResults;
+    // An HTML page or an ExceptionReport is no catalogue answer.
+    if (!parsed?.GetRecordsResponse) {
+      throw new SourceRequestError({
+        message: "RIVM CSW gaf geen GetRecordsResponse",
+        endpoint: meta.url,
+        code: "malformed_response",
+        status: meta.status,
+      });
+    }
+    const searchResults = parsed.GetRecordsResponse.SearchResults;
     if (!searchResults) return [];
 
     const rawRecords = Array.isArray(searchResults.MD_Metadata)
@@ -152,23 +172,5 @@ export class RivmSource {
       url: `${RIVM_DATA_BROWSE}${l}`,
       source: "rivm-data-browse",
     }));
-  }
-
-  /**
-   * The CSW endpoint was unreachable or answered with nothing usable.
-   *
-   * Previously synthesised a record titled "RIVM fallback discovery voor
-   * '<query>'" — real-looking enough to be rendered as data. Reporting zero
-   * results and why is both honest and lets a caller distinguish "no matches"
-   * from "source down" via the note.
-   */
-  fallback(args: { query: string; rows: number }) {
-    return {
-      items: [] as RIVMItem[],
-      total: 0,
-      endpoint: `${RIVM_CSW_ENDPOINT} (geen bruikbare respons)`,
-      params: { q: args.query, rows: String(args.rows) },
-      access_note: `Het RIVM CSW-endpoint was niet bereikbaar of gaf geen bruikbare respons voor '${args.query}'. Probeer het later opnieuw of zoek rechtstreeks op https://data.rivm.nl.`,
-    };
   }
 }

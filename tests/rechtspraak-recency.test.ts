@@ -86,6 +86,25 @@ describe("Rechtspraak structured parameters", () => {
     expect(out.params.term).toBe("waterschade");
   });
 
+  it("the search request goes out with the server's own User-Agent", async () => {
+    // The search sends the default User-Agent and no Referer or token header.
+    const fetchMock = mockFetch();
+    const src = new RechtspraakSource(config);
+    await src.searchEcli({ query: "voorbeeldterm", rows: 3 });
+
+    const call = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(String(call[0])).toBe("https://uitspraken.rechtspraak.nl/api/zoek");
+    const headers = new Headers(call[1].headers);
+    expect(headers.get("user-agent")).not.toMatch(/Mozilla|Chrome|Safari|Gecko/i);
+    expect(headers.get("user-agent")).toMatch(/^nl-gov-mcp\//);
+    expect(headers.has("referer")).toBe(false);
+    expect(headers.has("__requestverificationtoken")).toBe(false);
+    // Control: the headers the API needs are still sent.
+    expect(headers.get("accept")).toContain("application/json");
+    expect(headers.get("content-type")).toBe("application/json");
+    expect(call[1].method).toBe("POST");
+  });
+
   it("date_filter=month sets BinnenEenMaand facet", async () => {
     const fetchMock = mockFetch();
     const src = new RechtspraakSource(config);

@@ -181,7 +181,7 @@ describe("dso_omgevingsdocument_tekst", () => {
 
   it("refuses an identifier it cannot read", async () => {
     const out = await call("dso_omgevingsdocument_tekst", { identificatie: "https://lokaleregelgeving.overheid.nl/CVDR696280/7" });
-    expect(out.error).toBe("unexpected");
+    expect(out.error).toBe("invalid_input");
     expect(out.suggestion).toContain("identificatie");
     expect(urls).toHaveLength(0);
   });
@@ -189,7 +189,7 @@ describe("dso_omgevingsdocument_tekst", () => {
   it("reads a URL with a broken %-escape, or a path id with a slash, as an unknown identifier", async () => {
     for (const identificatie of ["https://identifier.overheid.nl/akn/%E0%A4%A", "_akn_nl_act_x/y"]) {
       const out = await call("dso_omgevingsdocument_tekst", { identificatie });
-      expect(out.error).toBe("unexpected");
+      expect(out.error).toBe("invalid_input");
       expect(out.message).toContain("Onbekende identificatie");
       expect(out.suggestion).toContain("uriIdentificatie");
     }
@@ -204,7 +204,7 @@ describe("dso_omgevingsdocument_tekst", () => {
 
   it("refuses an onderdeel too long to be an eId or label, without fetching", async () => {
     const out = await call("dso_omgevingsdocument_tekst", { identificatie: "/akn/nl/act/gm0344/2020/omgevingsplan", onderdeel: ",".repeat(5000) });
-    expect(out.error).toBe("unexpected");
+    expect(out.error).toBe("invalid_input");
     expect(out.message).toContain("te lang");
     expect(urls).toHaveLength(0);
     expect(() => tools.get("dso_omgevingsdocument_tekst")!.schema.zoekterm.parse("x".repeat(201))).toThrow();
@@ -526,7 +526,7 @@ describe("dso_omgevingsdocument_tekst: renvooi, technical records and room", () 
   it("shows only what an ontwerp changes with weergave 'wijzigingen', and refuses it for a regeling without fetching", async () => {
     mockFetch((url) => (url.pathname.endsWith("/documentstructuur") ? jsonResponse(ONTWERP_STRUCTUUR) : jsonResponse(ONTWERP)));
     const regeling = await call("dso_omgevingsdocument_tekst", { identificatie: "/akn/nl/act/pv26/2022/omgevingsverordening", weergave: "wijzigingen" });
-    expect(regeling.error).toBe("unexpected");
+    expect(regeling.error).toBe("invalid_input");
     expect(regeling.message).toContain("alleen voor een ontwerp");
     expect(urls).toHaveLength(0);
 

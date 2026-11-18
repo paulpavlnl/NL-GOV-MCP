@@ -23,15 +23,27 @@ function addIdentifier(target: Identifier[], kind: Identifier["kind"], value: un
   target.push({ kind, value: clean });
 }
 
+/** Different ECLI and BWB ids each taken from a record's title and snippet, at most. */
+const MAX_TEXT_IDENTIFIERS = 20;
+/** related_links on one record, at most. */
+const MAX_RELATED_LINKS = 50;
+
+/** The first MAX_TEXT_IDENTIFIERS different matches, upper-cased; the rest of the text is not searched. */
+function firstMatches(text: string, pattern: RegExp, kind: Identifier["kind"], out: Identifier[]): void {
+  const seen = new Set<string>();
+  for (const m of text.matchAll(pattern)) {
+    const value = normalize(m[0].toUpperCase());
+    if (seen.has(value)) continue;
+    seen.add(value);
+    out.push({ kind, value });
+    if (seen.size >= MAX_TEXT_IDENTIFIERS) return;
+  }
+}
+
 function extractFromText(text: string): Identifier[] {
   const out: Identifier[] = [];
-
-  const ecliMatches = text.match(/ECLI:[A-Z]{2}:[A-Z0-9]+:[0-9]{4}:[A-Z0-9.:-]+/gi) ?? [];
-  for (const m of ecliMatches) out.push({ kind: "ecli", value: normalize(m.toUpperCase()) });
-
-  const bwbMatches = text.match(/BWBR[0-9]{7,}/gi) ?? [];
-  for (const m of bwbMatches) out.push({ kind: "bwb_id", value: normalize(m.toUpperCase()) });
-
+  firstMatches(text, /ECLI:[A-Z]{2}:[A-Z0-9]+:[0-9]{4}:[A-Z0-9.:-]+/gi, "ecli", out);
+  firstMatches(text, /BWBR[0-9]{7,}/gi, "bwb_id", out);
   return out;
 }
 
@@ -68,7 +80,12 @@ function linkKey(link: RelatedLink): string {
   return `${link.target_connector}|${link.target_id}|${link.relationship}|${link.url ?? ""}`;
 }
 
-export function enrichRelatedLinks(records: MCPRecord[]): MCPRecord[] {
+/**
+ * Adds related_links (at most MAX_RELATED_LINKS) to the records in `window`
+ * (all records when omitted) and returns those records. A link may point to
+ * any record in `records`, also one outside the window.
+ */
+export function enrichRelatedLinks(records: MCPRecord[], window?: { start: number; end: number }): MCPRecord[] {
   const identifiersPerRecord = records.map((r) => extractIdentifiers(r));
   const occurrences = new Map<string, number[]>();
 
@@ -81,48 +98,56 @@ export function enrichRelatedLinks(records: MCPRecord[]): MCPRecord[] {
     }
   }
 
-  return records.map((record, idx) => {
-    const links: RelatedLink[] = [];
+  const start = window?.start ?? 0;
+  return records.slice(start, window?.end ?? records.length).map((record, offset) => {
+    const idx = start + offset;
+    // Deduplicated as they come; full once MAX_RELATED_LINKS different links are in.
+    const unique = new Map<string, RelatedLink>();
+    const add = (link: RelatedLink): boolean => {
+      const key = linkKey(link);
+      if (!unique.has(key)) unique.set(key, link);
+      return unique.size < MAX_RELATED_LINKS;
+    };
 
-    for (const id of identifiersPerRecord[idx]) {
+    links: for (const id of identifiersPerRecord[idx]) {
       const key = `${id.kind}:${id.value.toLowerCase()}`;
       const matchIndices = occurrences.get(key) ?? [];
 
       for (const otherIdx of matchIndices) {
         if (otherIdx === idx) continue;
         const other = records[otherIdx];
-        links.push({
+        const room = add({
           target_connector: other.source_name,
           target_id: id.value,
           relationship: id.kind === "bwb_id" ? "references_law" : id.kind === "gemeentecode" ? "about_municipality" : "related_record",
           url: other.canonical_url,
         });
+        if (!room) break links;
       }
 
       // Add direct cross-reference targets even if not present in current result set.
       if (id.kind === "bwb_id") {
-        links.push({
+        const room = add({
           target_connector: "officiele_bekendmakingen",
           target_id: id.value,
           relationship: "references_law",
           url: `https://wetten.overheid.nl/${encodeURIComponent(id.value)}`,
         });
+        if (!room) break links;
       }
 
       if (id.kind === "gemeentecode" && record.source_name.toLowerCase().includes("cbs")) {
-        links.push({
+        const room = add({
           target_connector: "bag_linked_data",
           target_id: id.value,
           relationship: "about_municipality",
           url: `https://api.pdok.nl/bzk/locatieserver/search/v3_1/free?fq=gemeentecode:${encodeURIComponent(id.value)}`,
         });
+        if (!room) break links;
       }
     }
 
-    if (!links.length) return record;
-
-    const unique = new Map<string, RelatedLink>();
-    for (const link of links) unique.set(linkKey(link), link);
+    if (!unique.size) return record;
 
     const data = { ...(record.data ?? {}) } as Record<string, unknown>;
     data.related_links = Array.from(unique.values());

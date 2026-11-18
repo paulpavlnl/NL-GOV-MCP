@@ -2,6 +2,7 @@ import type { AppConfig } from "../types.js";
 import { getJson, getText, postJson, SourceRequestError } from "../utils/http.js";
 import { LOCATIESERVER_FREE, parseRdPoint, RD_EXTENT, type RdPoint } from "../utils/geo.js";
 import { logger } from "../utils/logger.js";
+import { InvalidInputError } from "../utils/response.js";
 import { placeKey, placeVariants } from "../utils/place-aliases.js";
 import { extractSruRecords, parseXml } from "../utils/xml-parser.js";
 import { buildDsoDocument, foldText, type DsoDocument, type DsoDocumentComponent } from "./dso-regeltekst.js";
@@ -256,15 +257,31 @@ export interface DsoSearchResult {
   terInzageAantal?: { bevestigd: number; mogelijk: number };
 }
 
-/** A request the DSO cannot answer as asked: unknown name, address not found, bad identifier. */
-export class DsoInputError extends Error {
+/**
+ * A refused argument, reported as invalid_input: too long, a bad identifier, a
+ * combination that does not go together, or a name that matches no single
+ * bevoegd gezag or provincie in the DSO's own list.
+ */
+export class DsoInputError extends InvalidInputError {
+  constructor(message: string, suggestion: string, details?: Record<string, unknown>) {
+    super(message, suggestion, details);
+    this.name = "DsoInputError";
+  }
+}
+
+/**
+ * An accepted argument the DSO or the PDOK Locatieserver has no single answer for:
+ * an address or document not found, a place that fits several gemeenten, an empty
+ * or too large document. An answer of the source, not a refused argument.
+ */
+export class DsoLookupError extends Error {
   constructor(
     message: string,
     public readonly suggestion: string,
     public readonly details?: Record<string, unknown>,
   ) {
     super(message);
-    this.name = "DsoInputError";
+    this.name = "DsoLookupError";
   }
 }
 
@@ -1396,13 +1413,11 @@ export class DsoOmgevingsdocumentenSource {
    */
   async geocode(locatie: string): Promise<{ invoer: string; weergavenaam: string; type?: string; rd: RdPoint; endpoint: string; note?: string }> {
     const invoer = locatie.trim();
+    const locatieSuggestion =
+      "Geef een adres in Nederland ('Brennerbaan 150, Utrecht'), een postcode, met of zonder huisnummer ('3524 BN 150'), of een plaats ('Lunetten, Utrecht'). Voor alle documenten van een gemeente: bevoegdGezag; van een provincie en haar gemeenten: provincie.";
     const notFound = (endpoint: string, message = `Locatie '${invoer}' niet gevonden via de PDOK Locatieserver.`) =>
-      new DsoInputError(
-        message,
-        "Geef een adres in Nederland ('Brennerbaan 150, Utrecht'), een postcode, met of zonder huisnummer ('3524 BN 150'), of een plaats ('Lunetten, Utrecht'). Voor alle documenten van een gemeente: bevoegdGezag; van een provincie en haar gemeenten: provincie.",
-        { endpoint },
-      );
-    if (invoer.length > DSO_MAX_INPUT_CHARS) throw notFound(LOCATIESERVER_FREE, `Locatie is langer dan ${DSO_MAX_INPUT_CHARS} tekens.`);
+      new DsoLookupError(message, locatieSuggestion, { endpoint });
+    if (invoer.length > DSO_MAX_INPUT_CHARS) throw new DsoInputError(`Locatie is langer dan ${DSO_MAX_INPUT_CHARS} tekens.`, locatieSuggestion, { endpoint: LOCATIESERVER_FREE });
     const q = locatieQuery(invoer);
     const parts = locatieParts(q);
     const { docs, endpoint } = await this.locatieDocs(q);
@@ -1492,7 +1507,7 @@ export class DsoOmgevingsdocumentenSource {
         );
     if (elsewhere.length) {
       const options = [...new Map([picked.doc, ...elsewhere].map((d) => [d.gemeentenaam, d.weergavenaam])).values()].slice(0, 6);
-      throw new DsoInputError(
+      throw new DsoLookupError(
         `Locatie '${invoer}' is niet eenduidig: ${options.join("; ")}.`,
         `Voeg de plaats toe, bijv. '${invoer}, ${elsewhere[0].woonplaatsnaam ?? elsewhere[0].gemeentenaam}', of geef een postcode.`,
         { endpoint, suggestions: options },
@@ -1609,7 +1624,7 @@ export class DsoOmgevingsdocumentenSource {
       const docs = data.response?.docs ?? [];
       const gemeenten = [...new Map(docs.filter((d) => /^\d{4}$/.test(d.gemeentecode ?? "")).map((d) => [`gm${d.gemeentecode}`, { code: `gm${d.gemeentecode}`, naam: d.gemeentenaam }])).values()];
       if (!gemeenten.length) {
-        throw new DsoInputError(`Geen gemeenten gevonden in provincie ${code} (PDOK Locatieserver).`, "Geef een provincie als naam ('Utrecht', 'Fryslân') of code (pv20 tot en met pv31).", { endpoint: meta.url });
+        throw new DsoLookupError(`Geen gemeenten gevonden in provincie ${code} (PDOK Locatieserver).`, "Geef een provincie als naam ('Utrecht', 'Fryslân') of code (pv20 tot en met pv31).", { endpoint: meta.url });
       }
       return { code, naam: docs[0]?.provincienaam ? `provincie ${docs[0].provincienaam}` : undefined, gemeenten, endpoint: meta.url };
     });
@@ -1960,7 +1975,7 @@ export class DsoOmgevingsdocumentenSource {
       const catalogue = await this.catalogue("ontwerpregelingen");
       const hits = catalogue.items.filter((x) => x.ontwerpbesluitIdentificatie === parsed.ontwerpbesluitIdentificatie && x.technischId);
       if (!hits.length) {
-        throw new DsoInputError(
+        throw new DsoLookupError(
           `Geen ontwerpregeling bij ontwerpbesluit '${parsed.ontwerpbesluitIdentificatie}' in het DSO.`,
           "Gebruik technischId uit dso_omgevingsdocumenten_search met soort 'ontwerpregelingen'.",
         );
@@ -1984,14 +1999,14 @@ export class DsoOmgevingsdocumentenSource {
       // Only a 404 means "not there": a 400 is a malformed DSO_API_KEY (or a parameter the DSO
       // refuses) and a 401/403 an unknown key, which the tool reports as configuration errors.
       if (error instanceof SourceRequestError && error.status === 404) {
-        throw new DsoInputError(
+        throw new DsoLookupError(
           `Omgevingsdocument '${args.identificatie.slice(0, 120)}' niet gevonden in het DSO${geldigOp ? ` (geldig op ${geldigOp})` : ""}.`,
           `Gebruik identificatie, uriIdentificatie of technischId uit dso_omgevingsdocumenten_search${geldigOp ? "; of het DSO heeft geen versie die op die datum geldig én in werking was" : ""}.`,
           { endpoint: error.endpoint, status: error.status },
         );
       }
       if (error instanceof SourceRequestError && error.code === "malformed_response" && /exceeded/i.test(error.message)) {
-        throw new DsoInputError(
+        throw new DsoLookupError(
           `Omgevingsdocument '${args.identificatie.slice(0, 120)}' is te groot om als tekst op te halen (documentstructuur groter dan ${DOCUMENT_MAX_BYTES / (1024 * 1024)} MB).`,
           `Lees het document via canonical_url uit dso_omgevingsdocumenten_search, of in Regels op de kaart (${DSO_RODK_URL}).`,
           { endpoint: error.endpoint },
@@ -2015,7 +2030,7 @@ export class DsoOmgevingsdocumentenSource {
       const doc = buildDsoDocument(data._embedded?.documentComponenten ?? data._embedded?.ontwerpDocumentComponenten ?? []);
       // Never "0 tekens" as if that were the text; and an empty parse is not cached.
       if (!doc.totalChars) {
-        throw new DsoInputError(
+        throw new DsoLookupError(
           `Het DSO gaf voor '${args.identificatie.slice(0, 120)}' geen regeltekst terug (lege documentstructuur).`,
           `Lees het document via canonical_url uit dso_omgevingsdocumenten_search, of in Regels op de kaart (${DSO_RODK_URL}).`,
           { endpoint: meta.url },

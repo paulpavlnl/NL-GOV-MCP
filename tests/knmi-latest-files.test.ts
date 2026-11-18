@@ -92,6 +92,51 @@ describe("KnmiSource.latestFiles version resolution", () => {
   });
 });
 
+describe("KnmiSource: caller values stay one path segment each", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    clearHttpCache();
+  });
+
+  it("encodes slashes, query and fragment characters in dataset, version and filename", async () => {
+    const fetchMock = mockJsonOnce({ temporaryDownloadUrl: "https://download.example/f" });
+    await new KnmiSource(config, "test-key").fileDownloadUrl("some_dataset/../../other", "1?maxKeys=999", "file.nc#frag");
+
+    const url = new URL(firstUrl(fetchMock));
+    expect(url.pathname).toBe("/open-data/v1/datasets/some_dataset%2F..%2F..%2Fother/versions/1%3FmaxKeys%3D999/files/file.nc%23frag/url");
+    expect(url.search).toBe("");
+    expect(url.hash).toBe("");
+  });
+
+  it("encodes the dataset name of a file listing and keeps its own query", async () => {
+    const fetchMock = mockJsonOnce({ files: [] });
+    await new KnmiSource(config, "test-key").latestFiles("../../x", "2", 3);
+
+    const url = new URL(firstUrl(fetchMock));
+    expect(url.pathname).toBe("/open-data/v1/datasets/..%2F..%2Fx/versions/2/files");
+    expect(url.searchParams.get("maxKeys")).toBe("3");
+  });
+
+  it.each([".", "..", ""])("refuses %j as a path segment without a request", async (value) => {
+    const fetchMock = mockJsonOnce({ files: [] });
+    const src = new KnmiSource(config, "test-key");
+    await expect(src.latestFiles("..", "2", 3)).rejects.toThrow(/Ongeldige datasetName/);
+    await expect(src.fileDownloadUrl("some_dataset", "1", value)).rejects.toThrow(/Ongeldige filename/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("control: an ordinary file name gives the same URL as before", async () => {
+    const fetchMock = mockJsonOnce({ temporaryDownloadUrl: "https://download.example/f" });
+    const out = await new KnmiSource(config, "test-key").fileDownloadUrl("Actuele10mindataKNMIstations", "2", "KMDS__OPER_P___10M_OBS_L2_202401011200.nc");
+
+    expect(firstUrl(fetchMock)).toBe(
+      "https://api.dataplatform.knmi.nl/open-data/v1/datasets/Actuele10mindataKNMIstations/versions/2/files/KMDS__OPER_P___10M_OBS_L2_202401011200.nc/url",
+    );
+    expect(out.item.temporaryDownloadUrl).toBe("https://download.example/f");
+  });
+});
+
 describe("KnmiSource: the newest files, and failures as failures", () => {
   beforeEach(() => {
     vi.restoreAllMocks();

@@ -485,6 +485,9 @@ export class BagPandenSource {
         connector: BAG_OGC_CONNECTOR,
         timeoutMs: remaining !== undefined ? Math.min(30_000, remaining) : 30_000,
         retries: remaining !== undefined ? 0 : 1,
+        // A budget below the default is the caller's choice: running out of it must
+        // not open the circuit that every other caller of the OGC API shares.
+        callerBudget: remaining !== undefined && remaining < 30_000,
       });
       if (page === 0) firstUrl = meta.url;
       features.push(...(data.features ?? []));

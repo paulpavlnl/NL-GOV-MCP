@@ -1,5 +1,6 @@
 import type { AppConfig } from "../types.js";
 import { getText, SourceRequestError } from "../utils/http.js";
+import { escapeSruValue } from "../utils/sru-cql.js";
 import {
   extractSruNumberOfRecords,
   extractSruRecords,
@@ -55,14 +56,18 @@ export function cleanBwbInput(text: string): string {
     .trim();
 }
 
-/** Escape a value for use inside double-quoted CQL/SRU strings. */
-function escapeSruValue(v: string): string {
-  return v.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
+/** CQL keywords, which a bare term would be read as. */
+const CQL_KEYWORDS = new Set(["and", "or", "not", "prox", "sortby"]);
 
+/**
+ * A title or afkorting as a CQL value. A single plain word (letters, digits,
+ * hyphens) goes bare, as it always has; anything else is quoted, so a
+ * multi-word term is an ordered phrase and CQL syntax inside one token
+ * ("Awb)or(dcterms.identifier=x") stays part of the value.
+ */
 function cqlValue(term: string): string {
-  // Quote multi-word terms so CQL treats them as an ordered phrase.
-  return /\s/.test(term) ? `"${escapeSruValue(term)}"` : escapeSruValue(term);
+  const plain = /^[\p{L}\p{N}][\p{L}\p{N}-]*$/u.test(term) && !CQL_KEYWORDS.has(term.toLowerCase());
+  return plain ? term : `"${escapeSruValue(term)}"`;
 }
 
 /**

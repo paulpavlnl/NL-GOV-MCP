@@ -30,6 +30,7 @@ import { findServerRoot } from "../load-env.js";
 import { WTI_URL } from "./wetsgeschiedenis.js";
 import { foutlog } from "./foutlog.js";
 import { ALIASSEN, pasAliassenToe, schemaMetAliassen } from "./aliassen.js";
+import { ARGUMENT_MAX_CHARS_BY_TOOL, overlongArgument } from "../tools.js";
 
 /* ---------- bekende valkuilen ---------- */
 
@@ -327,8 +328,9 @@ export function installHallucinatieBeveiliging(server: McpServer, analyse = (ged
     const wrapped = async (args: Result, extra: unknown) => {
       foutlog().aanroep(n);
       const viaAlias = pasAliassenToe(n, args, aliasSchema.vereist);
-      if (viaAlias.ontbreekt.length) {
-        const payload = { error: "unexpected", message: `Ontbrekende parameter: ${viaAlias.ontbreekt.join(", ")}.`, suggestion: `Geef ${viaAlias.ontbreekt.join(", ")}${Object.entries(ALIASSEN[n] ?? {}).filter(([, doel]) => viaAlias.ontbreekt.includes(doel)).map(([al]) => ` (of ${al})`).join("")}.` };
+      // An overlong argument goes to the upstream length guard first (invalid_input with that argument).
+      if (viaAlias.ontbreekt.length && !overlongArgument(args, ARGUMENT_MAX_CHARS_BY_TOOL[n] ?? {})) {
+        const payload = { error: "invalid_input", message: `Ontbrekende parameter: ${viaAlias.ontbreekt.join(", ")}.`, suggestion: `Geef ${viaAlias.ontbreekt.join(", ")}${Object.entries(ALIASSEN[n] ?? {}).filter(([, doel]) => viaAlias.ontbreekt.includes(doel)).map(([al]) => ` (of ${al})`).join("")}.` };
         return { content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: payload, isError: true } as ToolPayload;
       }
       args = viaAlias.args as Result;

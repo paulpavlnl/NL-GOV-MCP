@@ -16,7 +16,7 @@ import { PdokSource } from "./sources/pdok.js";
 import { ORI_ID_RE, ORI_INDEX_RE, ORI_PAGINA_RE, ORI_TEXT_DEFAULT_CHARS, ORI_TEXT_MAX_CHARS, OriSource, oriDocumentFailureHint, oriFailureHint, parsePagina } from "./sources/ori.js";
 import { NdwSource } from "./sources/ndw.js";
 import { LuchtmeetnetSource } from "./sources/luchtmeetnet.js";
-import { RechtspraakSource, UITSPRAAK_DEFAULT_CHARS, UITSPRAAK_MAX_CHARS, readEcliInput, sectieIsReadable, selectUitspraakText, tuchtrechtUrl, uitspraakDataUrl, uitspraakDetailsUrl, uitspraakInhoudsopgave } from "./sources/rechtspraak.js";
+import { RechtspraakSource, UITSPRAAK_DEFAULT_CHARS, UITSPRAAK_MAX_CHARS, readEcliInput, searchPageUrl as rechtspraakSearchPageUrl, sectieIsReadable, selectUitspraakText, tuchtrechtUrl, uitspraakDataUrl, uitspraakDetailsUrl, uitspraakInhoudsopgave } from "./sources/rechtspraak.js";
 import { RdwSource } from "./sources/rdw.js";
 import { RijkswaterstaatWaterdataSource } from "./sources/rijkswaterstaat-waterdata.js";
 import { NgrSource } from "./sources/ngr.js";
@@ -46,7 +46,7 @@ import { NsReisinformatieSource } from "./sources/ns-reisinformatie.js";
 import { gehoordOauthBeschikbaar, gehoordOauthSearch, gehoordOauthList, gehoordOauthDebat } from "./fork/gehoord-oauth.js"; // FORK (docs/FORK.md)
 import { GehoordSource, type GehoordContribution, type GehoordDebateRef, GEHOORD_BASE_NOTE, GEHOORD_LINK_NOTE, GEHOORD_INDEX_NOTE, GEHOORD_DEFAULT_CHARS, GEHOORD_MAX_CHARS, GEHOORD_DEFAULT_CONTEXT, GEHOORD_MAX_CONTEXT, GEHOORD_MAX_LIMIT, GEHOORD_SEGMENT_MAX_PAGES, GEHOORD_SPREKER_MAX_PAGES, GEHOORD_MATCHES, GEHOORD_STATUSES, GEHOORD_STATUS_LABEL, gehoordPersoonUrl, KAMER_LABEL, gehoordCaveats, gehoordContributionRecord, gehoordDebateRecord, gehoordMissingKey, gehoordSearchNotes, gehoordSnippet, mapGehoordError, summarizeGehoordSearch, type GehoordListArgs, type GehoordSearchArgs } from "./sources/gehoord.js";
 import { DnbStatisticsSource } from "./sources/dnb-statistics.js";
-import { TenderNedSource, TENDERNED_MAX_REACHABLE, TenderNedInputError, planUpstreamWindow, tenderNedRecordFields } from "./sources/tenderned.js";
+import { TenderNedSource, TENDERNED_MAX_REACHABLE, planUpstreamWindow, tenderNedRecordFields } from "./sources/tenderned.js";
 import { KoopCollectieSource } from "./sources/koop-collecties.js";
 import { BrpGewasperceelSource } from "./sources/brp-gewaspercelen.js";
 import { VerkiezingsuitslagenSource } from "./sources/verkiezingsuitslagen.js";
@@ -55,14 +55,14 @@ import { LidoSource, parseLidoId, normalizeLidoType, clampLidoRows } from "./sou
 import { LidoRelationsSource } from "./sources/lido-relations.js";
 import { registerEuForkTools } from "./fork/eu-tools.js"; // FORK: EU-rechtspraak en -wetgeving (docs/FORK.md)
 import { BwbArtikelSource } from "./sources/bwb-artikel.js";
-import { DsoOmgevingsdocumentenSource, DsoInputError, DSO_DOCUMENT_TYPES, DSO_PRESENTEREN_BASE, DSO_RODK_URL, dsoApiKeyProblem, type DsoSearchItem } from "./sources/dso-omgevingsdocumenten.js";
+import { DsoOmgevingsdocumentenSource, DsoInputError, DsoLookupError, DSO_DOCUMENT_TYPES, DSO_PRESENTEREN_BASE, DSO_RODK_URL, dsoApiKeyProblem, type DsoSearchItem } from "./sources/dso-omgevingsdocumenten.js";
 import { DSO_TEXT_DEFAULT_CHARS, DSO_TEXT_MAX_CHARS, selectDsoText, zoektermWords, type DsoTextPart } from "./sources/dso-regeltekst.js";
 import { WodcSource, WODC_SEARCH_ENDPOINT, WODC_MAX_ROWS, WODC_MAX_OFFSET, WODC_DEFAULT_CHARS, WODC_MAX_CHARS, WODC_MAX_PASSAGES, clampWodcRows, mapWodcError, planWodcWindow, shortAbstract, type WodcItem } from "./sources/wodc.js";
 import { AlgoritmeregisterSource, ALGORITMEREGISTER_SEARCH_ENDPOINT, ALGORITMEREGISTER_ORG_ENDPOINT, ALGORITMEREGISTER_MAX_ROWS, ALGORITME_STATUSSEN, ALGORITME_PUBLICATIECATEGORIEEN, ALGORITME_ORGANISATIETYPES, clampAlgoritmeRows, planAlgoritmeWindow, summarizeAlgoritmeSearch } from "./sources/algoritmeregister.js";
 import { EuFundingSource, EuFundingInputError, EU_FUNDING_SEARCH_ENDPOINT, EU_FUNDING_PORTAL, EU_FUNDING_MAX_ROWS, EU_FUNDING_DEFAULT_ROWS, EU_FUNDING_MAX_REACHABLE, EU_FUNDING_DEFAULT_MAX_CHARS, EU_FUNDING_MAX_CHARS, EU_FUNDING_STATUSES, EU_FUNDING_TYPES, EU_FUNDING_SORTS, EU_FUNDING_PROGRAMME_ABBREVIATIONS, clampEuFundingRows, buildEuFundingRequest, euFundingParams, describeEuFundingItem, summarizeEuFundingSearch, summarizeEuFundingGet, type EuFundingItem } from "./sources/eu-funding.js";
-import { RvoSubsidiesSource, RvoSubsidiesInputError, RVO_SUBSIDIES_ENDPOINT, RVO_SUBSIDIES_CONNECTOR, RVO_SUBSIDIES_PAGES_CONNECTOR, RVO_STATUSSEN, RVO_DOELGROEPEN, RVO_ONDERWERPEN, RVO_SORTS, RVO_DEFAULT_ROWS, RVO_MAX_ROWS, RVO_STATUS_CHECK_MAX, RVO_STATUS_ENRICH_MAX, RVO_TEXT_DEFAULT_CHARS, RVO_TEXT_MAX_CHARS, rvoPageUrl, summarizeRvoSearch, summarizeRvoGet, type RvoSubsidyItem, type RvoSubsidyStatus } from "./sources/rvo-subsidies.js";
+import { RvoSubsidiesSource, RVO_SUBSIDIES_ENDPOINT, RVO_SUBSIDIES_CONNECTOR, RVO_SUBSIDIES_PAGES_CONNECTOR, RVO_STATUSSEN, RVO_DOELGROEPEN, RVO_ONDERWERPEN, RVO_SORTS, RVO_DEFAULT_ROWS, RVO_MAX_ROWS, RVO_STATUS_CHECK_MAX, RVO_STATUS_ENRICH_MAX, RVO_TEXT_DEFAULT_CHARS, RVO_TEXT_MAX_CHARS, rvoPageUrl, summarizeRvoSearch, summarizeRvoGet, type RvoSubsidyItem, type RvoSubsidyStatus } from "./sources/rvo-subsidies.js";
 import { OnderzoekscallsSource, ONDERZOEKSCALL_STATUS_FILTERS, ONDERZOEKSCALL_MAX_ROWS, ONDERZOEKSCALL_DEFAULT_ROWS, ONDERZOEKSCALL_MAX_OFFSET, ONDERZOEKSCALL_DEFAULT_CHARS, ONDERZOEKSCALL_MAX_CHARS, ONDERZOEKSCALL_CONNECTORS, clampOnderzoekscallRows, resolveOnderzoekscallUrl, summarizeOnderzoekscallsSearch, summarizeOnderzoekscall, amsterdamDay, mapOnderzoekscallError, type OnderzoekscallItem } from "./sources/nl-onderzoekscalls.js";
-import { mapSourceError, nowIso, successResponse, toMcpToolPayload, errorResponse } from "./utils/response.js";
+import { mapSourceError, nowIso, successResponse, toMcpToolPayload, errorResponse, invalidInputResponse } from "./utils/response.js";
 import { SourceRequestError } from "./utils/http.js";
 import { applyOutputFormat } from "./utils/output-format.js";
 import { buildFormattedResponse, dryRunPayload, mergeAccessNotes, singleConnectorVerbose } from "./utils/tool-runner.js";
@@ -94,7 +94,7 @@ const rwsWaterdata = new RijkswaterstaatWaterdataSource(config);
 const ngr = new NgrSource(config);
 const ruimtelijkePlannen = new RuimtelijkePlannenSource(config);
 const rivm = new RivmSource(config);
-const bagLinkedData = new SparqlLinkedDataSource(config, "https://api.labs.kadaster.nl/datasets/bag/lv/services/default/sparql", "Kadaster BAG Linked Data");
+const bagLinkedData = new SparqlLinkedDataSource(config, "https://api.labs.kadaster.nl/datasets/bag/lv/services/baglv/sparql", "Kadaster BAG Linked Data");
 const bagDetail = new BagDetailSource(config);
 const kaartbeeld = new PdokKaartbeeldSource(config);
 const rceLinkedData = new SparqlLinkedDataSource(config, "https://api.linkeddata.cultureelerfgoed.nl/datasets/rce/cho/services/cho/sparql", "RCE Linked Data");
@@ -682,10 +682,94 @@ const paginationInputSchema = {
   limit: z.number().int().min(1).max(config.limits.maxRows).optional(),
 };
 
-export function registerTools(server: McpServer): void {
+/**
+ * The longest string any tool argument may hold, strings nested in arrays and
+ * objects (and object keys) included. The longest free text a tool takes is the
+ * nl_gov_ask question (2,000 characters); identifiers, URLs, dates, bbox and point
+ * strings and the search queries (SEARCH_QUERY_MAX) stay well below it. A schema's
+ * own, stricter .max() applies before this limit.
+ */
+export const ARGUMENT_MAX_CHARS = 2_000;
+
+/**
+ * Arguments whose purpose needs more than ARGUMENT_MAX_CHARS, per tool: a SPARQL
+ * SELECT query with its PREFIX lines, and a raw OData $filter, which the Tweede
+ * Kamer API takes up to 100 nodes long.
+ */
+export const ARGUMENT_MAX_CHARS_BY_TOOL: Readonly<Record<string, Readonly<Record<string, number>>>> = {
+  bag_linked_data_select: { query: 10_000 },
+  rce_linked_data_select: { query: 10_000 },
+  tweede_kamer_search: { filter: 5_000 },
+};
+
+/**
+ * The first string in a tool's arguments that is longer than its limit: the
+ * argument's own limit from `limits`, else ARGUMENT_MAX_CHARS. Nested values are
+ * named by path ('filters.Perioden[2]'); a key that is too long by its object.
+ */
+export function overlongArgument(
+  args: unknown,
+  limits: Readonly<Record<string, number>> = {},
+): { path: string; length: number; max: number } | undefined {
+  if (!args || typeof args !== "object") return undefined;
+  const queue: Array<{ value: unknown; path: string; max: number }> = [];
+  for (const [key, value] of Object.entries(args)) queue.push({ value, path: key, max: limits[key] ?? ARGUMENT_MAX_CHARS });
+  // Breadth first and without recursion, so deep nesting cannot exhaust the stack.
+  for (let i = 0; i < queue.length; i++) {
+    const { value, path, max } = queue[i];
+    if (typeof value === "string") {
+      if (value.length > max) return { path, length: value.length, max };
+    } else if (Array.isArray(value)) {
+      value.forEach((item, index) => queue.push({ value: item, path: `${path}[${index}]`, max }));
+    } else if (value && typeof value === "object") {
+      for (const [key, item] of Object.entries(value)) {
+        if (key.length > max) return { path: `${path} (sleutel)`, length: key.length, max };
+        queue.push({ value: item, path: `${path}.${key}`, max });
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The server as registerTools hands it out: registerTool wraps every handler of a
+ * tool with arguments, so no handler runs with a string longer than its limit
+ * (overlongArgument); such a call is answered with invalid_input. Tools added
+ * later through registerTools are covered too.
+ */
+function withArgumentLengthGuard(server: McpServer): McpServer {
+  type Handler = (args: unknown, extra: unknown) => unknown;
+  const registerTool = (name: string, toolConfig: { inputSchema?: unknown }, handler: Handler) => {
+    if (!toolConfig.inputSchema) return server.registerTool(name, toolConfig as never, handler as never);
+    const limits = ARGUMENT_MAX_CHARS_BY_TOOL[name] ?? {};
+    const guarded: Handler = (args, extra) => {
+      const overlong = overlongArgument(args, limits);
+      if (!overlong) return handler(args, extra);
+      const path = overlong.path.length > 120 ? `${overlong.path.slice(0, 119)}…` : overlong.path;
+      return toMcpToolPayload(
+        invalidInputResponse(
+          `Argument '${path}' is te lang: ${overlong.length} tekens, het maximum is ${overlong.max}.`,
+          `Geef voor '${path}' een waarde van hooguit ${overlong.max} tekens: een identificatie, een paar zoekwoorden of een korte vraag, geen hele tekst.`,
+          { argument: path, length: overlong.length, max_length: overlong.max },
+        ),
+      );
+    };
+    return server.registerTool(name, toolConfig as never, guarded as never);
+  };
+  return new Proxy(server, {
+    get(target, prop) {
+      if (prop === "registerTool") return registerTool;
+      const value: unknown = Reflect.get(target, prop, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+export function registerTools(mcpServer: McpServer): void {
+  const server = withArgumentLengthGuard(mcpServer);
   server.registerTool("data_overheid_datasets_search", {
     description: "Search the Dutch national open data catalog (data.overheid.nl). Use concise topic keywords, not full sentences. Combine with 'organization' or 'theme' filters to narrow results.",
-    inputSchema: { query: z.string().describe("Short topic keywords for dataset search. Extract the core subject from the user's question. Examples: 'luchtkwaliteit', 'bevolkingsgroei gemeente', 'energieverbruik'. Do NOT pass full natural-language questions."), sort: z.enum(["relevance", "date_newest"]).default("relevance").describe("Use 'date_newest' when user asks for recent/latest/newest datasets. Use 'relevance' for general searches."), rows: z.number().int().min(1).max(config.limits.maxRows).default(config.limits.defaultRows), organization: z.string().optional(), theme: z.string().optional(), ...paginationInputSchema, outputFormat: outputFormatSchema, verbose: z.boolean().default(false), dryRun: z.boolean().default(false) },
+    inputSchema: { query: z.string().max(SEARCH_QUERY_MAX).describe("Short topic keywords for dataset search. Extract the core subject from the user's question. Examples: 'luchtkwaliteit', 'bevolkingsgroei gemeente', 'energieverbruik'. Do NOT pass full natural-language questions."), sort: z.enum(["relevance", "date_newest"]).default("relevance").describe("Use 'date_newest' when user asks for recent/latest/newest datasets. Use 'relevance' for general searches."), rows: z.number().int().min(1).max(config.limits.maxRows).default(config.limits.defaultRows), organization: z.string().optional().describe("Publishing organization: its slug (e.g. 'data-utrecht-nl') or its title as data_overheid_organizations returns it (e.g. 'Gemeente Utrecht')."), theme: z.string().optional().describe("Dataset theme as data_overheid_themes returns it: the Dutch or English label (e.g. 'Verkeer') or the URI (e.g. 'http://standaarden.overheid.nl/owms/terms/Verkeer_(thema)'). Matches that theme only, not its sub-themes."), ...paginationInputSchema, outputFormat: outputFormatSchema, verbose: z.boolean().default(false), dryRun: z.boolean().default(false) },
     annotations: TOOL_ANNOTATIONS,
   }, async (args) => {
     const rw = rewriteQuery(args.query, "moderate");
@@ -771,7 +855,7 @@ export function registerTools(server: McpServer): void {
     } catch (e) { return toMcpToolPayload(mapSourceError(e, "data.overheid.nl")); }
   });
 
-  server.registerTool("cbs_tables_search", { description: "Search CBS (Statistics Netherlands) statistical tables. Use concise Dutch or English topic keywords.", inputSchema: { query: z.string().describe("Short statistical topic keywords. Examples: 'bevolking leeftijd', 'woningprijzen', 'werkloosheid regio', 'inflatie'. Do NOT pass full questions."), top: z.number().int().min(1).max(config.limits.maxRows).default(20), ...paginationInputSchema, outputFormat: outputFormatSchema, verbose: z.boolean().default(false), dryRun: z.boolean().default(false) }, annotations: TOOL_ANNOTATIONS }, async ({ query, top, offset, limit, outputFormat, verbose, dryRun }) => {
+  server.registerTool("cbs_tables_search", { description: "Search CBS (Statistics Netherlands) statistical tables. Use concise Dutch or English topic keywords.", inputSchema: { query: z.string().max(SEARCH_QUERY_MAX).describe("Short statistical topic keywords. Examples: 'bevolking leeftijd', 'woningprijzen', 'werkloosheid regio', 'inflatie'. Do NOT pass full questions."), top: z.number().int().min(1).max(config.limits.maxRows).default(20), ...paginationInputSchema, outputFormat: outputFormatSchema, verbose: z.boolean().default(false), dryRun: z.boolean().default(false) }, annotations: TOOL_ANNOTATIONS }, async ({ query, top, offset, limit, outputFormat, verbose, dryRun }) => {
     const rw = rewriteQuery(query, "moderate");
     try {
       const effectiveLimit = limit ?? top;
@@ -876,7 +960,7 @@ export function registerTools(server: McpServer): void {
         : undefined;
   const tkCountLabel = (shown: number, total: number | null) => (total !== null ? `${shown} van ${total}` : `${shown}`);
 
-  server.registerTool("tweede_kamer_documents", { description: "Search Dutch Parliament (Tweede Kamer) documents by title and subject (metadata only, not the full text; use tweede_kamer_document_get with include_text for the content). All keywords must match (AND). Keywords of up to 3 characters (e.g. 'EU', 'ICT') and \"quoted phrases\" match as whole words; longer keywords also match inside longer words ('fietspad' finds 'fietspaden'). Short keywords whose letters occur in many records ('OV' in 'over', 'ING' in '-ing') are matched in fewer forms ('OV', 'OV-') to stay within the API's time limit; the number of forms follows a count of the records containing the letters, which date_from narrows. The access_note says which forms were searched. Case-insensitive but accent-sensitive. Optionally filter by document type and date range. Records link to the document page on tweedekamer.nl; pagination.total is the real number of matches.", inputSchema: { query: z.string().optional().describe("Policy topic keywords, all required. Examples: 'stikstof', 'woningbouw', 'EU landbouw', '\"openbaar vervoer\"'. Do NOT pass full questions. Optional when type or a date is given."), top: z.number().int().min(1).max(config.limits.maxRows).default(25), type: z.string().optional().describe("Document type, substring match on Soort (or Titel), e.g. 'Motie', 'Brief regering', 'Amendement'."), date_from: z.string().optional().describe("YYYY-MM-DD, document date on or after (Dutch local date)."), date_to: z.string().optional().describe("YYYY-MM-DD, document date on or before (Dutch local date)."), ...paginationInputSchema, outputFormat: outputFormatSchema, verbose: z.boolean().default(false), dryRun: z.boolean().default(false) }, annotations: TOOL_ANNOTATIONS }, async ({ query, top, type, date_from, date_to, offset, limit, outputFormat, verbose, dryRun }) => {
+  server.registerTool("tweede_kamer_documents", { description: "Search Dutch Parliament (Tweede Kamer) documents by title and subject (metadata only, not the full text; use tweede_kamer_document_get with include_text for the content). All keywords must match (AND). Keywords of up to 3 characters (e.g. 'EU', 'ICT') and \"quoted phrases\" match as whole words; longer keywords also match inside longer words ('fietspad' finds 'fietspaden'). Short keywords whose letters occur in many records ('OV' in 'over', 'ING' in '-ing') are matched in fewer forms ('OV', 'OV-') to stay within the API's time limit; the number of forms follows a count of the records containing the letters, which date_from narrows. The access_note says which forms were searched. Case-insensitive but accent-sensitive. Optionally filter by document type and date range. Records link to the document page on tweedekamer.nl; pagination.total is the real number of matches.", inputSchema: { query: z.string().max(SEARCH_QUERY_MAX).optional().describe("Policy topic keywords, all required. Examples: 'stikstof', 'woningbouw', 'EU landbouw', '\"openbaar vervoer\"'. Do NOT pass full questions. Optional when type or a date is given."), top: z.number().int().min(1).max(config.limits.maxRows).default(25), type: z.string().optional().describe("Document type, substring match on Soort (or Titel), e.g. 'Motie', 'Brief regering', 'Amendement'."), date_from: z.string().optional().describe("YYYY-MM-DD, document date on or after (Dutch local date)."), date_to: z.string().optional().describe("YYYY-MM-DD, document date on or before (Dutch local date)."), ...paginationInputSchema, outputFormat: outputFormatSchema, verbose: z.boolean().default(false), dryRun: z.boolean().default(false) }, annotations: TOOL_ANNOTATIONS }, async ({ query, top, type, date_from, date_to, offset, limit, outputFormat, verbose, dryRun }) => {
     try {
       const effectiveLimit = limit ?? top;
 
@@ -931,7 +1015,7 @@ export function registerTools(server: McpServer): void {
     } catch(e){ return toMcpToolPayload(mapTweedeKamerError(e)); }
   });
 
-  server.registerTool("tweede_kamer_search", { description: "Advanced OData search on Tweede Kamer entities (Document, Zaak, Activiteit, Agendapunt, Besluit, Stemming, Persoon, Fractie, Commissie, Kamerstukdossier, Vergadering, Toezegging, and the other entity sets of the Gegevensmagazijn). 'query' is an AND keyword search on the entity's text fields (Document and Zaak: Titel and Onderwerp; same word rules as tweede_kamer_documents) and is optional when 'filter' or a date is given. 'filter' and 'orderby' take raw OData expressions with the entity's field names in API version v5 of the Gegevensmagazijn (e.g. Document.Nummer, Zaak.Datum, Stemming.FractieNaam, Besluit.Soort; field list: https://gegevensmagazijn.tweedekamer.nl/OData/v5/$metadata); names of the old v4/2.0 API (DocumentNummer, GestartOp, ActorFractie, BesluitSoort, ...) are translated and the access_note says so, a field v5 dropped is an explicit error. date_from/date_to filter the entity's own date (Document.Datum, Zaak.Datum, Activiteit.Datum, Vergadering.Datum, Toezegging.Aanmaakdatum, Agendapunt/Besluit/Stemming via the meeting or voting session). Agendapunt, Besluit and Stemming records carry that meeting date as 'vergaderdatum', which is also their record date; GewijzigdOp is when the record last changed. An unknown entity, an unsupported query/date or a rejected expression returns an explicit error, never an unfiltered fallback.", inputSchema: { query: z.string().optional().describe("Topic keywords, all required. Examples: 'zorg', 'migratie', 'ICT onderwijs'. Do NOT pass full questions. Optional when filter or a date is given."), entity: z.string().default("Document").describe("Entity set, e.g. Document, Zaak, Activiteit, Besluit, Stemming, Persoon, Fractie, Kamerstukdossier (case-insensitive)."), top: z.number().int().min(1).max(config.limits.maxRows).default(25), filter: z.string().optional().describe("Raw OData $filter, e.g. \"Soort eq 'Motie'\". Combined with query using AND."), orderby: z.string().optional().describe("Raw OData $orderby; default 'GewijzigdOp desc,Id'. To sort by meeting date: 'Activiteit/Datum desc' (Agendapunt), 'Agendapunt/Activiteit/Datum desc' (Besluit), 'Besluit/Agendapunt/Activiteit/Datum desc' (Stemming)."), skip: z.number().int().min(0).optional(), date_from: z.string().optional().describe("YYYY-MM-DD, on or after (Dutch local date) on the entity's date field."), date_to: z.string().optional().describe("YYYY-MM-DD, on or before (Dutch local date) on the entity's date field."), ...paginationInputSchema, outputFormat: outputFormatSchema, verbose: z.boolean().default(false), dryRun: z.boolean().default(false) }, annotations: TOOL_ANNOTATIONS }, async ({ query, entity, top, filter, orderby, skip, date_from, date_to, offset, limit, outputFormat, verbose, dryRun }) => {
+  server.registerTool("tweede_kamer_search", { description: "Advanced OData search on Tweede Kamer entities (Document, Zaak, Activiteit, Agendapunt, Besluit, Stemming, Persoon, Fractie, Commissie, Kamerstukdossier, Vergadering, Toezegging, and the other entity sets of the Gegevensmagazijn). 'query' is an AND keyword search on the entity's text fields (Document and Zaak: Titel and Onderwerp; same word rules as tweede_kamer_documents) and is optional when 'filter' or a date is given. 'filter' and 'orderby' take raw OData expressions with the entity's field names in API version v5 of the Gegevensmagazijn (e.g. Document.Nummer, Zaak.Datum, Stemming.FractieNaam, Besluit.Soort; field list: https://gegevensmagazijn.tweedekamer.nl/OData/v5/$metadata); names of the old v4/2.0 API (DocumentNummer, GestartOp, ActorFractie, BesluitSoort, ...) are translated and the access_note says so, a field v5 dropped is an explicit error. date_from/date_to filter the entity's own date (Document.Datum, Zaak.Datum, Activiteit.Datum, Vergadering.Datum, Toezegging.Aanmaakdatum, Agendapunt/Besluit/Stemming via the meeting or voting session). Agendapunt, Besluit and Stemming records carry that meeting date as 'vergaderdatum', which is also their record date; GewijzigdOp is when the record last changed. An unknown entity, an unsupported query/date or a rejected expression returns an explicit error, never an unfiltered fallback.", inputSchema: { query: z.string().max(SEARCH_QUERY_MAX).optional().describe("Topic keywords, all required. Examples: 'zorg', 'migratie', 'ICT onderwijs'. Do NOT pass full questions. Optional when filter or a date is given."), entity: z.string().default("Document").describe("Entity set, e.g. Document, Zaak, Activiteit, Besluit, Stemming, Persoon, Fractie, Kamerstukdossier (case-insensitive)."), top: z.number().int().min(1).max(config.limits.maxRows).default(25), filter: z.string().optional().describe("Raw OData $filter, e.g. \"Soort eq 'Motie'\". Combined with query using AND."), orderby: z.string().optional().describe("Raw OData $orderby; default 'GewijzigdOp desc,Id'. To sort by meeting date: 'Activiteit/Datum desc' (Agendapunt), 'Agendapunt/Activiteit/Datum desc' (Besluit), 'Besluit/Agendapunt/Activiteit/Datum desc' (Stemming)."), skip: z.number().int().min(0).optional(), date_from: z.string().optional().describe("YYYY-MM-DD, on or after (Dutch local date) on the entity's date field."), date_to: z.string().optional().describe("YYYY-MM-DD, on or before (Dutch local date) on the entity's date field."), ...paginationInputSchema, outputFormat: outputFormatSchema, verbose: z.boolean().default(false), dryRun: z.boolean().default(false) }, annotations: TOOL_ANNOTATIONS }, async ({ query, entity, top, filter, orderby, skip, date_from, date_to, offset, limit, outputFormat, verbose, dryRun }) => {
     const effectiveOffset = skip ?? offset;
     const effectiveLimit = limit ?? top;
     try {
@@ -1024,7 +1108,7 @@ export function registerTools(server: McpServer): void {
     } catch(e){ return toMcpToolPayload(mapTweedeKamerError(e)); }
   });
 
-  server.registerTool("tweede_kamer_votes", { description: "Retrieve Tweede Kamer votes: one row per fractie (or per member in a roll-call vote), each linked to its decision (Besluit: outcome such as 'Aangenomen.' or 'Verworpen.', field uitslag) and to the motion, amendment or bill voted on (Zaak: number, title, subject and a tweedekamer.nl link). Filter by query (keywords in the zaak title/subject, same word rules as tweede_kamer_documents), zaak_nummer (e.g. 2026Z15215), zaak_id, besluit_id, or the date of the voting session (date, or date_from/date_to, YYYY-MM-DD). Newest voting sessions first.", inputSchema: { zaak_id: z.string().optional().describe("Zaak GUID or zaak number of the motion/amendment/bill; a Besluit GUID is also accepted."), besluit_id: z.string().optional().describe("Besluit (decision) GUID."), zaak_nummer: z.string().optional().describe("Zaak number, e.g. 2026Z15215."), query: z.string().optional().describe("Keywords matched against the title and subject of the voted zaak, all required. Example: 'stikstof', 'EU'."), date: z.string().optional().describe("YYYY-MM-DD: votes held on this day (date of the voting session, Dutch local date)."), date_from: z.string().optional().describe("YYYY-MM-DD: voting sessions on or after this day."), date_to: z.string().optional().describe("YYYY-MM-DD: voting sessions on or before this day."), top: z.number().int().min(1).max(config.limits.maxRows).default(100), offset: z.number().int().min(0).default(0) }, annotations: TOOL_ANNOTATIONS }, async ({ zaak_id, besluit_id, zaak_nummer, query, date, date_from, date_to, top, offset }) => {
+  server.registerTool("tweede_kamer_votes", { description: "Retrieve Tweede Kamer votes: one row per fractie (or per member in a roll-call vote), each linked to its decision (Besluit: outcome such as 'Aangenomen.' or 'Verworpen.', field uitslag) and to the motion, amendment or bill voted on (Zaak: number, title, subject and a tweedekamer.nl link). Filter by query (keywords in the zaak title/subject, same word rules as tweede_kamer_documents), zaak_nummer (e.g. 2026Z15215), zaak_id, besluit_id, or the date of the voting session (date, or date_from/date_to, YYYY-MM-DD). Newest voting sessions first.", inputSchema: { zaak_id: z.string().optional().describe("Zaak GUID or zaak number of the motion/amendment/bill; a Besluit GUID is also accepted."), besluit_id: z.string().optional().describe("Besluit (decision) GUID."), zaak_nummer: z.string().optional().describe("Zaak number, e.g. 2026Z15215."), query: z.string().max(SEARCH_QUERY_MAX).optional().describe("Keywords matched against the title and subject of the voted zaak, all required. Example: 'stikstof', 'EU'."), date: z.string().optional().describe("YYYY-MM-DD: votes held on this day (date of the voting session, Dutch local date)."), date_from: z.string().optional().describe("YYYY-MM-DD: voting sessions on or after this day."), date_to: z.string().optional().describe("YYYY-MM-DD: voting sessions on or before this day."), top: z.number().int().min(1).max(config.limits.maxRows).default(100), offset: z.number().int().min(0).default(0) }, annotations: TOOL_ANNOTATIONS }, async ({ zaak_id, besluit_id, zaak_nummer, query, date, date_from, date_to, top, offset }) => {
     try {
       const out = await tk.getVotes({ zaak_id, besluit_id, zaak_nummer, query, date, date_from, date_to, top, skip: offset });
       const records = out.items.map((x) => {
@@ -1061,7 +1145,7 @@ export function registerTools(server: McpServer): void {
     try { const out = await tk.getMembers({ fractie, active, top }); const records = out.items.map((x)=>record("tweedekamer", String(x.name ?? x.id ?? "Kamerlid"), String(x.persoon_url ?? "https://www.tweedekamer.nl"), x, String(x.fractie ?? ""), String(x.start_date ?? ""))); return toMcpToolPayload(successResponse({ summary: `${records.length} Kamerleden`, records, provenance: prov("tweede_kamer_members", out.endpoint, out.params, records.length, null) })); } catch(e){ return toMcpToolPayload(mapSourceError(e, "Tweede Kamer", "https://www.tweedekamer.nl")); }
   });
 
-  server.registerTool("tweede_kamer_debatten", { description: `Search what was said in Tweede Kamer debates, plenary and committee: the verslagen (stenograms) in the Gegevensmagazijn, one record per spreekbeurt or interruptie with speaker, fractie or function, time and text. Filter by words in the text (query; all required, same word rules as tweede_kamer_documents, accents ignored), spreker (name or function: 'Klaver', 'van Weel', 'minister', 'voorzitter'), fractie ('VVD', 'PRO'), debat (words in the debate subject), soort (plenair or commissie) and date or date_from/date_to (YYYY-MM-DD; default the last ${DEBAT_DEFAULT_DAYS} days). There is no full-text index: each call reads the verslagen of at most ${DEBAT_MAX_VERSLAGEN} vergaderingen in the period, newest first, and vergadering_offset continues with the next ones; the access_note says how many there are. vergadering_id (from an earlier result) reads one vergadering: a plenary day with all its debates, or one committee debate. A debate's verslag appears the same day, uncorrected; the corrected one follows weeks later and the official record is the Handelingen (officiele_bekendmakingen_search, type Handelingen, also for debates long ago). Not live. For real full-text search over all debates since 31 March 2026, debates still live, the Eerste Kamer or a link to the video moment: gehoord_debatten_search (automatic transcripts of Gehoord.de, not for quoting; requires GEHOORD_KEY).`, inputSchema: { query: z.string().optional().describe("Words in what was said, all required. Examples: 'stikstof', 'medische isotopen', '\"gehoord de beraadslaging\"'. Do NOT pass full questions."), spreker: z.string().optional().describe("Speaker name or function, e.g. 'Klaver', 'Van Campen', 'minister', 'staatssecretaris'."), fractie: z.string().optional().describe("Fractie of the speaker, e.g. 'VVD', 'CDA', 'PRO'. The chair never counts for a fractie."), debat: z.string().optional().describe("Words in the debate subject, e.g. 'Pallas', 'Oekraïne', 'begroting'."), soort: z.enum(["plenair", "commissie"]).optional().describe("Only plenary days or only committee debates."), vergadering_id: z.string().optional().describe("Vergadering GUID from an earlier result: read that one vergadering (no date needed)."), date: z.string().optional().describe("YYYY-MM-DD: vergaderingen on this day."), date_from: z.string().optional().describe("YYYY-MM-DD: vergaderingen on or after this day."), date_to: z.string().optional().describe("YYYY-MM-DD: vergaderingen on or before this day."), vergadering_offset: z.number().int().min(0).default(0).describe(`Skip this many vergaderingen (newest first): the next ${DEBAT_MAX_VERSLAGEN} when the period holds more.`), max_chars: z.number().int().min(0).max(DEBAT_MAX_CHARS).default(DEBAT_DEFAULT_CHARS).describe("Characters of text per fragment in data.tekst (0: only the snippet)."), top: z.number().int().min(1).max(config.limits.maxRows).default(25), offset: z.number().int().min(0).default(0) }, annotations: TOOL_ANNOTATIONS }, async ({ query, spreker, fractie, debat, soort, vergadering_id, date, date_from, date_to, vergadering_offset, max_chars, top, offset }) => {
+  server.registerTool("tweede_kamer_debatten", { description: `Search what was said in Tweede Kamer debates, plenary and committee: the verslagen (stenograms) in the Gegevensmagazijn, one record per spreekbeurt or interruptie with speaker, fractie or function, time and text. Filter by words in the text (query; all required, same word rules as tweede_kamer_documents, accents ignored), spreker (name or function: 'Klaver', 'van Weel', 'minister', 'voorzitter'), fractie ('VVD', 'PRO'), debat (words in the debate subject), soort (plenair or commissie) and date or date_from/date_to (YYYY-MM-DD; default the last ${DEBAT_DEFAULT_DAYS} days). There is no full-text index: each call reads the verslagen of at most ${DEBAT_MAX_VERSLAGEN} vergaderingen in the period, newest first, and vergadering_offset continues with the next ones; the access_note says how many there are. vergadering_id (from an earlier result) reads one vergadering: a plenary day with all its debates, or one committee debate. A debate's verslag appears the same day, uncorrected; the corrected one follows weeks later and the official record is the Handelingen (officiele_bekendmakingen_search, type Handelingen, also for debates long ago). Not live. For real full-text search over all debates since 31 March 2026, debates still live, the Eerste Kamer or a link to the video moment: gehoord_debatten_search (automatic transcripts of Gehoord.de, not for quoting; requires GEHOORD_KEY).`, inputSchema: { query: z.string().max(SEARCH_QUERY_MAX).optional().describe("Words in what was said, all required. Examples: 'stikstof', 'medische isotopen', '\"gehoord de beraadslaging\"'. Do NOT pass full questions."), spreker: z.string().optional().describe("Speaker name or function, e.g. 'Klaver', 'Van Campen', 'minister', 'staatssecretaris'."), fractie: z.string().optional().describe("Fractie of the speaker, e.g. 'VVD', 'CDA', 'PRO'. The chair never counts for a fractie."), debat: z.string().optional().describe("Words in the debate subject, e.g. 'Pallas', 'Oekraïne', 'begroting'."), soort: z.enum(["plenair", "commissie"]).optional().describe("Only plenary days or only committee debates."), vergadering_id: z.string().optional().describe("Vergadering GUID from an earlier result: read that one vergadering (no date needed)."), date: z.string().optional().describe("YYYY-MM-DD: vergaderingen on this day."), date_from: z.string().optional().describe("YYYY-MM-DD: vergaderingen on or after this day."), date_to: z.string().optional().describe("YYYY-MM-DD: vergaderingen on or before this day."), vergadering_offset: z.number().int().min(0).default(0).describe(`Skip this many vergaderingen (newest first): the next ${DEBAT_MAX_VERSLAGEN} when the period holds more.`), max_chars: z.number().int().min(0).max(DEBAT_MAX_CHARS).default(DEBAT_DEFAULT_CHARS).describe("Characters of text per fragment in data.tekst (0: only the snippet)."), top: z.number().int().min(1).max(config.limits.maxRows).default(25), offset: z.number().int().min(0).default(0) }, annotations: TOOL_ANNOTATIONS }, async ({ query, spreker, fractie, debat, soort, vergadering_id, date, date_from, date_to, vergadering_offset, max_chars, top, offset }) => {
     try {
       const out = await debatten.search({ query, spreker, fractie, debat, soort, vergadering_id, date, date_from, date_to, vergadering_offset });
       const page = out.hits.slice(offset, offset + top);
@@ -1132,7 +1216,7 @@ export function registerTools(server: McpServer): void {
       "Filter by 'publicatieblad' (journal), 'type' (document kind) and a date range, and use sort='date_newest' for the latest publications. Each record carries the document date (date, dagtekening), the publication date, the citation (vindplaats) and direct PDF/HTML/XML links. Only the first ~10,000 hits of a result set can be paged through (upstream limit). " +
       "For what was published about one place (permits, verkeersbesluiten, evenementen in a neighbourhood or around an address), set 'bbox_rd' together with 'authority': most municipal publications carry a location, and each record that has one gets 'location' (lat, lon, rd_x, rd_y, kind, label, address; area_m2 for an area, length_m for a road or line) to put it on a map.",
     inputSchema: {
-      query: z.string().describe("Legal or policy topic keywords. Examples: 'bestemmingsplan', 'subsidieregeling', 'parkeerbeleid'. Do NOT pass full questions, and put an organisation name in 'authority' instead."),
+      query: z.string().max(SEARCH_QUERY_MAX).describe("Legal or policy topic keywords. Examples: 'bestemmingsplan', 'subsidieregeling', 'parkeerbeleid'. Do NOT pass full questions, and put an organisation name in 'authority' instead."),
       top: z.number().int().min(1).max(100).default(20),
       startRecord: z.number().int().min(1).default(1),
       type: z.string().optional().describe("Document kind (dt.type), e.g. 'Kamerstuk', 'beleidsregel', 'verordening', 'ander besluit van algemene strekking', 'omgevingsvergunning', 'Handelingen'. Not the journal: a journal name such as 'Staatscourant' or 'Gemeenteblad' is applied as publicatieblad (with a note)."),
@@ -1153,7 +1237,7 @@ export function registerTools(server: McpServer): void {
   }, async ({ query, top, startRecord, type, publicatieblad, authority, authority_type, date_from, date_to, date_field, sort, bbox_rd, offset, limit, outputFormat, verbose, dryRun }) => {
     const bbox = bbox_rd === undefined ? undefined : parseRdBbox(bbox_rd);
     if (bbox && "invalid" in bbox) {
-      return toMcpToolPayload(errorResponse({ error: "unexpected", message: bbox.invalid, suggestion: "Give bbox_rd as [minX, minY, maxX, maxY] in RD New metres, e.g. [134028, 453672, 135114, 454790], or leave it out." }));
+      return toMcpToolPayload(invalidInputResponse(bbox.invalid, "Give bbox_rd as [minX, minY, maxX, maxY] in RD New metres, e.g. [134028, 453672, 135114, 454790], or leave it out."));
     }
     // The rewriter strips question frames but also every quote, slash and
     // apostrophe; phrases, citations and words like 's-Gravenhage are kept out of it.
@@ -1411,7 +1495,7 @@ export function registerTools(server: McpServer): void {
     });
   }
 
-  server.registerTool("rijksbegroting_search", { description: "Search Dutch national budget (Rijksbegroting) datasets. Use budget/policy topic keywords.", inputSchema: { query: z.string().describe("Budget or policy topic keywords. Examples: 'defensie', 'infrastructuur', 'zorg uitgaven'. Do NOT pass full questions."), top: z.number().int().min(1).max(config.limits.maxRows).default(20), ...paginationInputSchema, outputFormat: outputFormatSchema, verbose: z.boolean().default(false), dryRun: z.boolean().default(false) }, annotations: TOOL_ANNOTATIONS }, async ({ query, top, offset, limit, outputFormat, verbose, dryRun }) => {
+  server.registerTool("rijksbegroting_search", { description: "Search Dutch national budget (Rijksbegroting) datasets. Use budget/policy topic keywords.", inputSchema: { query: z.string().max(SEARCH_QUERY_MAX).describe("Budget or policy topic keywords. Examples: 'defensie', 'infrastructuur', 'zorg uitgaven'. Do NOT pass full questions."), top: z.number().int().min(1).max(config.limits.maxRows).default(20), ...paginationInputSchema, outputFormat: outputFormatSchema, verbose: z.boolean().default(false), dryRun: z.boolean().default(false) }, annotations: TOOL_ANNOTATIONS }, async ({ query, top, offset, limit, outputFormat, verbose, dryRun }) => {
     const rw = rewriteQuery(query, "moderate");
     try {
       const effectiveLimit = limit ?? top;
@@ -1454,7 +1538,7 @@ export function registerTools(server: McpServer): void {
     try { const out = await rijksbegroting.getChapter(year, chapter); const records = out.items.map((x)=>{ const rec = x as Record<string, unknown>; return record("rijksbegroting", String(rec.name ?? rec.id ?? "Begrotingshoofdstuk"), String(rec.url ?? "https://opendata.rijksbegroting.nl"), rec); }); return toMcpToolPayload(successResponse({ summary: `${records.length} chapter matches`, records, provenance: prov("rijksbegroting_chapter", out.endpoint, out.params, records.length, records.length) })); } catch(e){ return toMcpToolPayload(mapSourceError(e, "Rijksbegroting", "https://opendata.rijksbegroting.nl")); }
   });
 
-  server.registerTool("duo_datasets_search", { description: "Search DUO (Dutch education authority) open datasets. Use education topic keywords.", inputSchema: { query: z.string().describe("Education topic keywords. Examples: 'voortgezet onderwijs', 'leerlingaantallen', 'mbo diploma'. Do NOT pass full questions."), rows: z.number().int().min(1).max(config.limits.maxRows).default(20), ...paginationInputSchema, outputFormat: outputFormatSchema, verbose: z.boolean().default(false), dryRun: z.boolean().default(false) }, annotations: TOOL_ANNOTATIONS }, async ({ query, rows, offset, limit, outputFormat, verbose, dryRun }) => {
+  server.registerTool("duo_datasets_search", { description: "Search DUO (Dutch education authority) open datasets. Use education topic keywords.", inputSchema: { query: z.string().max(SEARCH_QUERY_MAX).describe("Education topic keywords. Examples: 'voortgezet onderwijs', 'leerlingaantallen', 'mbo diploma'. Do NOT pass full questions."), rows: z.number().int().min(1).max(config.limits.maxRows).default(20), ...paginationInputSchema, outputFormat: outputFormatSchema, verbose: z.boolean().default(false), dryRun: z.boolean().default(false) }, annotations: TOOL_ANNOTATIONS }, async ({ query, rows, offset, limit, outputFormat, verbose, dryRun }) => {
     const rw = rewriteQuery(query, "moderate");
     // DUO's catalogue is CKAN too: quoted phrases are understood there.
     const ckanQuery = rw.syntaxQuery ?? rw.rewritten;
@@ -1566,12 +1650,12 @@ export function registerTools(server: McpServer): void {
     } catch (e) { return toMcpToolPayload(mapSourceError(e, "DUO", "https://onderwijsdata.duo.nl")); }
   });
 
-  server.registerTool("duo_rio_search", { description: "Search the DUO Register Instellingen en Opleidingen (RIO). Use institution or program names.", inputSchema: { query: z.string().describe("Institution or education program name. Examples: 'Universiteit Utrecht', 'geneeskunde', 'HBO informatica'. Do NOT pass full questions."), top: z.number().int().min(1).max(config.limits.maxRows).default(20) }, annotations: TOOL_ANNOTATIONS }, async ({ query, top }) => {
+  server.registerTool("duo_rio_search", { description: "Search the DUO Register Instellingen en Opleidingen (RIO). Use institution or program names.", inputSchema: { query: z.string().max(SEARCH_QUERY_MAX).describe("Institution or education program name. Examples: 'Universiteit Utrecht', 'geneeskunde', 'HBO informatica'. Do NOT pass full questions."), top: z.number().int().min(1).max(config.limits.maxRows).default(20) }, annotations: TOOL_ANNOTATIONS }, async ({ query, top }) => {
     const rw = rewriteQuery(query, "moderate");
     try { const out = await duo.rioSearch(rw.rewritten, top); const records = out.items.map((x)=>record("duo-rio", String(x.naam ?? x.name ?? x.id ?? "RIO"), String(x.url ?? "https://duo.nl"), x)); return toMcpToolPayload(successResponse({ summary: `${records.length} RIO resultaten`, records, provenance: prov("duo_rio_search", out.endpoint, out.params, records.length, records.length), access_note: rewriteNote(rw) })); } catch(e){ return toMcpToolPayload(mapSourceError(e, "DUO RIO", "https://lod.onderwijsregistratie.nl")); }
   });
 
-  server.registerTool("overheid_api_register_search", { description: "Search the Dutch government API register (developer.overheid.nl). Use API/data topic keywords. Requires OVERHEID_API_KEY.", inputSchema: { query: z.string().describe("API or data topic keywords. Examples: 'BAG adressen', 'KvK', 'BRP'. Do NOT pass full questions."), top: z.number().int().min(1).max(config.limits.maxRows).default(20), ...paginationInputSchema, outputFormat: outputFormatSchema, verbose: z.boolean().default(false), dryRun: z.boolean().default(false) }, annotations: TOOL_ANNOTATIONS }, async ({ query, top, offset, limit, outputFormat, verbose, dryRun }) => {
+  server.registerTool("overheid_api_register_search", { description: "Search the Dutch government API register (developer.overheid.nl). Use API/data topic keywords. Requires OVERHEID_API_KEY.", inputSchema: { query: z.string().max(SEARCH_QUERY_MAX).describe("API or data topic keywords. Examples: 'BAG adressen', 'KvK', 'BRP'. Do NOT pass full questions."), top: z.number().int().min(1).max(config.limits.maxRows).default(20), ...paginationInputSchema, outputFormat: outputFormatSchema, verbose: z.boolean().default(false), dryRun: z.boolean().default(false) }, annotations: TOOL_ANNOTATIONS }, async ({ query, top, offset, limit, outputFormat, verbose, dryRun }) => {
     const rw = rewriteQuery(query, "moderate");
     const effectiveLimit = limit ?? top;
     const fetchRows = Math.min(config.limits.maxRows, Math.max(top, offset + effectiveLimit));
@@ -1579,7 +1663,7 @@ export function registerTools(server: McpServer): void {
     if (dryRun) {
       return dryRunPayload({
         connector: "api_register",
-        url: config.endpoints.apiRegister,
+        url: `${config.endpoints.apiRegisterApi ?? "https://api.developer.overheid.nl/api-register/v1"}/apis`,
         params: { query: rw.rewritten, top: fetchRows },
       });
     }
@@ -1663,22 +1747,20 @@ export function registerTools(server: McpServer): void {
 
   server.registerTool("bag_lookup_address", { inputSchema: { query: z.string().optional(), postcode: z.string().optional(), huisnummer: z.string().optional(), woonplaats: z.string().describe("Only addresses in this woonplaats (exact BAG name, e.g. 'Utrecht'). The free-text search is fuzzy and otherwise also returns the same street and number in other places.").optional(), rows: z.number().int().min(1).max(config.limits.maxRows).default(10) }, description: "Lookup BAG (Basisregistratie Adressen en Gebouwen) address details via PDOK Locatieserver. Search by free text, postcode, or house number; pass woonplaats to keep the results in one place.", annotations: TOOL_ANNOTATIONS }, async ({ query, postcode, huisnummer, woonplaats, rows }) => {
     if (!query && !postcode) {
-      return toMcpToolPayload(errorResponse({ error: "unexpected", message: "Geef minimaal query of postcode op", suggestion: "Gebruik query='Damrak 1 Amsterdam' of postcode+huisnummer" }));
+      return toMcpToolPayload(invalidInputResponse("Geef minimaal query of postcode op", "Gebruik query='Damrak 1 Amsterdam' of postcode+huisnummer"));
     }
     try {
       const out = await pdok.bagLookupAddress({ query, postcode, huisnummer, woonplaats, rows });
       const records = out.items.map((x) => record("bag", String(x.weergavenaam ?? x.id ?? "BAG adres"), "https://www.pdok.nl", x, String(x.straatnaam ?? "")));
-      return toMcpToolPayload(successResponse({ summary: `${records.length} BAG adressen`, records, provenance: prov("bag_lookup_address", out.endpoint, out.params, records.length, out.total) }));
-    } catch {
-      const out = pdok.fallbackAddress({ query, postcode, huisnummer, rows });
-      const records = out.items.map((x) => record("bag", String(x.weergavenaam ?? x.id ?? "BAG adres"), "https://www.pdok.nl", x));
-      return toMcpToolPayload(successResponse({ summary: `${records.length} BAG fallback resultaten`, records, provenance: prov("bag_lookup_address", out.endpoint, out.params, records.length, out.total), access_note: out.access_note }));
+      return toMcpToolPayload(successResponse({ summary: `${records.length} BAG adressen`, records, provenance: prov("bag_lookup_address", out.endpoint, out.params, records.length, out.total), access_note: out.access_note }));
+    } catch (e) {
+      return toMcpToolPayload(mapSourceError(e, "PDOK Locatieserver", "https://www.pdok.nl"));
     }
   });
 
   // A real calendar day: "2026-13-45" passes a pattern but makes ORI answer HTTP 400.
   const oriDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD").refine((v) => !Number.isNaN(Date.parse(`${v}T00:00:00Z`)) && new Date(`${v}T00:00:00Z`).toISOString().startsWith(v), "Use an existing date (YYYY-MM-DD)");
-  server.registerTool("ori_search", { inputSchema: { query: z.string().describe("Council topic keywords. Examples: 'parkeerbeleid', 'bestemmingsplan', 'raadsvergadering woningbouw'. Do NOT pass full questions. By default all words must occur (see 'match')."), sort: z.enum(["relevance", "date_newest"]).default("relevance").describe("'date_newest' sorts server-side by meeting date (last_discussed_at, the last meeting that discussed the record — not the publication date) and leaves out dates after today unless date_to is set. 'relevance' for general searches."), rows: z.number().int().min(1).max(config.limits.maxRows).default(20), bestuurslaag: z.string().optional().describe("Filter by government layer: 'gemeente', 'provincie' or 'waterschap'. Other values are not applied (reported in access_note)."), gemeente: z.string().optional().describe("Scope to one body, e.g. 'Delft', 'Den Haag', 'Leidschendam-Voorburg', 'Provincie Noord-Holland', 'Hoogheemraadschap van Delfland'. Matched exactly against the live ORI index list (gemeenten, provincies, waterschappen); a name without an ORI index returns no records and says so. Without it a search runs across all indices."), date_from: oriDate.optional().describe("Only records dated on or after this day (YYYY-MM-DD). Filters on the meeting date (last_discussed_at; start_date for reports)."), date_to: oriDate.optional().describe("Only records dated on or before this day (YYYY-MM-DD), same date field as date_from."), match: z.enum(["all", "any"]).default("all").describe("'all' (default): every word must occur. 'any': at least one word (broad, many more hits).") }, description: "Search Open Raadsinformatie (ORI) — council documents, agenda items, meetings and decisions of Dutch municipalities, provinces and water boards. Use policy topic keywords; set 'gemeente' to answer 'what did the council of X discuss', 'bestuurslaag' to restrict to a layer, 'date_from'/'date_to' for a period and 'sort' for recency. Results show a short passage; ori_document_get (data.index, data.id) reads a document's full text or only the pages with a term. The query accepts \"phrases\", uppercase OR/AND/NOT, -term and prefix*; a lowercase or/and/not is searched as a word (e.g. OR = ondernemingsraad). Documents link to their file (data.original_url, also on each attachment, is the source system's own link if ORI's link fails; where ORI's link is known to fail the link already goes to the source system, see link_note); meetings and agenda items link to the meeting's page in the council information system (link_type 'meeting_page'; iBabs, Notubiz, Parlaeus or GemeenteOplossingen, see source_system; an agenda item to its meeting's page, anchored on the item where possible) when that page answered a check during the search, or where a page cannot be checked itself, when the system's own API confirmed the meeting (GemeenteOplossingen, whose API also names the page, and Haarlem's Notubiz site); else, also when the checks ran out of time (about 3 s per search), to their ORI API record, which is JSON and not a web page (link_type 'ori_record', reason in link_note); ori_record_url keeps the ORI record next to a meeting page, and their documents are under 'attachments'. data.date_type says what the date is (vergaderdatum, documentdatum, or an iBabs list date such as a deadline). Totals above 10000 are reported as a lower bound; access_note warns when the ORI index is stale.", annotations: TOOL_ANNOTATIONS }, async ({ query, sort, rows, bestuurslaag, gemeente, date_from, date_to, match }) => {
+  server.registerTool("ori_search", { inputSchema: { query: z.string().max(SEARCH_QUERY_MAX).describe("Council topic keywords. Examples: 'parkeerbeleid', 'bestemmingsplan', 'raadsvergadering woningbouw'. Do NOT pass full questions. By default all words must occur (see 'match')."), sort: z.enum(["relevance", "date_newest"]).default("relevance").describe("'date_newest' sorts server-side by meeting date (last_discussed_at, the last meeting that discussed the record — not the publication date) and leaves out dates after today unless date_to is set. 'relevance' for general searches."), rows: z.number().int().min(1).max(config.limits.maxRows).default(20), bestuurslaag: z.string().optional().describe("Filter by government layer: 'gemeente', 'provincie' or 'waterschap'. Other values are not applied (reported in access_note)."), gemeente: z.string().optional().describe("Scope to one body, e.g. 'Delft', 'Den Haag', 'Leidschendam-Voorburg', 'Provincie Noord-Holland', 'Hoogheemraadschap van Delfland'. Matched exactly against the live ORI index list (gemeenten, provincies, waterschappen); a name without an ORI index returns no records and says so. Without it a search runs across all indices."), date_from: oriDate.optional().describe("Only records dated on or after this day (YYYY-MM-DD). Filters on the meeting date (last_discussed_at; start_date for reports)."), date_to: oriDate.optional().describe("Only records dated on or before this day (YYYY-MM-DD), same date field as date_from."), match: z.enum(["all", "any"]).default("all").describe("'all' (default): every word must occur. 'any': at least one word (broad, many more hits).") }, description: "Search Open Raadsinformatie (ORI) — council documents, agenda items, meetings and decisions of Dutch municipalities, provinces and water boards. Use policy topic keywords; set 'gemeente' to answer 'what did the council of X discuss', 'bestuurslaag' to restrict to a layer, 'date_from'/'date_to' for a period and 'sort' for recency. Results show a short passage; ori_document_get (data.index, data.id) reads a document's full text or only the pages with a term. The query accepts \"phrases\", uppercase OR/AND/NOT, -term and prefix*; a lowercase or/and/not is searched as a word (e.g. OR = ondernemingsraad). Documents link to their file (data.original_url, also on each attachment, is the source system's own link if ORI's link fails; where ORI's link is known to fail the link already goes to the source system, see link_note); meetings and agenda items link to the meeting's page in the council information system (link_type 'meeting_page'; iBabs, Notubiz, Parlaeus or GemeenteOplossingen, see source_system; an agenda item to its meeting's page, anchored on the item where possible) when that page answered a check during the search, or where a page cannot be checked itself, when the system's own API confirmed the meeting (GemeenteOplossingen, whose API also names the page, and Haarlem's Notubiz site); else, also when the checks ran out of time (about 3 s per search), to their ORI API record, which is JSON and not a web page (link_type 'ori_record', reason in link_note); ori_record_url keeps the ORI record next to a meeting page, and their documents are under 'attachments'. data.date_type says what the date is (vergaderdatum, documentdatum, or an iBabs list date such as a deadline). Totals above 10000 are reported as a lower bound; access_note warns when the ORI index is stale.", annotations: TOOL_ANNOTATIONS }, async ({ query, sort, rows, bestuurslaag, gemeente, date_from, date_to, match }) => {
     // The rewriter lowercases and drops symbols, so with every word required
     // "parkeren OR fietsen" became three required words. Search syntax goes through as typed.
     const rw = rewriteQuery(query, OriSource.hasQuerySyntax(query) ? "passthrough" : "moderate");
@@ -1735,11 +1817,12 @@ export function registerTools(server: McpServer): void {
     } catch (e) {
       logger.warn({ err: e, tool: "ori_document_get", index, id }, "Primary source failed");
       const mapped = mapSourceError(e, "ORI", "https://www.openraadsinformatie.nl");
-      return toMcpToolPayload({ ...mapped, suggestion: oriDocumentFailureHint(e) });
+      // A refused index or id keeps its own suggestion; the hint is about failures of ORI.
+      return toMcpToolPayload(mapped.error === "invalid_input" ? mapped : { ...mapped, suggestion: oriDocumentFailureHint(e) });
     }
   });
 
-  server.registerTool("ndw_search", { inputSchema: { query: z.string().describe("Traffic data topic keywords. Examples: 'verkeersdrukte A2', 'snelheid', 'filedata'. Do NOT pass full questions."), rows: z.number().int().min(1).max(config.limits.maxRows).default(20) }, description: "Search NDW open traffic data (Dutch road network). Use traffic topic or road keywords.", annotations: TOOL_ANNOTATIONS }, async ({ query, rows }) => {
+  server.registerTool("ndw_search", { inputSchema: { query: z.string().max(SEARCH_QUERY_MAX).describe("Traffic data topic keywords. Examples: 'verkeersdrukte A2', 'snelheid', 'filedata'. Do NOT pass full questions."), rows: z.number().int().min(1).max(config.limits.maxRows).default(20) }, description: "Search NDW open traffic data (Dutch road network). Use traffic topic or road keywords.", annotations: TOOL_ANNOTATIONS }, async ({ query, rows }) => {
     const rw = rewriteQuery(query, "moderate");
     try {
       const out = await ndw.search({ query: rw.rewritten, rows });
@@ -1755,33 +1838,24 @@ export function registerTools(server: McpServer): void {
       const out = await luchtmeetnet.latest({ component, plaats, rows });
       const records = out.items.map((x) => record("luchtmeetnet", `${String(x.formula ?? "component")}-${String(x.station_name ?? x.station_number ?? "station")}`, "https://www.luchtmeetnet.nl", x, `${String(x.component ?? x.formula ?? "")}: ${String(x.value ?? "")} ${String(x.unit ?? "")}`, String(x.timestamp ?? x.timestamp_measured ?? "")));
       return toMcpToolPayload(successResponse({ summary: `${records.length} luchtmeetnet metingen`, records, provenance: prov("luchtmeetnet_latest", out.endpoint, out.params, records.length, out.total), access_note: (out as { access_note?: string }).access_note }));
-    } catch {
-      const out = luchtmeetnet.fallback({ component, rows });
-      const records = out.items.map((x) => record("luchtmeetnet", `${String(x.formula ?? "component")}-${String(x.station_name ?? x.station_number ?? "station")}`, "https://www.luchtmeetnet.nl", x, `${String(x.component ?? x.formula ?? "")}: ${String(x.value ?? "")} ${String(x.unit ?? "")}`, String(x.timestamp ?? x.timestamp_measured ?? "")));
-      return toMcpToolPayload(successResponse({ summary: `${records.length} luchtmeetnet fallback metingen`, records, provenance: prov("luchtmeetnet_latest", out.endpoint, out.params, records.length, out.total), access_note: out.access_note }));
+    } catch (e) {
+      // /measurements and the LKI both failed: there is no measurement to report.
+      return toMcpToolPayload(mapSourceError(e, "Luchtmeetnet", "https://www.luchtmeetnet.nl"));
     }
   });
 
-  server.registerTool("rdw_open_data_search", { inputSchema: { query: z.string().describe("Vehicle data keywords or license plate (kenteken). Examples: 'AB-123-CD', 'elektrisch', 'terugroepactie'. For license plate lookups, pass the plate directly."), rows: z.number().int().min(1).max(config.limits.maxRows).default(20) }, description: "Search RDW open vehicle data (Dutch vehicle registry). Use a license plate (kenteken) or vehicle topic keywords.", annotations: TOOL_ANNOTATIONS }, async ({ query, rows }) => {
+  server.registerTool("rdw_open_data_search", { inputSchema: { query: z.string().max(SEARCH_QUERY_MAX).describe("Vehicle data keywords or license plate (kenteken). Examples: 'AB-123-CD', 'elektrisch', 'terugroepactie'. For license plate lookups, pass the plate directly."), rows: z.number().int().min(1).max(config.limits.maxRows).default(20) }, description: "Search RDW open vehicle data (Dutch vehicle registry). Use a license plate (kenteken) or vehicle topic keywords.", annotations: TOOL_ANNOTATIONS }, async ({ query, rows }) => {
     const rw = rewriteQuery(query, "moderate");
     try {
       const live = await rdw.search({ query: rw.rewritten, rows });
-      if (live.items.length) {
-        const records = live.items.map((x) => record("rdw", String(x.title ?? x.kenteken ?? x.id ?? "RDW voertuig"), "https://opendata.rdw.nl", x as Record<string, unknown>, String(x.voertuigsoort ?? ""), String(x.updated_at ?? "")));
-        return toMcpToolPayload(successResponse({ summary: `${records.length} RDW resultaten`, records, provenance: prov("rdw_open_data_search", live.endpoint, live.params, records.length, live.total), access_note: mergeAccessNotes(rewriteNote(rw), (live as { access_note?: string }).access_note) }));
-      }
-
-      const out = rdw.fallback({ query, rows });
-      const records = out.items.map((x) => record("rdw", String(x.title ?? x.id ?? "RDW voertuig"), "https://opendata.rdw.nl", x as Record<string, unknown>, String(x.voertuigsoort ?? ""), String(x.updated_at ?? "")));
-      return toMcpToolPayload(successResponse({ summary: `${records.length} RDW fallback resultaten`, records, provenance: prov("rdw_open_data_search", out.endpoint, out.params, records.length, out.total), access_note: out.access_note }));
-    } catch {
-      const out = rdw.fallback({ query, rows });
-      const records = out.items.map((x) => record("rdw", String(x.title ?? x.id ?? "RDW voertuig"), "https://opendata.rdw.nl", x as Record<string, unknown>, String(x.voertuigsoort ?? ""), String(x.updated_at ?? "")));
-      return toMcpToolPayload(successResponse({ summary: `${records.length} RDW fallback resultaten`, records, provenance: prov("rdw_open_data_search", out.endpoint, out.params, records.length, out.total), access_note: out.access_note }));
+      const records = live.items.map((x) => record("rdw", String(x.title ?? x.kenteken ?? x.id ?? "RDW voertuig"), "https://opendata.rdw.nl", x as Record<string, unknown>, String(x.voertuigsoort ?? ""), String(x.updated_at ?? "")));
+      return toMcpToolPayload(successResponse({ summary: `${records.length} RDW resultaten`, records, provenance: prov("rdw_open_data_search", live.endpoint, live.params, records.length, live.total), access_note: mergeAccessNotes(rewriteNote(rw), (live as { access_note?: string }).access_note) }));
+    } catch (e) {
+      return toMcpToolPayload(mapSourceError(e, "RDW", "https://opendata.rdw.nl"));
     }
   });
 
-  server.registerTool("rijkswaterstaat_waterdata_search", { inputSchema: { query: z.string().describe("Water management topic keywords. Examples: 'waterstand', 'golfhoogte', 'debiet Rijn', 'waterkwaliteit'. Do NOT pass full questions."), rows: z.number().int().min(1).max(config.limits.maxRows).default(20) }, description: "Search Rijkswaterstaat water data catalog (water levels, waves, flow, quality). Use water management topic keywords.", annotations: TOOL_ANNOTATIONS }, async ({ query, rows }) => {
+  server.registerTool("rijkswaterstaat_waterdata_search", { inputSchema: { query: z.string().max(SEARCH_QUERY_MAX).describe("Water management topic keywords. Examples: 'waterstand', 'golfhoogte', 'debiet Rijn', 'waterkwaliteit'. Do NOT pass full questions."), rows: z.number().int().min(1).max(config.limits.maxRows).default(20) }, description: "Search Rijkswaterstaat water data catalog (water levels, waves, flow, quality). Use water management topic keywords.", annotations: TOOL_ANNOTATIONS }, async ({ query, rows }) => {
     const rw = rewriteQuery(query, "moderate");
     try {
       const out = await rwsWaterdata.search({ query: rw.rewritten, rows });
@@ -1792,7 +1866,7 @@ export function registerTools(server: McpServer): void {
     }
   });
 
-  server.registerTool("rijkswaterstaat_waterdata_measurements", { inputSchema: { query: z.string().describe("Water measurement query with optional location. Examples: 'waterstand Maas', 'golfhoogte Noordzee', 'debiet Rijn', 'waterstand Lobith', 'temperatuur IJsselmeer'. Combine a measurement type with an optional location name."), rows: z.number().int().min(1).max(config.limits.maxRows).default(20) }, description: "Get latest real-time water measurements (water levels, waves, flow, temperature) from Rijkswaterstaat stations. Returns actual measured values with timestamps.", annotations: TOOL_ANNOTATIONS }, async ({ query, rows }) => {
+  server.registerTool("rijkswaterstaat_waterdata_measurements", { inputSchema: { query: z.string().max(SEARCH_QUERY_MAX).describe("Water measurement query with optional location. Examples: 'waterstand Maas', 'golfhoogte Noordzee', 'debiet Rijn', 'waterstand Lobith', 'temperatuur IJsselmeer'. Combine a measurement type with an optional location name."), rows: z.number().int().min(1).max(config.limits.maxRows).default(20) }, description: "Get latest real-time water measurements (water levels, waves, flow, temperature) from Rijkswaterstaat stations. Returns actual measured values with timestamps.", annotations: TOOL_ANNOTATIONS }, async ({ query, rows }) => {
     const rw = rewriteQuery(query, "moderate");
     try {
       const out = await rwsWaterdata.latestMeasurements({ query: rw.rewritten, rows });
@@ -1803,7 +1877,7 @@ export function registerTools(server: McpServer): void {
     }
   });
 
-  server.registerTool("ngr_discovery_search", { inputSchema: { query: z.string().describe("Geo/spatial data topic keywords. Examples: 'bodemkaart', 'hoogtemodel', 'kadastrale grenzen', 'natura 2000'. Do NOT pass full questions."), rows: z.number().int().min(1).max(config.limits.maxRows).default(20) }, description: "Search Nationaal GeoRegister (NGR) for geospatial metadata (maps, WMS/WFS services). Use spatial data topic keywords.", annotations: TOOL_ANNOTATIONS }, async ({ query, rows }) => {
+  server.registerTool("ngr_discovery_search", { inputSchema: { query: z.string().max(SEARCH_QUERY_MAX).describe("Geo/spatial data topic keywords. Examples: 'bodemkaart', 'hoogtemodel', 'kadastrale grenzen', 'natura 2000'. Do NOT pass full questions."), rows: z.number().int().min(1).max(config.limits.maxRows).default(20) }, description: "Search Nationaal GeoRegister (NGR) for geospatial metadata (maps, WMS/WFS services). Use spatial data topic keywords.", annotations: TOOL_ANNOTATIONS }, async ({ query, rows }) => {
     const rw = rewriteQuery(query, "moderate");
     try {
       const out = await ngr.search({ query: rw.rewritten, rows });
@@ -1838,7 +1912,9 @@ export function registerTools(server: McpServer): void {
       }),
     );
   };
-  const dsoInputError = (e: DsoInputError) => toMcpToolPayload(errorResponse({ error: "unexpected", message: e.message, suggestion: e.suggestion, details: e.details }));
+  const dsoInputError = (e: DsoInputError) => toMcpToolPayload(mapSourceError(e, "DSO"));
+  /** An accepted argument the DSO has no single answer for (not found, ambiguous, empty): not a refused argument. */
+  const dsoLookupError = (e: DsoLookupError) => toMcpToolPayload(errorResponse({ error: "unexpected", message: e.message, suggestion: e.suggestion, details: e.details }));
   /**
    * Any other failure of the DSO tools. The DSO refuses a malformed DSO_API_KEY with
    * HTTP 400 and an unknown one with 401/403: a configuration error, not a missing
@@ -1951,6 +2027,7 @@ export function registerTools(server: McpServer): void {
         );
       } catch (e) {
         if (e instanceof DsoInputError) return dsoInputError(e);
+        if (e instanceof DsoLookupError) return dsoLookupError(e);
         return dsoSourceError(e);
       } finally {
         clearTimeout(deadlineTimer);
@@ -2017,10 +2094,10 @@ export function registerTools(server: McpServer): void {
         const docTitle = item?.title ?? identificatie;
         const placeholder = out.placeholder;
         if (sel.notFound) {
-          return dsoInputError(
+          return dsoLookupError(
             placeholder
-              ? new DsoInputError(`Onderdeel '${onderdeel}' staat niet in het DSO: van ${docTitle} bevat het DSO alleen een verwijzing, niet de wettekst.`, `Lees de wet op ${placeholder.url}.`)
-              : new DsoInputError(
+              ? new DsoLookupError(`Onderdeel '${onderdeel}' staat niet in het DSO: van ${docTitle} bevat het DSO alleen een verwijzing, niet de wettekst.`, `Lees de wet op ${placeholder.url}.`)
+              : new DsoLookupError(
                   `Onderdeel '${onderdeel}' niet gevonden in ${docTitle}${sel.notFound.reason ? `: ${sel.notFound.reason}` : "."}`,
                   `${sel.notFound.suggestions.length ? `Bestaande onderdelen: ${sel.notFound.suggestions.join(", ")}. ` : ""}Roep de tool zonder onderdeel en zoekterm aan voor de inhoudsopgave met eIds, of zoek met zoekterm.`,
                 ),
@@ -2216,6 +2293,7 @@ export function registerTools(server: McpServer): void {
         );
       } catch (e) {
         if (e instanceof DsoInputError) return dsoInputError(e);
+        if (e instanceof DsoLookupError) return dsoLookupError(e);
         return dsoSourceError(e);
       }
     },
@@ -2253,17 +2331,16 @@ export function registerTools(server: McpServer): void {
     }
   });
 
-  server.registerTool("rechtspraak_search_ecli", { inputSchema: { query: z.string().describe("1-3 core legal topic keywords ONLY. Extract the subject from the user's question. Examples: 'waterschade', 'huurrecht ontbinding', 'arbeidsrecht ontslag'. NEVER include question words, verbs, articles, or full sentences. This API is extremely sensitive to extra words."), sort: z.enum(["relevance", "date_newest", "ruling_newest"]).default("relevance").describe("Use 'date_newest' when user asks for recent/latest/newest results (sorted by publication date). Use 'ruling_newest' to sort by ruling date. Use 'relevance' for general searches."), date_filter: z.enum(["week", "month", "year", "last_year"]).optional().describe("Optional publication date filter. Use 'week' for past 7 days, 'month' for past month, 'year' for this year, 'last_year' for previous year. Only set when user explicitly mentions a time period."), rows: z.number().int().min(1).max(config.limits.maxRows).default(20) }, description: "Search Dutch case law (Rechtspraak) for ECLI references. IMPORTANT: Pass only topic keywords in 'query', not full sentences. Use 'sort' and 'date_filter' parameters to control recency and time period — do NOT encode these in the query string. For the text of a ruling (beslissing, overwegingen, full text) pass its ECLI to rechtspraak_uitspraak_get.", annotations: TOOL_ANNOTATIONS }, async ({ query, sort, date_filter, rows }) => {
+  server.registerTool("rechtspraak_search_ecli", { inputSchema: { query: z.string().max(SEARCH_QUERY_MAX).describe("1-3 core legal topic keywords ONLY. Extract the subject from the user's question. Examples: 'waterschade', 'huurrecht ontbinding', 'arbeidsrecht ontslag'. NEVER include question words, verbs, articles, or full sentences. This API is extremely sensitive to extra words."), sort: z.enum(["relevance", "date_newest", "ruling_newest"]).default("relevance").describe("Use 'date_newest' when user asks for recent/latest/newest results (sorted by publication date). Use 'ruling_newest' to sort by ruling date. Use 'relevance' for general searches."), date_filter: z.enum(["week", "month", "year", "last_year"]).optional().describe("Optional publication date filter. Use 'week' for past 7 days, 'month' for past month, 'year' for this year, 'last_year' for previous year. Only set when user explicitly mentions a time period."), rows: z.number().int().min(1).max(config.limits.maxRows).default(20) }, description: "Search Dutch case law (Rechtspraak) for ECLI references. IMPORTANT: Pass only topic keywords in 'query', not full sentences. Use 'sort' and 'date_filter' parameters to control recency and time period — do NOT encode these in the query string. For the text of a ruling (beslissing, overwegingen, full text) pass its ECLI to rechtspraak_uitspraak_get.", annotations: TOOL_ANNOTATIONS }, async ({ query, sort, date_filter, rows }) => {
     const rw = rewriteQuery(query, "strict");
     try {
       const out = await rechtspraak.searchEcli({ query: rw.rewritten, rows, sort, date_filter });
       const records = out.items.map((x) => record("rechtspraak", String(x.title ?? x.ecli ?? x.id ?? "Rechtspraak uitspraak"), String(x.link ?? x.id ?? "https://data.rechtspraak.nl"), x, String(x.summary ?? x.ecli ?? ""), String(x.updated ?? "")));
       const notes = mergeAccessNotes(rw.explanation, (out as { access_note?: string }).access_note);
       return toMcpToolPayload(successResponse({ summary: `${records.length} Rechtspraak resultaten`, records, provenance: prov("rechtspraak_search_ecli", out.endpoint, out.params, records.length, out.total), access_note: notes }));
-    } catch {
-      const out = rechtspraak.fallback({ query: rw.rewritten, rows });
-      const records = out.items.map((x) => record("rechtspraak", String(x.title ?? x.ecli ?? "Fallback uitspraak"), String(x.link ?? x.id ?? "https://data.rechtspraak.nl"), x, String(x.summary ?? ""), String(x.updated ?? "")));
-      return toMcpToolPayload(successResponse({ summary: `${records.length} Rechtspraak fallback resultaten`, records, provenance: prov("rechtspraak_search_ecli", out.endpoint, out.params, records.length, out.total), access_note: mergeAccessNotes(rw.explanation, out.access_note) }));
+    } catch (e) {
+      // A refused or failed search is an error, not "no rulings found".
+      return toMcpToolPayload(mapSourceError(e, "Rechtspraak (uitspraken.rechtspraak.nl)", rechtspraakSearchPageUrl(rw.rewritten)));
     }
   });
 
@@ -2273,13 +2350,13 @@ export function registerTools(server: McpServer): void {
    */
   async function uitspraakResult({ ecli: input, onderdeel, sectie, zoekterm, max_chars }: { ecli: string; onderdeel: "overzicht" | "beslissing" | "overwegingen" | "volledig"; sectie?: string; zoekterm?: string; max_chars: number }): Promise<ToolResult> {
     const read = readEcliInput(input);
-    if ("invalid" in read) return errorResponse({ error: "unexpected", message: read.invalid, suggestion: read.suggestion });
+    if ("invalid" in read) return invalidInputResponse(read.invalid, read.suggestion);
     const { ecli } = read;
     if (sectie !== undefined && sectie.trim() && !sectieIsReadable(sectie)) {
-      return errorResponse({ error: "unexpected", message: `Sectie '${sectie.slice(0, 100)}' bevat geen nummer, sectie-id of woord om op te zoeken.`, suggestion: "Geef een sectie uit de inhoudsopgave ('4', '#2', 'kop'), een paragraafnummer ('4.3') of woorden uit een sectietitel ('beoordeling'); zonder sectie geeft onderdeel 'overzicht' de inhoudsopgave." });
+      return invalidInputResponse(`Sectie '${sectie.slice(0, 100)}' bevat geen nummer, sectie-id of woord om op te zoeken.`, "Geef een sectie uit de inhoudsopgave ('4', '#2', 'kop'), een paragraafnummer ('4.3') of woorden uit een sectietitel ('beoordeling'); zonder sectie geeft onderdeel 'overzicht' de inhoudsopgave.");
     }
     if (!ecli.startsWith("ECLI:NL:")) {
-      return errorResponse({ error: "unexpected", message: `${ecli} is geen Nederlandse ECLI: Rechtspraak.nl publiceert alleen uitspraken met een ECLI:NL:…`, suggestion: "Geef een ECLI die begint met 'ECLI:NL:'." });
+      return invalidInputResponse(`${ecli} is geen Nederlandse ECLI: Rechtspraak.nl publiceert alleen uitspraken met een ECLI:NL:…`, "Geef een ECLI die begint met 'ECLI:NL:'.");
     }
     const url = uitspraakDetailsUrl(ecli);
     const queryParams: Record<string, string> = { ecli, onderdeel, max_chars: String(max_chars), ...(sectie ? { sectie } : {}), ...(zoekterm ? { zoekterm } : {}) };
@@ -2486,16 +2563,14 @@ export function registerTools(server: McpServer): void {
     }
   });
 
-  server.registerTool("rivm_discovery_search", { inputSchema: { query: z.string().describe("Public health topic keywords. Examples: 'vaccinatie', 'luchtkwaliteit gezondheid', 'PFAS', 'infectieziekten'. Do NOT pass full questions."), rows: z.number().int().min(1).max(config.limits.maxRows).default(20) }, description: "Search/discover RIVM (Dutch public health institute) datasets and API references. Use health/environment topic keywords.", annotations: TOOL_ANNOTATIONS }, async ({ query, rows }) => {
+  server.registerTool("rivm_discovery_search", { inputSchema: { query: z.string().max(SEARCH_QUERY_MAX).describe("Public health topic keywords. Examples: 'vaccinatie', 'luchtkwaliteit gezondheid', 'PFAS', 'infectieziekten'. Do NOT pass full questions."), rows: z.number().int().min(1).max(config.limits.maxRows).default(20) }, description: "Search/discover RIVM (Dutch public health institute) datasets and API references. Use health/environment topic keywords.", annotations: TOOL_ANNOTATIONS }, async ({ query, rows }) => {
     const rw = rewriteQuery(query, "moderate");
     try {
       const out = await rivm.search({ query: rw.rewritten, rows });
       const records = out.items.map((x) => record("rivm", String(x.title ?? x.id ?? "RIVM item"), String(x.url ?? "https://www.rivm.nl"), x as Record<string, unknown>, String(x.description ?? ""), String(x.updated_at ?? "")));
       return toMcpToolPayload(successResponse({ summary: `${records.length} RIVM discovery resultaten`, records, provenance: prov("rivm_discovery_search", out.endpoint, out.params, records.length, out.total), access_note: mergeAccessNotes(rewriteNote(rw), (out as { access_note?: string }).access_note) }));
-    } catch {
-      const out = rivm.fallback({ query, rows });
-      const records = out.items.map((x) => record("rivm", String(x.title ?? x.id ?? "RIVM item"), String(x.url ?? "https://www.rivm.nl"), x as Record<string, unknown>, String(x.description ?? ""), String(x.updated_at ?? "")));
-      return toMcpToolPayload(successResponse({ summary: `${records.length} RIVM fallback resultaten`, records, provenance: prov("rivm_discovery_search", out.endpoint, out.params, records.length, out.total), access_note: out.access_note }));
+    } catch (e) {
+      return toMcpToolPayload(mapSourceError(e, "RIVM", "https://data.rivm.nl"));
     }
   });
 
@@ -2505,12 +2580,8 @@ export function registerTools(server: McpServer): void {
       const records = out.items.map((x, i) => record("bag-linked-data", `BAG row ${i + 1}`, "https://api.labs.kadaster.nl/datasets/bag/lv", x, out.safeQuery));
       return toMcpToolPayload(successResponse({ summary: `${records.length} BAG linked-data rows`, records, provenance: prov("bag_linked_data_select", out.endpoint, out.params, records.length, out.total), access_note: (out as { access_note?: string }).access_note }));
     } catch (e) {
-      if (e instanceof Error && /SELECT|toegestaan|keyword/i.test(e.message)) {
-        return toMcpToolPayload(errorResponse({ error: "unexpected", message: e.message, suggestion: "Gebruik een read-only SELECT query met een kleine LIMIT" }));
-      }
-      const out = bagLinkedData.fallback({ query, limit });
-      const records = out.items.map((x, i) => record("bag-linked-data", `BAG fallback row ${i + 1}`, "https://api.labs.kadaster.nl/datasets/bag/lv", x, String(x.note ?? "")));
-      return toMcpToolPayload(successResponse({ summary: `${records.length} BAG linked-data fallback rows`, records, provenance: prov("bag_linked_data_select", out.endpoint, out.params, records.length, out.total), access_note: out.access_note }));
+      // Refused input is invalid_input; an endpoint failure is an error, never an invented row.
+      return toMcpToolPayload(mapSourceError(e, "Kadaster BAG Linked Data", "https://data.labs.kadaster.nl/bag/lv"));
     }
   });
 
@@ -2583,16 +2654,12 @@ export function registerTools(server: McpServer): void {
       const records = out.items.map((x, i) => record("rce-linked-data", `RCE row ${i + 1}`, "https://linkeddata.cultureelerfgoed.nl", x, out.safeQuery));
       return toMcpToolPayload(successResponse({ summary: `${records.length} RCE linked-data rows`, records, provenance: prov("rce_linked_data_select", out.endpoint, out.params, records.length, out.total), access_note: (out as { access_note?: string }).access_note }));
     } catch (e) {
-      if (e instanceof Error && /SELECT|toegestaan|keyword/i.test(e.message)) {
-        return toMcpToolPayload(errorResponse({ error: "unexpected", message: e.message, suggestion: "Gebruik een read-only SELECT query met een kleine LIMIT" }));
-      }
-      const out = rceLinkedData.fallback({ query, limit });
-      const records = out.items.map((x, i) => record("rce-linked-data", `RCE fallback row ${i + 1}`, "https://linkeddata.cultureelerfgoed.nl", x, String(x.note ?? "")));
-      return toMcpToolPayload(successResponse({ summary: `${records.length} RCE linked-data fallback rows`, records, provenance: prov("rce_linked_data_select", out.endpoint, out.params, records.length, out.total), access_note: out.access_note }));
+      // Refused input is invalid_input; an endpoint failure is an error, never an invented row.
+      return toMcpToolPayload(mapSourceError(e, "RCE Linked Data", "https://linkeddata.cultureelerfgoed.nl"));
     }
   });
 
-  server.registerTool("eurostat_datasets_search", { inputSchema: { query: z.string().describe("EU statistics topic keywords. Examples: 'GDP growth', 'unemployment rate', 'energy consumption'. Do NOT pass full questions."), rows: z.number().int().min(1).max(config.limits.maxRows).default(10) }, description: "Search Eurostat for EU statistics datasets by topic keywords.", annotations: TOOL_ANNOTATIONS }, async ({ query, rows }) => {
+  server.registerTool("eurostat_datasets_search", { inputSchema: { query: z.string().max(SEARCH_QUERY_MAX).describe("EU statistics topic keywords. Examples: 'GDP growth', 'unemployment rate', 'energy consumption'. Do NOT pass full questions."), rows: z.number().int().min(1).max(config.limits.maxRows).default(10) }, description: "Search Eurostat for EU statistics datasets by topic keywords.", annotations: TOOL_ANNOTATIONS }, async ({ query, rows }) => {
     const rw = rewriteQuery(query, "moderate");
     const out = eurostat.searchFallback({ query: rw.rewritten, rows });
     const records = out.items.map((x) => record("eurostat", String(x.title ?? x.id ?? "Eurostat dataset"), String(x.url ?? "https://ec.europa.eu/eurostat"), x as Record<string, unknown>));
@@ -2609,16 +2676,14 @@ export function registerTools(server: McpServer): void {
     }
   });
 
-  server.registerTool("data_europa_datasets_search", { inputSchema: { query: z.string().describe("EU open data topic keywords. Examples: 'air quality', 'transport statistics', 'agriculture'. Do NOT pass full questions."), rows: z.number().int().min(1).max(config.limits.maxRows).default(10) }, description: "Search the EU open data portal (data.europa.eu) for datasets by topic keywords.", annotations: TOOL_ANNOTATIONS }, async ({ query, rows }) => {
+  server.registerTool("data_europa_datasets_search", { inputSchema: { query: z.string().max(SEARCH_QUERY_MAX).describe("EU open data topic keywords. Examples: 'air quality', 'transport statistics', 'agriculture'. Do NOT pass full questions."), rows: z.number().int().min(1).max(config.limits.maxRows).default(10) }, description: "Search the EU open data portal (data.europa.eu) for datasets by topic keywords.", annotations: TOOL_ANNOTATIONS }, async ({ query, rows }) => {
     const rw = rewriteQuery(query, "moderate");
     try {
       const out = await dataEuropa.datasetsSearch({ query: rw.rewritten, rows });
       const records = out.items.map((x) => record("data-europa", String(x.title ?? x.id ?? "Dataset"), String(x.url ?? "https://data.europa.eu/data"), x as Record<string, unknown>, String(x.notes ?? ""), String(x.metadata_modified ?? "")));
       return toMcpToolPayload(successResponse({ summary: `${records.length} data.europa.eu datasets`, records, provenance: prov("data_europa_datasets_search", out.endpoint, out.params, records.length, out.total), access_note: mergeAccessNotes(rewriteNote(rw), (out as { access_note?: string }).access_note) }));
-    } catch {
-      const out = dataEuropa.fallback({ query, rows });
-      const records = out.items.map((x) => record("data-europa", String(x.title ?? x.id ?? "Dataset"), String(x.url ?? "https://data.europa.eu/data"), x as Record<string, unknown>, String(x.notes ?? ""), String(x.metadata_modified ?? "")));
-      return toMcpToolPayload(successResponse({ summary: `${records.length} data.europa.eu fallback datasets`, records, provenance: prov("data_europa_datasets_search", out.endpoint, out.params, records.length, out.total), access_note: out.access_note }));
+    } catch (e) {
+      return toMcpToolPayload(mapSourceError(e, "data.europa.eu", "https://data.europa.eu/data"));
     }
   });
 
@@ -2758,7 +2823,7 @@ export function registerTools(server: McpServer): void {
       const response = buildFormattedResponse({ summary: pageSummary(records.length, offset, effectiveLimit, "BWB wetten"), records, provenance: prov("wetten_bwb_search", out.endpoint, out.params, Math.min(effectiveLimit, Math.max(0, records.length - offset)), out.total), outputFormat, offset, limit: effectiveLimit, total: out.total, access_note: out.access_note, verbose: singleConnectorVerbose({ enabled: verbose, connector: "wetten_bwb", endpoint: out.endpoint, responseTimeMs }) });
       return toMcpToolPayload(response);
     } catch (e) {
-      if (e instanceof BwbTekstError) return toMcpToolPayload(errorResponse({ error: e.kind === "upstream" ? "malformed_response" : "unexpected", message: e.message, suggestion: e.suggestion, details: e.details }));
+      if (e instanceof BwbTekstError) return toMcpToolPayload(errorResponse({ error: e.kind === "upstream" ? "malformed_response" : e.kind === "input" ? "invalid_input" : "unexpected", message: e.message, suggestion: e.suggestion, details: e.details }));
       return toMcpToolPayload(mapSourceError(e, "BWB wetgeving", "https://wetten.overheid.nl"));
     }
   });
@@ -2948,7 +3013,7 @@ export function registerTools(server: McpServer): void {
       });
     } catch (e) {
       if (!(e instanceof BwbTekstError)) return mapSourceError(e, "BWB wetgeving", "https://wetten.overheid.nl");
-      if (e.kind === "input") return errorResponse({ error: "unexpected", message: e.message, suggestion: e.suggestion, details: e.details });
+      if (e.kind === "input") return invalidInputResponse(e.message, e.suggestion, e.details);
       if (e.kind === "upstream") return errorResponse({ error: "malformed_response", message: e.message, suggestion: e.suggestion, details: e.details });
       // An unknown regeling, or none geldig on the peildatum: an answer without records, as in
       // rechtspraak_uitspraak_get and wodc_document_get. niet_gevonden says what was not found:
@@ -3070,7 +3135,7 @@ export function registerTools(server: McpServer): void {
     annotations: TOOL_ANNOTATIONS,
   }, async ({ id, outputFormat, verbose, dryRun }) => {
     const celex = normalizeCelex(id);
-    if (!celex) return toMcpToolPayload(errorResponse({ error: "unexpected", message: `Ongeldig CELEX-nummer of EU-citaat: ${id.slice(0, 100)}`, suggestion: celexSuggestion }));
+    if (!celex) return toMcpToolPayload(invalidInputResponse(`Ongeldig CELEX-nummer of EU-citaat: ${id.slice(0, 100)}`, celexSuggestion));
     try {
       if (dryRun) return dryRunPayload({ connector: "eu_cellar", url: "https://publications.europa.eu/webapi/rdf/sparql", params: { celex } });
       const started = Date.now();
@@ -3088,7 +3153,7 @@ export function registerTools(server: McpServer): void {
     annotations: TOOL_ANNOTATIONS,
   }, async ({ id, top, offset, limit, outputFormat, verbose, dryRun }) => {
     const celex = normalizeCelex(id);
-    if (!celex) return toMcpToolPayload(errorResponse({ error: "unexpected", message: `Ongeldig CELEX-nummer of EU-citaat: ${id.slice(0, 100)}`, suggestion: celexSuggestion }));
+    if (!celex) return toMcpToolPayload(invalidInputResponse(`Ongeldig CELEX-nummer of EU-citaat: ${id.slice(0, 100)}`, celexSuggestion));
     try {
       const effectiveLimit = limit ?? top;
       const fetchRows = Math.min(config.limits.maxRows, Math.max(top, offset + effectiveLimit));
@@ -3108,7 +3173,7 @@ export function registerTools(server: McpServer): void {
     annotations: TOOL_ANNOTATIONS,
   }, async ({ id, artikel, outputFormat, verbose, dryRun }) => {
     const parsed = parseLidoId(id);
-    if (!parsed) return toMcpToolPayload(errorResponse({ error: "unexpected", message: `Onbekend LiDO-identifier: ${id.slice(0, 100)}`, suggestion: "Use an ECLI (ECLI:NL:HR:2019:2006), BWB id (BWBR0011823, optionally with artikel), CELEX (32016L0680) or OEP publication (stb-2018-401)." }));
+    if (!parsed) return toMcpToolPayload(invalidInputResponse(`Onbekend LiDO-identifier: ${id.slice(0, 100)}`, "Use an ECLI (ECLI:NL:HR:2019:2006), BWB id (BWBR0011823, optionally with artikel), CELEX (32016L0680) or OEP publication (stb-2018-401)."));
     try {
       if (dryRun) return dryRunPayload({ connector: "lido", url: "https://linkeddata.overheid.nl/service/get-aantal-per-informatietype", params: { kind: parsed.kind, id: parsed.value, artikel } });
       const started = Date.now();
@@ -3130,7 +3195,7 @@ export function registerTools(server: McpServer): void {
     annotations: TOOL_ANNOTATIONS,
   }, async ({ id, artikel, type, offset, limit, outputFormat, verbose, dryRun }) => {
     const parsed = parseLidoId(id);
-    if (!parsed) return toMcpToolPayload(errorResponse({ error: "unexpected", message: `Onbekend LiDO-identifier: ${id.slice(0, 100)}`, suggestion: "Use an ECLI (ECLI:NL:HR:2019:2006), BWB id (BWBR0011823, optionally with artikel), CELEX (32016L0680) or OEP publication (stb-2018-401)." }));
+    if (!parsed) return toMcpToolPayload(invalidInputResponse(`Onbekend LiDO-identifier: ${id.slice(0, 100)}`, "Use an ECLI (ECLI:NL:HR:2019:2006), BWB id (BWBR0011823, optionally with artikel), CELEX (32016L0680) or OEP publication (stb-2018-401)."));
     try {
       // LiDO pagineert zelf (start = 0-based offset, rows <= 100): records worden
       // hier niet nog eens lokaal gesliced, vandaar geen buildFormattedResponse.
@@ -3888,9 +3953,9 @@ server.registerTool(
     "dnb_statistics_search",
     {
       description:
-        "Fetch datapoints from the DNB Statistics API (De Nederlandsche Bank, gateway api.dnb.nl): interest rates, exchange rates, mortgages, pension fund and insurer balance sheets, balance of payments. Returns period, value and unit per observation. Requires DNB_API_KEY (free 'Public' product). Pass 'dataset' as the path 'statisticsdata/<version>/<dataset-slug>' or a full endpoint URL.",
+        "Fetch datapoints from the DNB Statistics API (De Nederlandsche Bank, gateway api.dnb.nl): interest rates, exchange rates, mortgages, pension fund and insurer balance sheets, balance of payments. Returns period, value and unit per observation. Requires DNB_API_KEY (free 'Public' product). Pass 'dataset' as the path 'statisticsdata/<version>/<dataset-slug>', or as a full https://api.dnb.nl/... URL; any other host, http, a port or user info is refused (error 'invalid_input') without a request.",
       inputSchema: {
-        dataset: z.string().describe("DNB dataset path 'statisticsdata/<version>/<dataset-slug>' or a full https endpoint URL. Example: 'statisticsdata/v2026061000/exchange-rates-of-the-euro-and-gold-price-day'. Find dataset slugs in the DNB Statistics API docs (api.portal.dnb.nl -> APIs -> DNB Statistics API)."),
+        dataset: z.string().describe("DNB dataset path 'statisticsdata/<version>/<dataset-slug>', or a full URL on the DNB gateway (https://api.dnb.nl/...; other hosts are refused). Example: 'statisticsdata/v2026061000/exchange-rates-of-the-euro-and-gold-price-day'. Find dataset slugs in the DNB Statistics API docs (api.portal.dnb.nl -> APIs -> DNB Statistics API)."),
         query: z.string().optional().describe("Optional free-text filter, applied client-side to period/label/unit/value."),
         startPeriod: z.string().optional().describe("Optional start period (SDMX-style), e.g. '2020' or '2020-01'."),
         endPeriod: z.string().optional().describe("Optional end period, e.g. '2024-12'."),
@@ -3989,9 +4054,7 @@ server.registerTool(
       response.pagination = { offset: out.offset, limit: windowSize, total: out.total, has_more: out.has_more };
       return toMcpToolPayload(response);
     } catch (e) {
-      if (e instanceof TenderNedInputError) {
-        return toMcpToolPayload(errorResponse({ error: "unexpected", message: e.message, suggestion: e.suggestion, details: e.details }));
-      }
+      // A TenderNedInputError is an InvalidInputError: invalid_input with its suggestion and details.
       return toMcpToolPayload(mapSourceError(e, "TenderNed", "https://www.tenderned.nl/aankondigingen/overzicht"));
     }
   });
@@ -4009,13 +4072,13 @@ server.registerTool(
   }, async ({ publicatieId, publicatie_id, include_text, max_chars, include_award }) => {
     const ids = [...new Set([publicatieId, publicatie_id].filter((v) => v !== undefined).map((v) => String(v).trim()).filter(Boolean))];
     if (!ids.length) {
-      return toMcpToolPayload(errorResponse({ error: "unexpected", message: "Geef publicatieId (of publicatie_id) op", suggestion: "Gebruik publicatie_id uit tenderned_aanbestedingen_search, bijv. '437355'" }));
+      return toMcpToolPayload(invalidInputResponse("Geef publicatieId (of publicatie_id) op", "Gebruik publicatie_id uit tenderned_aanbestedingen_search, bijv. '437355'"));
     }
     if (ids.length > 1) {
-      return toMcpToolPayload(errorResponse({ error: "unexpected", message: `publicatieId en publicatie_id verschillen (${ids.join(" / ")})`, suggestion: "Geef één publicatie-id op" }));
+      return toMcpToolPayload(invalidInputResponse(`publicatieId en publicatie_id verschillen (${ids.join(" / ")})`, "Geef één publicatie-id op"));
     }
     if (!/^\d+$/.test(ids[0])) {
-      return toMcpToolPayload(errorResponse({ error: "unexpected", message: `Ongeldige TenderNed publicatie-id '${ids[0]}': alleen cijfers`, suggestion: "Gebruik publicatie_id uit tenderned_aanbestedingen_search, bijv. '437355'" }));
+      return toMcpToolPayload(invalidInputResponse(`Ongeldige TenderNed publicatie-id '${ids[0]}': alleen cijfers`, "Gebruik publicatie_id uit tenderned_aanbestedingen_search, bijv. '437355'"));
     }
     try {
       const out = await tenderned.get({ publicatieId: ids[0], include_text, max_chars, include_award });
@@ -4440,7 +4503,7 @@ server.registerTool(
       }));
     } catch (e) {
       if (e instanceof EuFundingInputError) {
-        return toMcpToolPayload(errorResponse({ error: "unexpected", message: e.message, suggestion: "Pas de invoer aan; de toegestane waarden staan in de beschrijving van eu_funding_search." }));
+        return toMcpToolPayload(invalidInputResponse(e.message, e.suggestion ?? "Pas de invoer aan; de toegestane waarden staan in de beschrijving van eu_funding_search."));
       }
       return toMcpToolPayload(mapSourceError(e, "EU Funding & Tenders Portal", EU_FUNDING_PORTAL));
     }
@@ -4475,7 +4538,7 @@ server.registerTool(
       }));
     } catch (e) {
       if (e instanceof EuFundingInputError) {
-        return toMcpToolPayload(errorResponse({ error: "unexpected", message: e.message, suggestion: "Gebruik de id uit eu_funding_search." }));
+        return toMcpToolPayload(invalidInputResponse(e.message, e.suggestion ?? "Gebruik de id uit eu_funding_search."));
       }
       return toMcpToolPayload(mapSourceError(e, "EU Funding & Tenders Portal", EU_FUNDING_PORTAL));
     }
@@ -4528,9 +4591,7 @@ server.registerTool(
         verbose: singleConnectorVerbose({ enabled: verbose, connector: RVO_SUBSIDIES_CONNECTOR, endpoint: out.endpoint, responseTimeMs }),
       }));
     } catch (e) {
-      if (e instanceof RvoSubsidiesInputError) {
-        return toMcpToolPayload(errorResponse({ error: "unexpected", message: e.message, suggestion: e.suggestion }));
-      }
+      // An RvoSubsidiesInputError is an InvalidInputError: mapSourceError reports it as invalid_input.
       return toMcpToolPayload(mapSourceError(e, "RVO open data", "https://www.rvo.nl/subsidies-financiering"));
     }
   });
@@ -4577,9 +4638,7 @@ server.registerTool(
         access_note: out.access_note,
       }));
     } catch (e) {
-      if (e instanceof RvoSubsidiesInputError) {
-        return toMcpToolPayload(errorResponse({ error: "unexpected", message: e.message, suggestion: e.suggestion }));
-      }
+      // An RvoSubsidiesInputError is an InvalidInputError: mapSourceError reports it as invalid_input.
       return toMcpToolPayload(mapSourceError(e, "RVO open data", "https://www.rvo.nl/subsidies-financiering"));
     }
   });

@@ -6,3 +6,10 @@ dist
 tests
 scripts
 docs
+.env.*
+**/.env
+**/.env.*
+!.env.example
+.claude
+*.pem
+**/*.pem

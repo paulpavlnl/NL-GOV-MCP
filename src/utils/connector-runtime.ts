@@ -55,6 +55,9 @@ const CONNECTOR_CATEGORY: Record<string, ConnectorCategory> = {
   // fetches those pages itself; the name keeps them apart from ORI in the logs).
   ori_pages: "discovery",
   api_register: "discovery",
+  // The register's public website pages, read when its JSON API cannot be used:
+  // apart, so failures of the API cannot open the circuit for this path too.
+  api_register_pages: "discovery",
   bag_linked_data: "discovery",
   rce_linked_data: "discovery",
   dso_omgevingsdocumenten: "discovery",
@@ -148,6 +151,8 @@ const CIRCUIT_PER_CONNECTOR: Record<string, { drempel: number; afkoelMs: number;
 };
 const MAX_CONCURRENT_PER_CONNECTOR = 3;
 const QUEUE_TIMEOUT_MS = 30_000;
+/** Requests that may wait for a slot of one connector; one more fails at once. */
+const MAX_QUEUED_PER_CONNECTOR = 50;
 const CACHE_MAX_ENTRIES = 1000;
 /** Total size of the cached response bodies; the oldest go first past it. */
 const CACHE_MAX_BYTES = 64 * 1024 * 1024;
@@ -251,7 +256,9 @@ export function inferConnectorName(endpointUrl: string): string {
     if (host.includes("onderwijsdata.duo.nl") || host.includes("onderwijsregistratie.nl")) {
       return "duo";
     }
-    if (host.includes("developer.overheid.nl")) return "api_register";
+    if (host.includes("developer.overheid.nl")) {
+      return host === "api.developer.overheid.nl" ? "api_register" : "api_register_pages";
+    }
     if (host.includes("knmi.nl")) return "knmi";
     if (host.includes("pdok.nl") || host.includes("kadaster.nl")) {
       if (host.includes("labs.kadaster.nl")) return "bag_linked_data";
@@ -385,6 +392,29 @@ export function getCircuitDecision(connector: string):
   return { open: false, probe: false };
 }
 
+/**
+ * Whether the circuit is open now, without claiming the half-open probe: for a
+ * request that already holds the probe and checks again before a retry.
+ */
+export function peekCircuitOpen(connector: string):
+  | { open: true; retryAfterS: number }
+  | { open: false } {
+  const state = getState(connector);
+  const now = Date.now();
+  if (state.circuitOpenUntil && now < state.circuitOpenUntil) {
+    return { open: true, retryAfterS: Math.max(1, Math.ceil((state.circuitOpenUntil - now) / 1000)) };
+  }
+  return { open: false };
+}
+
+/** Thrown by acquireConnectorSlot when MAX_QUEUED_PER_CONNECTOR requests already wait. */
+export class ConnectorQueueFullError extends Error {
+  constructor(connector: string) {
+    super(`Request queue of connector '${connector}' is full (${MAX_QUEUED_PER_CONNECTOR} waiting)`);
+    this.name = "ConnectorQueueFullError";
+  }
+}
+
 function releaseConnectorSlot(connector: string): void {
   const state = getState(connector);
   state.inFlight = Math.max(0, state.inFlight - 1);
@@ -407,6 +437,8 @@ export async function acquireConnectorSlot(
     state.inFlight += 1;
     return () => releaseConnectorSlot(connector);
   }
+
+  if (state.queue.length >= MAX_QUEUED_PER_CONNECTOR) throw new ConnectorQueueFullError(connector);
 
   return await new Promise<() => void>((resolve, reject) => {
     const timer = setTimeout(() => {

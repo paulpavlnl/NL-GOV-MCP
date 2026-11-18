@@ -1,5 +1,6 @@
 import type { AppConfig } from "../types.js";
 import { getJson } from "../utils/http.js";
+import { InvalidInputError } from "../utils/response.js";
 
 /**
  * EUR-Lex via CELLAR, the Publications Office's semantic repository. Its SPARQL
@@ -297,8 +298,9 @@ export function freeTextWords(query: string): { words: string[]; ignored: string
 export function buildFreeText(query: string): string {
   const { words } = freeTextWords(query);
   if (words.length === 0) {
-    throw new Error(
+    throw new InvalidInputError(
       `Zoekterm '${query}' bevat geen bruikbare woorden (minimaal 2 letters of cijfers; stopwoorden en 'EU', 'EG' en 'nr' tellen niet mee).`,
+      "Geef een of meer onderwerpwoorden, bijv. 'gegevensbescherming' of 'privacy politie'.",
     );
   }
   return andOf(words);
@@ -402,8 +404,9 @@ function toBool(v: string | undefined): boolean | null {
 function requireCelex(id: string): string {
   const celex = normalizeCelex(id);
   if (!celex) {
-    throw new Error(
+    throw new InvalidInputError(
       `Ongeldig CELEX-nummer of EU-citaat: '${id}' (verwacht bv. 32016R0679 of 'Richtlijn (EU) 2016/680').`,
+      "Geef een CELEX-nummer (32016R0679) of een citaat ('Richtlijn (EU) 2016/680', 'Verordening (EU) 2016/679').",
     );
   }
   return celex;
@@ -525,7 +528,7 @@ export class EuCellarSource {
   async search(args: { query: string; type?: "REG" | "DIR" | "DEC"; limit: number }): Promise<EuCellarResult> {
     const limit = Math.max(1, Math.min(Math.floor(args.limit) || 1, this.config.limits.maxRows));
     const types = args.type ? TYPE_GROUPS[args.type] : Object.values(TYPE_GROUPS).flat();
-    if (!types) throw new Error(`Onbekend documenttype '${args.type}' (verwacht REG, DIR of DEC).`);
+    if (!types) throw new InvalidInputError(`Onbekend documenttype '${args.type}' (verwacht REG, DIR of DEC).`, "Geef type REG, DIR of DEC, of laat type weg.");
     const typeList = types.map((t) => `<${RESOURCE_TYPE}${t}>`).join(", ");
 
     const docNumber = parseDocumentNumber(args.query, args.type);
@@ -940,8 +943,9 @@ ${relations}
   async nlTransposition(args: { id: string; limit: number }): Promise<EuCellarResult> {
     const celex = requireCelex(args.id);
     if (celex[5] !== "L") {
-      throw new Error(
+      throw new InvalidInputError(
         `${celex} is geen richtlijn; nationale omzettingsmaatregelen bestaan alleen voor richtlijnen (verordeningen gelden rechtstreeks).`,
+        "Geef het CELEX-nummer van een richtlijn (met een L, bijv. 32016L0680); voor andere handelingen geeft eurlex_document de gegevens.",
       );
     }
     const limit = Math.max(1, Math.min(Math.floor(args.limit) || 1, this.config.limits.maxRows));

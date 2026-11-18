@@ -82,26 +82,9 @@ export class PdokSource {
       total: data.response?.numFound ?? docs.length,
       endpoint: meta.url,
       params,
-    };
-  }
-
-  fallbackAddress(args: { query?: string; postcode?: string; huisnummer?: string; rows: number }) {
-    const base = (args.query?.trim() || `${args.postcode ?? ""} ${args.huisnummer ?? ""}`.trim() || "onbekend").toLowerCase();
-    const normalized = base.replace(/\s+/g, " ").trim();
-    const item: Record<string, unknown> = {
-      id: `fallback-${normalized.replace(/[^a-z0-9]+/g, "-")}`,
-      weergavenaam: `Geen live BAG-hit voor: ${normalized}`,
-      type: "adres",
-      confidence: "fallback",
-      query: normalized,
-    };
-
-    return {
-      items: [item].slice(0, args.rows),
-      total: 1,
-      endpoint: `${PDOK_LOCATIESERVER}/free (fallback)`,
-      params: { q: normalized, rows: String(args.rows), mode: "deterministic-fallback" },
-      access_note: "PDOK/BAG lookup tijdelijk onbereikbaar; deterministische fallback-record teruggegeven.",
+      ...(docs.length
+        ? {}
+        : { access_note: `De PDOK Locatieserver vond geen adres voor '${q}'${woonplaats ? ` in ${woonplaats}` : ""}.` }),
     };
   }
 }

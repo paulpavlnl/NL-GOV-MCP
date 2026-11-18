@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { createServer } from "../src/server.js";
 import { DnbStatisticsSource } from "../src/sources/dnb-statistics.js";
+import { clearHttpCache } from "../src/utils/connector-runtime.js";
 import type { AppConfig } from "../src/types.js";
 
 const config: AppConfig = {
@@ -79,7 +83,7 @@ describe("DnbStatisticsSource", () => {
 
     const src = new DnbStatisticsSource(config, "test-key");
     await src.search({
-      dataset: "https://api.portal.dnb.nl/statistics/v1/exchange-rates",
+      dataset: "https://api.dnb.nl/statistics/v1/exchange-rates",
       startPeriod: "2024-01",
       endPeriod: "2024-03",
       rows: 20,
@@ -127,5 +131,93 @@ describe("DnbStatisticsSource", () => {
     expect(out.items).toHaveLength(0);
     expect(out.total).toBe(0);
     expect(out.endpoint).toContain("unknown-dataset");
+  });
+});
+
+describe("DnbStatisticsSource: the subscription key goes to the DNB gateway only", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    clearHttpCache();
+  });
+
+  it.each([
+    "http://127.0.0.1:1/x",
+    "HTTP://127.0.0.1:9/grab?probe=1",
+    "HTTP://api.dnb.nl/x",
+    "http://api.dnb.nl/statisticsdata/v1/slug",
+    "https://api.dnb.nl.evil.example/x",
+    "https://evil.example/api.dnb.nl/x",
+    "https://api.dnb.nl:8443/x",
+    "https://user@api.dnb.nl/x",
+    "https://user:pw@api.dnb.nl/x",
+    "http://api.dnb.nl@127.0.0.1:9/grab",
+    "https://api.portal.dnb.nl/statistics/v1/x",
+    "file:///etc/hosts",
+    "ftp://api.dnb.nl/x",
+    "https://",
+  ])("refuses dataset %s before any request", async (dataset) => {
+    const fetchMock = vi.fn(async () => jsonResponse(sampleResponse));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(new DnbStatisticsSource(config, "test-key").search({ dataset, rows: 3 })).rejects.toThrow(/Ongeldige dataset/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["statisticsdata/v1/slug", "https://api.dnb.nl/statisticsdata/v1/slug"],
+    ["/statisticsdata/v1/slug", "https://api.dnb.nl/statisticsdata/v1/slug"],
+    ["  statisticsdata/v1/slug  ", "https://api.dnb.nl/statisticsdata/v1/slug"],
+    ["https://api.dnb.nl/statisticsdata/v1/slug", "https://api.dnb.nl/statisticsdata/v1/slug"],
+    ["HTTPS://API.DNB.NL/statisticsdata/v1/slug", "https://api.dnb.nl/statisticsdata/v1/slug"],
+  ])("control: %s is fetched from %s", async (dataset, expected) => {
+    const fetchMock = vi.fn(async () => jsonResponse(sampleResponse));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const out = await new DnbStatisticsSource(config, "test-key").search({ dataset, rows: 3 });
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(expected);
+    expect((init.headers as Record<string, string>)["Ocp-Apim-Subscription-Key"]).toBe("test-key");
+    expect(out.items).toHaveLength(3);
+  });
+
+  it("does not follow a redirect to another host with the key", async () => {
+    const calls: Array<{ url: string; headers: Record<string, string> }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, headers: { ...((init?.headers ?? {}) as Record<string, string>) } });
+      return url.startsWith("https://api.dnb.nl/")
+        ? new Response(null, { status: 302, headers: { location: "https://elsewhere.example/land" } })
+        : jsonResponse(sampleResponse);
+    }));
+
+    await new DnbStatisticsSource(config, "test-key").search({ dataset: "statisticsdata/v1/moved", rows: 3 });
+    expect(calls.map((c) => new URL(c.url).hostname)).toEqual(["api.dnb.nl", "elsewhere.example"]);
+    expect(calls[1].headers["Ocp-Apim-Subscription-Key"]).toBeUndefined();
+    expect(JSON.stringify(calls[1].headers)).not.toContain("test-key");
+  });
+
+  it("dnb_statistics_search answers a foreign URL with an error naming the dataset rule, without a request", async () => {
+    vi.stubEnv("DNB_API_KEY", "test-key");
+    const fetchMock = vi.fn(async () => jsonResponse(sampleResponse));
+    vi.stubGlobal("fetch", fetchMock);
+    const server = createServer();
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "dnb-test", version: "1.0.0" });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    try {
+      const result = (await client.callTool({ name: "dnb_statistics_search", arguments: { dataset: "http://127.0.0.1:1/x", rows: 3 } })) as {
+        content: Array<{ text: string }>;
+      };
+      const payload = JSON.parse(result.content[0].text) as { error?: string; message?: string };
+      expect(payload.error).toBeDefined();
+      expect(payload.message).toContain("Ongeldige dataset");
+      expect(payload.message).toContain("https://api.dnb.nl");
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      await client.close();
+      await server.close();
+      vi.unstubAllEnvs();
+    }
   });
 });

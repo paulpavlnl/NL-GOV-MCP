@@ -13,7 +13,9 @@
  *  4. collapse whitespace (including the U+00A0 that &#160; produces) and trim.
  */
 
-const SCRIPT_OR_STYLE = /<(script|style)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi;
+const SCRIPT_OR_STYLE_OPEN = /<(script|style)\b/gi;
+const SCRIPT_CLOSE = /<\/script\s*>/gi;
+const STYLE_CLOSE = /<\/style\s*>/gi;
 const COMMENT = /<!--[\s\S]*?(?:-->|$)/g;
 // Tag name, then optional attributes; quoted attribute values may contain ">".
 const TAG = /<\/?([a-zA-Z][a-zA-Z0-9:._-]*)(?:\s(?:[^<>"']|"[^"]*"|'[^']*')*)?\/?>/g;
@@ -64,9 +66,31 @@ function decodeHtmlReferences(value: string): string {
   });
 }
 
+/**
+ * value.replace(/<(script|style)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, " ") in one
+ * linear pass. That regex scans to the end of the input for every opener that
+ * no ">" follows; when none follows, no later opener can match either, so the
+ * scan stops there.
+ */
+function stripScriptAndStyle(value: string): string {
+  SCRIPT_OR_STYLE_OPEN.lastIndex = 0;
+  let out = "";
+  let from = 0;
+  for (let open = SCRIPT_OR_STYLE_OPEN.exec(value); open; open = SCRIPT_OR_STYLE_OPEN.exec(value)) {
+    const tagEnd = value.indexOf(">", SCRIPT_OR_STYLE_OPEN.lastIndex);
+    if (tagEnd < 0) break;
+    const close = open[1].toLowerCase() === "script" ? SCRIPT_CLOSE : STYLE_CLOSE;
+    close.lastIndex = tagEnd + 1;
+    const end = close.exec(value) ? close.lastIndex : value.length;
+    out += `${value.slice(from, open.index)} `;
+    from = end;
+    SCRIPT_OR_STYLE_OPEN.lastIndex = end;
+  }
+  return out + value.slice(from);
+}
+
 export function htmlToText(value: string): string {
-  const withoutTags = value
-    .replace(SCRIPT_OR_STYLE, " ")
+  const withoutTags = stripScriptAndStyle(value)
     .replace(COMMENT, " ")
     .replace(TAG, (_tag, name: string) => (BLOCK_TAGS.has(name.toLowerCase()) ? " " : ""));
   return decodeHtmlReferences(withoutTags)

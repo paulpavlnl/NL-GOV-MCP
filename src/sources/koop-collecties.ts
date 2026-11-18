@@ -6,7 +6,7 @@ import {
   extractSruRecords,
   parseXml,
 } from "../utils/xml-parser.js";
-import { escapeSruValue, freeTextCql } from "../utils/sru-cql.js";
+import { escapeSruValue, freeTextCql, stripSruUnsafe } from "../utils/sru-cql.js";
 
 /**
  * Two more KOOP collections on the SRU endpoint this server already speaks.
@@ -207,7 +207,7 @@ export class KoopCollectieSource {
     const term = freeTextCql(args.query);
     if (term) parts.push(term);
 
-    const organisatie = (args.organisatie ?? "").trim();
+    const organisatie = stripSruUnsafe(args.organisatie ?? "").trim();
     if (organisatie) parts.push(`dt.creator=="${escapeSruValue(organisatie)}"`);
 
     const from = toIsoDate(args.date_from);

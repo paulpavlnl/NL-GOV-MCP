@@ -1,5 +1,6 @@
 import type { AppConfig } from "../types.js";
 import { getJson } from "../utils/http.js";
+import { InvalidInputError } from "../utils/response.js";
 
 /**
  * DNB Statistics API (De Nederlandsche Bank) — key-vereist REST.
@@ -10,7 +11,7 @@ import { getJson } from "../utils/http.js";
  *
  * De exacte per-dataset endpoint-paden staan achter een My DNB-login en zijn
  * gefaseerd uitgerold; daarom is deze connector defensief opgezet:
- *  - `dataset` mag een volledige URL, een pad ("statistics/v1/interest-rates")
+ *  - `dataset` mag een volledige URL op https://api.dnb.nl, een pad ("statistics/v1/interest-rates")
  *    of een korte code zijn — die wordt onder DNB_STATISTICS_BASE gehangen;
  *  - de datapunt-parser accepteert meerdere container- en veldnaamvarianten
  *    (observations/data/value/results, period/value/unit in diverse casings).
@@ -140,10 +141,32 @@ function matchesQuery(dp: DnbDataPoint, query?: string): boolean {
   return hay.includes(needle);
 }
 
-/** Bouw de dataset-endpoint-URL uit een code, pad of volledige URL. */
+const DNB_HOST = new URL(DNB_STATISTICS_BASE).hostname;
+
+/**
+ * Bouw de dataset-endpoint-URL uit een code, pad of volledige URL. The request
+ * carries the operator's subscription key, so it goes to the DNB gateway only:
+ * a full URL must be https on exactly api.dnb.nl, without user info or port.
+ * Anything else is refused before any request.
+ */
 function resolveEndpoint(dataset: string): string {
   const trimmed = dataset.trim();
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  // Anything with a scheme ("https:", "http:", "file:", ...) is read as a URL, not as a path.
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) {
+    let url: URL | undefined;
+    try {
+      url = new URL(trimmed);
+    } catch {
+      url = undefined;
+    }
+    if (!url || url.protocol !== "https:" || url.hostname !== DNB_HOST || url.port || url.username || url.password) {
+      throw new InvalidInputError(
+        `Ongeldige dataset '${trimmed.slice(0, 200)}': geef een pad als 'statisticsdata/<versie>/<dataset-slug>' of een volledige URL op ${DNB_STATISTICS_BASE}/ (https, zonder poort of gebruikersnaam).`,
+        `Geef 'dataset' als pad, bijv. 'statisticsdata/v2026061000/exchange-rates-of-the-euro-and-gold-price-day', of als URL die begint met ${DNB_STATISTICS_BASE}/. Een andere host, http, een poort of een gebruikersnaam wordt geweigerd: de subscription key gaat alleen naar de DNB-gateway.`,
+      );
+    }
+    return url.toString();
+  }
   return `${DNB_STATISTICS_BASE}/${trimmed.replace(/^\/+/, "")}`;
 }
 
@@ -191,7 +214,7 @@ export class DnbStatisticsSource {
         ...(args.query ? { q: args.query } : {}),
       },
       access_note:
-        "Bron: DNB Statistics API (gateway api.dnb.nl, Azure APIM). Subscription key via header Ocp-Apim-Subscription-Key (gratis 'Public'-product op api.portal.dnb.nl). Geef 'dataset' als pad 'statisticsdata/<versie>/<dataset-slug>' (bijv. 'statisticsdata/v2026061000/exchange-rates-of-the-euro-and-gold-price-day') of als volledige URL. De dataset-slugs staan in de API-docs achter een My DNB-login.",
+        "Bron: DNB Statistics API (gateway api.dnb.nl, Azure APIM). Subscription key via header Ocp-Apim-Subscription-Key (gratis 'Public'-product op api.portal.dnb.nl). Geef 'dataset' als pad 'statisticsdata/<versie>/<dataset-slug>' (bijv. 'statisticsdata/v2026061000/exchange-rates-of-the-euro-and-gold-price-day') of als volledige URL op https://api.dnb.nl. De dataset-slugs staan in de API-docs achter een My DNB-login.",
     };
   }
 }
