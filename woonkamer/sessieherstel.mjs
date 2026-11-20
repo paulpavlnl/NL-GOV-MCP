@@ -13,6 +13,8 @@
  * Uit: omgevingsvariabele PROXY_SESSIEHERSTEL=0.
  */
 import http from "node:http";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 const AAN = process.env.PROXY_SESSIEHERSTEL !== "0";
 const STANDAARD_VERSIE = "2025-06-18";
@@ -23,6 +25,18 @@ const MAX_BODY = 96 * 1024 * 1024;
 const gedeeld = new Map(); // sleutel -> { port, pad, headers, sid, versie, resultaten: Map(versie -> result), gebruikt, bezig }
 const verlopen = new Set(); // sessie-ids waarvan de server 404 gaf
 let teller = 0;
+// Eigen verbindingen zonder keep-alive: een hergebruikte, door de server al gesloten verbinding gaf ECONNRESET.
+const agent = new http.Agent({ keepAlive: false });
+// Welke warme sessies er waren (route, pad, koppen), zodat ze na een herstart van de proxy of de pc meteen weer warm zijn.
+// Staat in de afgeschermde geheimenmap, want pad en koppen kunnen een sleutel bevatten.
+const WARM_BESTAND = join(process.env.MCP_ROOT || "C:\mcp", "secrets", "proxy-warm.json");
+
+function bewaar() {
+  try {
+    const lijst = [...gedeeld].filter(([, e]) => e.resultaten.size).map(([sleutel, e]) => ({ sleutel, route: e.route, port: e.port, pad: e.pad, headers: e.headers, versies: [...e.resultaten.keys()], gebruikt: e.gebruikt }));
+    writeFileSync(WARM_BESTAND, JSON.stringify(lijst));
+  } catch { /* zonder bestand werkt alles, alleen de eerste start is dan koud */ }
+}
 
 /** Leest de body van een verzoek als Buffer (alleen JSON, tot MAX_BODY); anders undefined en de stroom blijft onaangeroerd. */
 export function leesBody(req) {
@@ -54,7 +68,7 @@ function kopHeaders(bron, extra = {}) {
 /** Opent een verzoek naar de server; geeft het antwoord (IncomingMessage) zodra de kop binnen is. */
 function open(port, pad, method, headers, body, timeoutMs = 0) {
   return new Promise((klaar, fout) => {
-    const uit = http.request({ host: "127.0.0.1", port, method, path: pad, headers: body ? { ...headers, "content-length": body.length } : headers }, klaar);
+    const uit = http.request({ agent, host: "127.0.0.1", port, method, path: pad, headers: body ? { ...headers, "content-length": body.length } : headers }, klaar);
     uit.on("error", fout);
     if (timeoutMs) uit.setTimeout(timeoutMs, () => uit.destroy(new Error("time-out")));
     uit.end(body);
@@ -94,11 +108,13 @@ function haal(sleutel, basis, versie, vers = false, eisVersie = true) {
   if (e?.bezig) return e.bezig.then(() => haal(sleutel, basis, versie, false, eisVersie), () => haal(sleutel, basis, versie, false, eisVersie));
   if (!e) { e = { ...basis, resultaten: new Map(), gebruikt: Date.now() }; gedeeld.set(sleutel, e); }
   e.bezig = (async () => {
+    const nieuw = !e.resultaten.has(versie);
     try {
       const r = await rpc(e, "initialize", { protocolVersion: versie, capabilities: {}, clientInfo: { name: "woonkamer-proxy", version: "1" } }, undefined, 60_000);
       if (r.status !== 200 || !r.m?.result) throw new Error(`initialize gaf ${r.status}`);
       e.sid = r.sid; e.versie = versie; e.resultaten.set(versie, r.m.result); e.gebruikt = Date.now();
       await rpc(e, "notifications/initialized", null, e.sid, 30_000).catch(() => {});
+      if (nieuw) bewaar();
       return e;
     } catch (fout) {
       if (!e.resultaten.size) gedeeld.delete(sleutel);
@@ -195,6 +211,19 @@ export async function behandel(req, res, s, pad, body) {
 /** Houdt de warme sessies wakker en maakt ze opnieuw aan na een herstart van de server. */
 export function houdWarm() {
   if (!AAN) return;
+  let bekend = [];
+  try { bekend = JSON.parse(readFileSync(WARM_BESTAND, "utf8")); } catch { /* eerste keer */ }
+  const opwarmen = async (poging) => {
+    let mis = 0;
+    for (const b of bekend) {
+      if (Date.now() - b.gebruikt > VERGEET_MS) continue;
+      for (const versie of b.versies) {
+        try { await haal(b.sleutel, { route: b.route, port: b.port, pad: b.pad, headers: b.headers }, versie); } catch { mis += 1; }
+      }
+    }
+    if (mis && poging < 20) setTimeout(() => opwarmen(poging + 1), 30_000).unref();
+  };
+  if (bekend.length) setTimeout(() => opwarmen(0), 3_000).unref();
   setInterval(async () => {
     for (const [sleutel, e] of gedeeld) {
       if (Date.now() - e.gebruikt > VERGEET_MS) { gedeeld.delete(sleutel); continue; }
