@@ -152,6 +152,8 @@ export async function behandel(req, res, s, pad, body) {
   }
   const m = body && bericht(body);
   if (!m) return { afgehandeld: false };
+  // server/discover (nieuwere, sessieloze MCP-versie): de servers kennen het niet en zeggen meteen 400; de client valt dan terug op initialize.
+  if (m.method === "server/discover") return { afgehandeld: false, rpc: m.method };
   const basis = { route: s.route, port: s.port, pad, headers: kopHeaders(req.headers) };
   try {
     if (m.method === "initialize") {
@@ -179,7 +181,7 @@ export async function behandel(req, res, s, pad, body) {
       const eigen = e.sid && m.id !== undefined ? `wk-${++teller}` : undefined;
       const uitBody = eigen === undefined ? body : Buffer.from(JSON.stringify({ ...m, id: eigen }));
       const antwoord = await open(s.port, pad, "POST", kopHeaders(req.headers, e.sid ? { "mcp-session-id": e.sid } : {}), uitBody);
-      if (!vers && e.sid && (antwoord.statusCode === 404 || antwoord.statusCode === 400)) { antwoord.resume(); continue; }
+      if (!vers && e.sid && antwoord.statusCode === 404) { antwoord.resume(); continue; }
       stuurDoor(antwoord, res, eigen, m.id);
       return { afgehandeld: true, rpc: m.method, herstel: vers ? "vers" : "gedeeld" };
     }
