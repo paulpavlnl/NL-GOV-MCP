@@ -25,6 +25,12 @@ De ingevulde URL's staan na de installatie in `C:\mcp\secrets\urls.txt` (`node w
   herstart na een crash; ze draaien zonder dat iemand ingelogd is.
 - `proxy.mjs` (dienst `mcp-proxy`, 127.0.0.1:8080): Funnel-poort 443 komt hier binnen en gaat per pad naar de
   juiste server, met het pad zonder voorvoegsel.
+- `sessieherstel.mjs` (in de proxy, sinds 20-11-2026): per route één warme MCP-sessie bij de server. `initialize`
+  wordt meteen uit het bewaarde antwoord beantwoord en verzoeken zonder geldige sessie (geen sessie-id, of een id
+  van vóór een herstart) gaan via de warme sessie in plaats van 400/404. Reden: geplande cloudsessies verbinden
+  met alle connectors tegelijk en misten de connectors die eerst nog een sessie moesten opbouwen. De warme
+  sessies staan in `C:\mcp\secrets\proxy-warm.json` en komen na een herstart vanzelf terug; `http://127.0.0.1:8080/`
+  toont ze per route. Log (`C:\mcp\logs\mcp-proxy.log`): per verzoek `rpc` en `herstel`. Uit: `PROXY_SESSIEHERSTEL=0`.
 - Taak "MCP woonkamer update" (SYSTEM, elk uur): nieuwe commits ophalen, installeren/bouwen, dienst herstarten;
   lukt bouwen niet, dan terug naar de vorige versie. Log: `C:\mcp\logs\update.log`.
 - Tailscale draait unattended, dus ook na een herstart zonder aanmelding.
