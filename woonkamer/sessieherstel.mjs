@@ -29,7 +29,7 @@ let teller = 0;
 const agent = new http.Agent({ keepAlive: false });
 // Welke warme sessies er waren (route, pad, koppen), zodat ze na een herstart van de proxy of de pc meteen weer warm zijn.
 // Staat in de afgeschermde geheimenmap, want pad en koppen kunnen een sleutel bevatten.
-const WARM_BESTAND = join(process.env.MCP_ROOT || "C:\mcp", "secrets", "proxy-warm.json");
+const WARM_BESTAND = join(process.env.MCP_ROOT || "C:\\mcp", "secrets", "proxy-warm.json");
 
 function bewaar() {
   try {
