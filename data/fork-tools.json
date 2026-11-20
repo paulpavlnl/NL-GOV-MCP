@@ -2,7 +2,7 @@
   "_uitleg": "Eigen tools van deze fork (docs/FORK.md). tests/fork-integriteit.test.ts eist dat createServer ze allemaal registreert; de upstream-sync merget pas naar main als dat zo is. Nieuwe eigen tool: hier toevoegen.",
   "tools": [
     "anbi_zoeken", "ap_document_get", "ap_documenten_zoeken", "bronnen_status", "bwb_artikel_tekst",
-    "cao_avv", "cao_tekst", "cao_zoeken", "chromebook_status", "chromebook_tijdlijn",
+    "cao_avv", "cao_tekst", "cao_zoeken",
     "crm_oordelen_zoeken", "ehrm_uitspraak_get", "ehrm_zoeken", "eurlex_tekst_get",
     "geschil_uitspraak_get", "geschillencommissie_zoeken", "hcch_verdrag_get", "kifid_zoeken",
     "lido_relaties", "lido_relations_by_identifier", "lido_search_free_text", "literatuur_document_get",

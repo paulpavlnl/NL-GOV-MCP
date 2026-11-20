@@ -23,7 +23,6 @@ import { registerWetsgeschiedenis } from "./wetsgeschiedenis.js";
 import { registerRichtlijnen } from "./richtlijnen.js";
 import { registerRechtspraakOpenData } from "./rechtspraak-open-data.js";
 import { registerBronGezondheid } from "./bron-gezondheid.js";
-import { registerChromebook } from "./chromebook.js";
 import { registerRechterProfiel } from "./rechterprofiel.js";
 import { registerCao } from "./cao.js";
 import { installLidoNetwerk } from "./lido-robuust.js";
@@ -260,8 +259,6 @@ export function registerEuForkTools(server: McpServer, deps: EuForkDeps): (args:
   // And robust LiDO and rechtspraak_get_by_ecli plus the health check bronnen_status (src/fork/lido-robuust.ts, src/fork/bron-gezondheid.ts).
   installLidoNetwerk();
   registerBronGezondheid(server, deps.TOOL_ANNOTATIONS);
-  // Pauls Chromebook-tijdlijn uit mcp-chromebook (src/fork/chromebook.ts).
-  registerChromebook(server, { TOOL_ANNOTATIONS: deps.TOOL_ANNOTATIONS as Record<string, unknown> });
   // Rechterprofiel: nevenfunctieregister plus uitspraken op naam (src/fork/rechterprofiel.ts).
   registerRechterProfiel(server, { TOOL_ANNOTATIONS: deps.TOOL_ANNOTATIONS as Record<string, unknown> });
   // Cao-databank SZW plus AVV uit de Staatscourant (src/fork/cao.ts).
