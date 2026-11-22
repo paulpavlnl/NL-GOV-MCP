@@ -53,6 +53,12 @@ export function omgeving(s, basis = process.env) {
   for (const [k, v] of Object.entries(s.env || {})) env[k] = vul(v, geheimen);
   for (const k of s.zonder || []) delete env[k];
   for (const k of ["NODE_VERSION", "PYTHON_VERSION", "RENDER", "RENDER_SERVICE_ID"]) delete env[k];
+  // Node probeert IPv4 en IPv6 om beurten en geeft IPv4 standaard maar 250 ms. Deze pc heeft
+  // geen IPv6: duurt de verbinding even langer, dan faalt het verzoek met ETIMEDOUT plus
+  // ENETUNREACH (22-11-2026: overheid.nl en rechtspraak.nl). Daarom 5 s per poging.
+  if (!/network-family-autoselection/.test(env.NODE_OPTIONS || "")) {
+    env.NODE_OPTIONS = `${env.NODE_OPTIONS || ""} --network-family-autoselection-attempt-timeout=5000`.trim();
+  }
   return env;
 }
 
